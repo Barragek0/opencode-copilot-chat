@@ -236,13 +236,18 @@ Per-model reasoning configuration, dynamically enhanced with `reasoning_options`
 
 ### 🪟 Agents Window (Copilot CLI) Support
 
-OpenCode models appear in the VS Code **Agents window** model picker when starting a Copilot CLI / Background agent session — not just the regular Chat view. Agent models are registered under **separate vendor IDs** (`opencodego-agent`, `opencodezen-agent`) with `targetChatSessionType: "copilotcli"` so they show up in the Agents window without duplicating in the Chat view or Manage panel.
+OpenCode models appear in the VS Code **Agents window** model picker when starting a Copilot CLI / Background agent session — not just the regular Chat view. Two sets of models are available:
+
+| Provider | Appears under | Notes |
+|----------|--------------|-------|
+| `opencodego` / `opencodezen` | **Local** | Normal models, no `targetChatSessionType`. From VS Code ≥1.126 they appear naturally in the Local section (once the extension loads in the sessions window). |
+| `opencodego-agent` / `opencodezen-agent` | **Copilot** | Agent variants with `targetChatSessionType: "copilotcli"`. Picked up by `CopilotChatSessionsProvider` for agent sessions. |
 
 **How it works:**
 
 | Setting | Default | What it controls |
 |---------|---------|------------------|
-| `opencodego.agentsWindow` | `true` | Registers agent providers at runtime |
+| `opencodego.agentsWindow` | `true` | Registers agent-host providers at runtime |
 | `opencodego.showAgentModelsInManagePanel` | `false` | Shows agent vendors in the Manage Language Models panel |
 
 **Setup:**
@@ -256,7 +261,9 @@ OpenCode models appear in the VS Code **Agents window** model picker when starti
    ```
 3. Reload the window (`Developer: Reload Window`).
 4. Open the **Agents window** → start a new session → select **Copilot CLI** as the agent type.
-5. Open the model picker — OpenCode Go and Zen models appear.
+5. Open the model picker — OpenCode models appear under **Local** (normal models) and **Copilot** (agent-host variants).
+
+Normal OpenCode models (`opencodego`, `opencodezen`) appear in the **Local** section of the Agents window picker from VS Code ≥1.126 onwards. On ≤1.125 they may require the `supportAgentsWindow` setting. Agent-host variants (`opencodego-agent`, `opencodezen-agent`) appear under **Copilot** because they carry `targetChatSessionType: "copilotcli"` and are matched by `CopilotChatSessionsProvider`.
 
 To manage agent API keys separately or see agent vendors in the Manage panel, enable:
 ```json
@@ -293,8 +300,8 @@ To manage agent API keys separately or see agent vendors in the Manage panel, en
 | `opencodego.streamIdleTimeoutSeconds` | `120` | Cancel if stream goes idle |
 | `opencodego.showUsageStatusBar` | `true` | Show usage summary in status bar |
 | `opencodego.freeOnly` | `true` | Zen: free models only. `false` = include paid |
-| `opencodego.agentsWindow` | `true` | Register agent models for the Agents window |
-| `opencodego.showAgentModelsInManagePanel` | `false` | Show agent vendors in Manage Language Models |
+| `opencodego.agentsWindow` | `true` | Expose agent-host model variants (`targetChatSessionType`) for the Agents window |
+| `opencodego.showAgentModelsInManagePanel` | `false` | Show agent vendors in Manage Language Models panel |
 | `opencodego.stripThinkTags` | `"auto"` | Strip `<think>` tags (`never`/`auto`/`always`) |
 | `opencodego.thinking.deepseek` | `"off"` | `off`/`low`/`medium`/`high`/`max` |
 | `opencodego.thinking.glm` | `"off"` | `on`/`off` |
