@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `25-open-code-go-kimi-k27-issue` | **Updated:** 2026-06-15 Asia/Jakarta | **Current Phase:** v0.3.2 — Kimi K2.7-code Fix ✅
+**Branch:** `main` | **Updated:** 2026-06-23 Asia/Jakarta | **Current Phase:** v0.3.4 — Model Picker 1.126 Fix ✅
 
 ---
 
@@ -7,11 +7,53 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-06-15 |
-| **Worked On** | Fixed issue #25 — Kimi K2.7-code dual 400 errors (temperature rejected + thinking.type "disabled" rejected). Registered model in metadata, added `MODELS_WITHOUT_TEMPERATURE` set, special-cased K2.7 in thinking payload/schema/override. Extracted pure thinking helpers to `src/thinking.ts` for unit testability. Wrote 32 unit tests (metadata + thinking), all passing. Manual test via Copilot Chat confirmed working. |
-| **Stopped At** | Branch `25-open-code-go-kimi-k27-issue`; compile clean (0 errors); 32/32 tests pass; docs written (issue 25, CHANGELOG [0.3.2], devlog). Ready for commit + manual test by user. |
-| **Next Action** | → Commit local, then user decides: push + open PR, or continue with other work. If release: bump version (already 0.3.2 in package.json), build VSIX, publish to Marketplace. |
-| **Open Issues** | (1) Issue #23 — Go Usage tracker out of sync: awaiting user feedback. (2) Qwen image requests can hit provider-side Alibaba quota. (3) `qwen3.6-plus-free` can loop tool calls during broad agent tasks. (4) Issue #25 — RESOLVED this session. |
+| **Last Session** | 2026-06-23 |
+| **Worked On** | Reviewed and merged PR #53 (community, @Wallacy). Fixed two model picker regressions on VS Code ≥1.126: (1) `category` field type mismatch crash, (2) model duplication from two-phase resolution + unconditional secret fallback. Documented in `docs/issues/27-...`. CHANGELOG v0.3.4 entries already present from PR. |
+| **Stopped At** | `main` at v0.3.4. Compile clean (0 errors). Issue doc 27 written. Devlog updated. PR #53 merge commit on `main`. |
+| **Next Action** | → Optional: strip dead `categoryOrder` field from `ProviderDefinition` (interface + `providerVariant` + `PROVIDERS` assignments) as a small follow-up PR. → Optional: trim the single remaining `this.log(\`[picker] options=${JSON.stringify(options)}\`)` if it proves noisy in the OutputChannel. |
+| **Open Issues** | (1) Issue #23 — Go Usage tracker out of sync: awaiting user feedback. (2) Qwen image requests can hit provider-side Alibaba quota. (3) `qwen3.6-plus-free` can loop tool calls during broad agent tasks. (4) `ProviderDefinition.categoryOrder` is now dead code (PR #53 side effect). |
+
+---
+
+## ✅ PR #53 Review & Merge — Model Picker Crash + Duplication on VS Code ≥1.126 — Session 2026-06-23 🟢 DONE
+
+**Action:** Reviewed community PR #53 (@Wallacy) fixing two model picker regressions introduced by the VS Code 1.126 unified picker (internal PR #321026). The PR went through two iterations after review feedback; iteration 2 shipped.
+
+**Root Cause:**
+
+1. **Crash.** `category` on each model info was typed as `{ label, order }` (object), but `LanguageModelChatInformation.category` expects a plain `string`. 1.126's unified picker calls `getCategoryLabel(model.metadata.category)` → `category.charAt(0)` → `TypeError` on an object. Verified against the bundled `src/vscode.proposed.chatProvider.d.ts` (provider version 5): the interface does not declare `category` as `{ label, order }`. Only `priceCategory?: string` exists. The object form was never type-correct.
+2. **Duplication.** 1.126 resolves models in two phases (groupless + group-based) for vendors with a `configuration` schema. Each model acquired a second cache identity. A second duplication source was the unconditional `SecretStorage` fallback added in iteration 1, which fired on both phases.
+
+**Changes (iteration 2, shipped):**
+
+| # | Change | Files | Impact |
+|---|--------|-------|--------|
+| P0 | Remove object-typed `category` field from `OpenCodeModel` and returned model info | `src/extension.ts` | Eliminates the `TypeError` crash on 1.126. |
+| P0 | Rewrite key resolution with `options.configuration` discriminator | `src/extension.ts` | Single conditional replaces `group` guard, `Set` dedup, and unconditional fallback. Handles four cases: undefined (resolving), `{apiKey}` (BYOK), `{}` (1.126 empty), agent variant (always secrets). |
+| P1 | Revert `warmModelPickerMetadata` to parallel `Promise.allSettled` | `src/extension.ts` | Iteration 1 made it sequential; not needed with new discriminator. |
+| P1 | Strip eight `[DIAG]` log calls | `src/extension.ts` | Replaced with one `this.log(\`[picker] options=...\`)`. |
+| P1 | Remove `*-agent` activation events | `package.json` | Not needed with new fallback strategy. |
+| D1 | Issue doc | `docs/issues/27-...` | Full root cause, both iterations, review notes. |
+| D2 | CHANGELOG entries | `CHANGELOG.md` | v0.3.4 Fixed section (already present from PR). |
+| D3 | README Agents Window section | `README.md` | Clarified Local vs Copilot split, `supportAgentsWindow` note. |
+| D4 | Devlog entry | `docs/devlog.md` | This entry. |
+
+**Verification:**
+
+```bash
+npm run compile    # 0 errors
+```
+
+**Manual test (reported by contributor):**
+
+- ✅ VS Code 1.125: chat picker without duplication, Agent Window working.
+- ✅ VS Code 1.126 Insiders: chat picker functional, no crash, no duplication.
+
+**Review trail:** Two technical questions raised (2026-06-22): (1) API key fallback behavior change for non-agent providers, (2) unconditional `triggerChange()` idempotency. Contributor confirmed the duplication issue in iteration 1 and fixed it in iteration 2. Both questions resolved by the `options.configuration` discriminator. Stale-key edge case in `secrets` acknowledged as non-blocking.
+
+**Result:** ✅ PR #53 merged with `--merge` (merge commit, all commits preserved). Both regressions resolved. v0.3.4 released.
+
+**Follow-up (not blocking):** `ProviderDefinition.categoryOrder` is now dead code (interface + `providerVariant` param + `PROVIDERS` assignments at lines 141, 170). Small cleanup PR candidate.
 
 ---
 
