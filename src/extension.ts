@@ -1315,18 +1315,29 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     options: vscode.PrepareLanguageModelChatModelOptions,
     token: vscode.CancellationToken
   ): Promise<OpenCodeModel[]> {
-    let apiKey = getConfiguredApiKey(options as ConfiguredLanguageModelInfoOptions)
-      // VS Code 1.126 no longer passes options.configuration (BYOK key) to
-      // non-agent providers.  Fall back to secret storage on ≥1.126 so models
-      // still appear.  On 1.125 the two-call resolution works correctly, so
-      // only agent-variant providers (which have no BYOK entry) need the
-      // fallback — applying it to all providers on 1.125 would cause
-      // duplication because the first call (no config) would succeed via
-      // secrets and the second call (with config) would return the same
-      // models again.
-      ?? (this.definition.isAgentVariant || compareVersions(vscode.version, "1.126") >= 0
-        ? await this.context.secrets.get(SECRET_KEY)
-        : undefined);
+    // Debug: log what VS Code actually sends us so we can understand the
+    // calling convention across versions without guessing.
+    this.log(`[picker] options=${JSON.stringify(options)}`);
+
+    // 1. Try BYOK configuration first (VS Code may supply the API key directly).
+    let apiKey = getConfiguredApiKey(options);
+
+    // 2. Fall back to secret storage when VS Code provided a configuration
+    //    object but it did not contain a usable API key.
+    //
+    //    The `options.configuration` truthy check is the key discriminator:
+    //
+    //    • configuration=undefined → VS Code is still resolving; return []
+    //      and let it call again with the real BYOK key.
+    //    • configuration={apiKey:"sk-..."} → BYOK key resolved above (step 1).
+    //    • configuration={} → VS Code 1.126+ sent an empty configuration for
+    //      non-BYOK providers; fall back to secret storage.
+    //    • Agent variants never receive BYOK keys (no configuration schema),
+    //      so they always need the secrets fallback regardless of whether
+    //      options.configuration is present.
+    if (!apiKey && (this.definition.isAgentVariant || options.configuration)) {
+      apiKey = await this.context.secrets.get(SECRET_KEY);
+    }
 
     if (!apiKey) {
       return [];
@@ -1676,22 +1687,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 function getConfiguredApiKey(options?: { configuration?: LanguageModelConfiguration }): string | undefined {
   const configuredApiKey = options?.configuration?.apiKey;
   return typeof configuredApiKey === "string" && configuredApiKey.trim() ? configuredApiKey.trim() : undefined;
-}
-
-/**
- * Compare two semver-like version strings (e.g. "1.125.0" vs "1.126").
- * Returns -1, 0, or 1.
- */
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] ?? 0;
-    const nb = pb[i] ?? 0;
-    if (na < nb) return -1;
-    if (na > nb) return 1;
-  }
-  return 0;
 }
 
 async function clearOpenCodeModelMetadataCache(
