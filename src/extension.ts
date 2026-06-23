@@ -1322,16 +1322,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     options: vscode.PrepareLanguageModelChatModelOptions,
     token: vscode.CancellationToken
   ): Promise<OpenCodeModel[]> {
-    // Log calling context for debugging, with credentials redacted.
-    // The log is gated behind the debugReasoning setting to avoid noise
-    // in production use.
     const opts = options as ConfiguredLanguageModelInfoOptions & { group?: string };
-    if (getSettings().debugReasoning) {
-      const safeConfig = opts.configuration
-        ? { ...opts.configuration, apiKey: opts.configuration.apiKey ? "[redacted]" : undefined }
-        : undefined;
-      this.log(`[picker] silent=${(options as any).silent} configuration=${JSON.stringify(safeConfig)} group=${opts.group} isAgent=${!!this.definition.isAgentVariant}`);
-    }
 
     // 1. Try BYOK configuration first (VS Code may supply the API key directly).
     let apiKey = getConfiguredApiKey(opts);
