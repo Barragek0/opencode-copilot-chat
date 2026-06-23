@@ -10,12 +10,17 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Fixed
 
+- **`[Model Picker]` Chat model picker no longer crashes on VS Code ≥1.126.** The `category` field in `provideLanguageModelChatInformation` was typed as `{ label, order }` (object), but VS Code's `LanguageModelChatInformation.category` expects a plain `string`. The unified picker calls `category.charAt(0)` → `TypeError` on an object. Changed to a plain string (`this.definition.displayName`). Fixes [#51](https://github.com/ltmoerdani/opencode-copilot-chat/issues/51).
+- **`[Model Picker]` OpenCode models now appear on VS Code ≥1.126.** VS Code 1.126 sends `options.configuration={}` (empty object) instead of the BYOK key for non-agent providers. The extension now falls back to `SecretStorage` whenever `options.configuration` is present but contains no usable API key — this covers both agent variants (which never get BYOK keys) and 1.126+ non-agent providers, without any version checks.
 - **`[Usage]` Baseline editing now correctly recalculates on re-edit.** The `setManualSpentTargets()` function now computes `baseline = target - tracked` (without clamping to 0) for all three periods. This allows **negative baselines** that offset tracked entries downward, so `display = tracked + baseline = target` exactly. Previously, `Math.max(0, ...)` prevented negative baselines — when a user lowered a target below the tracked amount, the display never updated because the delta clamped to 0. Also, session and weekly now use delta-based calculation (same as monthly) instead of absolute target injection, ensuring consistency and proper expiry behavior.
 - **`[Usage]` Input validation rejects non-numeric characters.** The usage target editor now validates input with a strict regex (`/^-?\d+[.,]?\d*$/`) that rejects strings like `60f` or `18asd` (which `parseFloat` would partially accept). Accepts both `.` and `,` as decimal separators for international users.
 - **`[Usage]` Status bar tooltip refreshes immediately after editing targets.** `refreshGoUsageStatusBar()` is now called right after `setManualSpentTargets()` so the hover tooltip updates without requiring a VS Code window reload.
 - **`[Usage]` Removed dead `setCostResolver()` method.** The `CostResolver` is injected via constructor closure and never updated after initialization — the setter was unreachable code.
 - **`[Usage]` Validation limits now derive from `GO_LIMITS`.** Input box validation for session ($12), weekly ($30), and monthly ($60) limits now reads from the exported `GO_LIMITS` constant instead of hardcoded numbers, preventing drift if limits change.
 - **`[Usage]` Tooltip command link now uses `supportedCommands`.** Added `md.supportedCommands = ["opencodego.setUsageTargets"]` to the usage tooltip so the `[$(pencil) Set spent targets]` link renders as a clickable command in all VS Code versions.
+
+
+### Known Issues
 
 ## [0.3.3] — 2026-06-17
 

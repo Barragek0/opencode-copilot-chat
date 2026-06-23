@@ -229,10 +229,6 @@ interface OpenCodeModel extends vscode.LanguageModelChatInformation {
   endpointKind: ModelEndpointKind;
   provider: ProviderDefinition;
   rawModelId?: string;
-  category?: {
-    label: string;
-    order: number;
-  };
   isUserSelectable?: boolean;
   configurationSchema?: vscode.LanguageModelConfigurationSchema;
 }
@@ -1319,25 +1315,46 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     options: vscode.PrepareLanguageModelChatModelOptions,
     token: vscode.CancellationToken
   ): Promise<OpenCodeModel[]> {
-    let apiKey = getConfiguredApiKey(options as ConfiguredLanguageModelInfoOptions)
-      // Agent variant providers inherit the API key from the base vendor's secret
-      // when no explicit key is configured for them in the Manage panel.
-      ?? (this.definition.isAgentVariant ? await this.context.secrets.get(SECRET_KEY) : undefined);
+    // Debug: log what VS Code actually sends us so we can understand the
+    // calling convention across versions without guessing.
+    this.log(`[picker] options=${JSON.stringify(options)}`);
+
+    // 1. Try BYOK configuration first (VS Code may supply the API key directly).
+    let apiKey = getConfiguredApiKey(options);
+
+    // 2. Fall back to secret storage when VS Code provided a configuration
+    //    object but it did not contain a usable API key.
+    //
+    //    The `options.configuration` truthy check is the key discriminator:
+    //
+    //    • configuration=undefined → VS Code is still resolving; return []
+    //      and let it call again with the real BYOK key.
+    //    • configuration={apiKey:"sk-..."} → BYOK key resolved above (step 1).
+    //    • configuration={} → VS Code 1.126+ sent an empty configuration for
+    //      non-BYOK providers; fall back to secret storage.
+    //    • Agent variants never receive BYOK keys (no configuration schema),
+    //      so they always need the secrets fallback regardless of whether
+    //      options.configuration is present.
+    if (!apiKey && (this.definition.isAgentVariant || options.configuration)) {
+      apiKey = await this.context.secrets.get(SECRET_KEY);
+    }
 
     if (!apiKey) {
       return [];
     }
 
-    // When a non-agent provider resolves its API key via BYOK configuration,
-    // persist it so that agent-variant providers (which have no BYOK entry)
-    // can inherit it from the extension's secret storage.
+    // When a non-agent provider resolves its API key, persist it so that
+    // agent-variant providers (which have no BYOK entry) can inherit it
+    // from the extension's secret storage.
     if (!this.definition.isAgentVariant) {
       const existing = await this.context.secrets.get(SECRET_KEY);
       if (existing !== apiKey) {
         await this.context.secrets.store(SECRET_KEY, apiKey);
       }
-      // Trigger re-resolution on the matching agent provider so it can
-      // discover the newly stored key and show up in the Agents window.
+      // Always trigger re-resolution on the matching agent provider so it
+      // picks up the latest key and model list.  Without this, the agent
+      // vendor stays resolved-without-live-models and its cache entries
+      // get dropped by mergeModelsWithCache.
       const agentProvider = agentProvidersByBaseVendor.get(this.definition.vendor);
       if (agentProvider) {
         agentProvider.triggerChange();
@@ -1349,6 +1366,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     }
 
     const models = await this.fetchModels();
+    if (models.length === 0) {
+      return [];
+    }
+
     const settings = getSettings();
     const metadataSnapshot = await this.getMetadataSnapshot();
 
@@ -1385,10 +1406,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           : modalityBadges
             ? `${baseTooltip}\n\n${modalityBadges}`
             : baseTooltip,
-        category: {
-          label: this.definition.displayName,
-          order: this.definition.categoryOrder
-        },
         isUserSelectable: true,
         maxInputTokens: limits.advertisedMaxInputTokens,
         maxOutputTokens: limits.advertisedMaxOutputTokens,
