@@ -724,6 +724,7 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
 function updateWebviewContent(): void {
   if (!usageWebviewPanel || !goUsageTracker) return;
   const s = goUsageTracker.getSummary();
+  const sc = goUsageTracker.getCurrentSessionCost();
 
   usageWebviewPanel.webview.html = `
     <!DOCTYPE html>
@@ -764,7 +765,7 @@ function updateWebviewContent(): void {
     </head>
     <body>
       <div class="container">
-        ${buildUsageTooltipSvg(s)}
+        ${buildUsageTooltipSvg(s, sc)}
       </div>
     </body>
     </html>
@@ -778,14 +779,8 @@ function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>, sessionC
   // supportedCommands is a proposed API — cast to bypass type check.
   (md as any).supportedCommands = ["opencodego.setUsageTargets"];
   md.appendMarkdown(
-    `<img alt="OpenCode Go usage summary" src="${usageTooltipSvgDataUri(s)}" width="330">`,
+    `<img alt="OpenCode Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost)}" width="330">`,
   );
-  if (sessionCost && sessionCost.cost > 0) {
-    const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
-    md.appendMarkdown(
-      `\n\n**Session:** $${sessionCost.cost.toFixed(4)} · ${sessionCost.requests} requests · ${tokens(totalTokens)} tokens`,
-    );
-  }
   md.appendMarkdown(
     "\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)"
   );
@@ -898,14 +893,15 @@ async function showUsageTargetEditor(
 
 type _UsageSummary = ReturnType<GoUsageTracker["getSummary"]>;
 
-function usageTooltipSvgDataUri(s: _UsageSummary): string {
-  const svg = buildUsageTooltipSvg(s);
+function usageTooltipSvgDataUri(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): string {
+  const svg = buildUsageTooltipSvg(s, sc);
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function buildUsageTooltipSvg(s: _UsageSummary): string {
+function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): string {
+  const hasSession = sc && sc.cost > 0;
   const width = 330;
-  const height = s.hasData ? 286 : 78;
+  const height = s.hasData ? (hasSession ? 310 : 286) : 78;
   const bg = "#1e1e1e";
   const fg = "#d4d4d4";
   const muted = "#a6a6a6";
@@ -963,17 +959,25 @@ ${period("Session (5h rolling)", s.session, 54)}
 ${period("Weekly", s.weekly, 116)}
 ${period("Monthly", s.monthly, 178)}
 <line x1="14" y1="224" x2="316" y2="224" stroke="${line}" stroke-width="1"/>
-${text("Today:", 14, 256, 13, 400, muted)}
-${text(usd(s.today.cost), 58, 256, 13, 700)}
-${text("Requests:", 138, 256, 13, 400, muted)}
-${text(String(s.today.requests), 202, 256, 13, 700)}
-${text("Tokens:", 236, 256, 13, 400, muted)}
-${text(tokens(s.today.tokens), 296, 256, 13, 700)}
+${hasSession ? [
+    text("Session:", 14, 250, 13, 400, muted),
+    text(`$${sc!.cost.toFixed(4)}`, 80, 250, 13, 700),
+    text("Requests:", 138, 250, 13, 400, muted),
+    text(String(sc!.requests), 202, 250, 13, 700),
+    text("Tokens:", 236, 250, 13, 400, muted),
+    text(tokens(sc!.promptTokens + sc!.completionTokens), 296, 250, 13, 700),
+  ].join("") : ""}
+${text("Today:", 14, hasSession ? 274 : 256, 13, 400, muted)}
+${text(usd(s.today.cost), hasSession ? 80 : 58, hasSession ? 274 : 256, 13, 700)}
+${text("Requests:", hasSession ? 138 : 138, hasSession ? 274 : 256, 13, 400, muted)}
+${text(String(s.today.requests), hasSession ? 202 : 202, hasSession ? 274 : 256, 13, 700)}
+${text("Tokens:", hasSession ? 236 : 236, hasSession ? 274 : 256, 13, 400, muted)}
+${text(tokens(s.today.tokens), hasSession ? 296 : 296, hasSession ? 274 : 256, 13, 700)}
 ${s.yesterday.requests > 0 ? [
-    text("Yesterday:", 14, 278, 13, 400, muted),
-    text(usd(s.yesterday.cost), 80, 278, 13, 700),
-    text("Requests:", 154, 278, 13, 400, muted),
-    text(String(s.yesterday.requests), 218, 278, 13, 700),
+    text("Yesterday:", 14, hasSession ? 298 : 278, 13, 400, muted),
+    text(usd(s.yesterday.cost), hasSession ? 80 : 80, hasSession ? 298 : 278, 13, 700),
+    text("Requests:", hasSession ? 154 : 154, hasSession ? 298 : 278, 13, 400, muted),
+    text(String(s.yesterday.requests), hasSession ? 218 : 218, hasSession ? 298 : 278, 13, 700),
   ].join("") : ""}
 </svg>`;
 }

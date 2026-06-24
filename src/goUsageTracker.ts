@@ -14,6 +14,7 @@ export type CostResolver = (modelId: string) => ModelCost | undefined;
 
 const STORAGE_KEY = "opencodego.usageLog.v1";
 const BASELINE_STORAGE_KEY = "opencodego.usageBaseline.v1";
+const SESSION_COSTS_KEY = "opencodego.sessionCosts.v1";
 const MAX_LOG_ENTRIES = 2000;
 
 /** OpenCode Go subscription limits in USD, from https://opencode.ai/docs/go */
@@ -604,6 +605,7 @@ export class GoUsageTracker {
 
   private persist(): void {
     void this.context.globalState.update(STORAGE_KEY, this.entries);
+    void this.context.globalState.update(SESSION_COSTS_KEY, [...this.sessionCosts.values()]);
   }
 
   private persistBaseline(): void {
@@ -632,6 +634,17 @@ export class GoUsageTracker {
     const baseline = this.context.globalState.get<UsageBaseline>(BASELINE_STORAGE_KEY, {});
     if (baseline && typeof baseline === "object") {
       this.baseline = baseline;
+    }
+
+    // Restore session costs from persistence
+    const storedSessions = this.context.globalState.get<SessionCostSummary[]>(SESSION_COSTS_KEY, []);
+    if (Array.isArray(storedSessions)) {
+      for (const s of storedSessions) {
+        if (s && typeof s.sessionId === "string" && typeof s.cost === "number") {
+          this.sessionCosts.set(s.sessionId, s);
+        }
+      }
+      this.pruneSessions();
     }
   }
 }
