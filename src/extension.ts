@@ -471,6 +471,20 @@ export function activate(context: vscode.ExtensionContext) {
       if (!goUsageTracker) return;
       const summary = goUsageTracker.getSummary();
       const items = buildUsageQuickPickItems(summary);
+
+      // Prepend current chat session cost if available
+      const sessionCost = goUsageTracker.getCurrentSessionCost();
+      if (sessionCost && sessionCost.cost > 0) {
+        const sessionSeparator: vscode.QuickPickItem = { label: "Chat Session", kind: vscode.QuickPickItemKind.Separator };
+        const sessionItem: vscode.QuickPickItem = {
+          label: `$(comment) This Session`,
+          description: `$${sessionCost.cost.toFixed(4)}`,
+          detail: `${sessionCost.requests} requests · ${tokens(sessionCost.promptTokens + sessionCost.completionTokens)} tokens`,
+          alwaysShow: true,
+        };
+        items.unshift(sessionSeparator, sessionItem);
+      }
+
       const separator: vscode.QuickPickItem = { label: "", kind: vscode.QuickPickItemKind.Separator };
       const setTargetItem: vscode.QuickPickItem & { _action?: string } = { label: "$(edit) Set spent targets…", _action: "setUsageTargets" };
       const panelItem: vscode.QuickPickItem & { _action?: string } = { label: "$(graph) Open full usage panel", _action: "showUsageDetails" };
@@ -673,7 +687,7 @@ function refreshGoUsageStatusBar(): void {
   if (!goUsageStatusBarItem || !goUsageTracker) return;
   const s = goUsageTracker.getSummary();
   goUsageStatusBarItem.text    = formatGoUsageStatusBarText(s);
-  goUsageStatusBarItem.tooltip = buildUsageTooltip(s);
+  goUsageStatusBarItem.tooltip = buildUsageTooltip(s, goUsageTracker.getCurrentSessionCost());
   goUsageStatusBarItem.show();
   updateWebviewContent();
 }
@@ -751,7 +765,7 @@ function updateWebviewContent(): void {
   `;
 }
 
-function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>): vscode.MarkdownString {
+function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>, sessionCost?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): vscode.MarkdownString {
   const md = new vscode.MarkdownString("", true);
   md.supportHtml = true;
   md.isTrusted = true;
@@ -760,6 +774,12 @@ function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>): vscode.
   md.appendMarkdown(
     `<img alt="OpenCode Go usage summary" src="${usageTooltipSvgDataUri(s)}" width="330">`,
   );
+  if (sessionCost && sessionCost.cost > 0) {
+    const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
+    md.appendMarkdown(
+      `\n\n**Session:** $${sessionCost.cost.toFixed(4)} · ${sessionCost.requests} requests · ${tokens(totalTokens)} tokens`,
+    );
+  }
   md.appendMarkdown(
     "\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)"
   );

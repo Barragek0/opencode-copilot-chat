@@ -62,6 +62,18 @@ export interface UsageLogEntry {
   promptTokens: number;
   completionTokens: number;
   cachedTokens: number;
+  /** Chat session identifier (stable hash per conversation thread). */
+  sessionId?: string;
+}
+
+/** Aggregated cost for a single chat session. */
+export interface SessionCostSummary {
+  sessionId: string;
+  cost: number;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  lastActivity: number;
 }
 
 export interface PeriodUsage {
@@ -238,6 +250,10 @@ export class GoUsageTracker {
   private baseline: UsageBaseline = {};
   private readonly log?: (msg: string) => void;
   private costResolver?: CostResolver;
+  /** Per-chat-session cost accumulator. Key = sessionId. */
+  private sessionCosts = new Map<string, SessionCostSummary>();
+  private static readonly SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
+  private static readonly MAX_SESSIONS = 50;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -277,7 +293,30 @@ export class GoUsageTracker {
       promptTokens:      prompt,
       completionTokens:  completion,
       cachedTokens:      cached,
+      sessionId:         summary.sessionId,
     });
+
+    // Accumulate per-session cost
+    if (summary.sessionId) {
+      const existing = this.sessionCosts.get(summary.sessionId);
+      if (existing) {
+        existing.cost += cost;
+        existing.requests++;
+        existing.promptTokens += prompt;
+        existing.completionTokens += completion;
+        existing.lastActivity = Date.now();
+      } else {
+        this.sessionCosts.set(summary.sessionId, {
+          sessionId: summary.sessionId,
+          cost,
+          requests: 1,
+          promptTokens: prompt,
+          completionTokens: completion,
+          lastActivity: Date.now(),
+        });
+      }
+      this.pruneSessions();
+    }
 
     this.prune();
     this.persist();
@@ -523,6 +562,44 @@ export class GoUsageTracker {
     this.entries = this.entries
       .filter(e => e.timestamp > cutoff)
       .slice(-MAX_LOG_ENTRIES);
+  }
+
+  /** Remove idle sessions and cap total count. */
+  private pruneSessions(): void {
+    const now = Date.now();
+    const idleCutoff = now - GoUsageTracker.SESSION_IDLE_MS;
+    for (const [id, s] of this.sessionCosts) {
+      if (s.lastActivity < idleCutoff) {
+        this.sessionCosts.delete(id);
+      }
+    }
+    // If still over limit, remove oldest by lastActivity
+    if (this.sessionCosts.size > GoUsageTracker.MAX_SESSIONS) {
+      const sorted = [...this.sessionCosts.entries()]
+        .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+      const toRemove = sorted.length - GoUsageTracker.MAX_SESSIONS;
+      for (let i = 0; i < toRemove; i++) {
+        this.sessionCosts.delete(sorted[i][0]);
+      }
+    }
+  }
+
+  /** Returns the most recent chat session's cost summary. */
+  getCurrentSessionCost(): SessionCostSummary | undefined {
+    let latest: SessionCostSummary | undefined;
+    for (const s of this.sessionCosts.values()) {
+      if (!latest || s.lastActivity > latest.lastActivity) {
+        latest = s;
+      }
+    }
+    return latest;
+  }
+
+  /** Returns up to `limit` most recent session cost summaries, ordered by last activity (newest first). */
+  getRecentSessionCosts(limit = 5): SessionCostSummary[] {
+    return [...this.sessionCosts.values()]
+      .sort((a, b) => b.lastActivity - a.lastActivity)
+      .slice(0, limit);
   }
 
   private persist(): void {

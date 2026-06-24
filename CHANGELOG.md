@@ -4,6 +4,10 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Added
+
+- **`[Usage]` Session-level cost tracking.** The status bar tooltip and usage QuickPick now show the cost of the current chat session (requests, tokens, USD). Each chat thread gets a unique `sessionId` derived from the conversation content; the tracker accumulates costs per session in memory. Sessions idle for >2h are pruned automatically. This complements the existing subscription-level tracking (session/weekly/monthly rolling windows) and aligns with VS Code 1.126's session cost feature.
+
 ### Changed
 
 - **`[Model Picker]` Removed `triggerChange()` cross-provider re-resolution.** The agent-variant providers now resolve their API key independently via the secrets fallback path (`isAgentVariant || options.configuration`). Previously, the base provider called `triggerChange()` on the agent provider to force it to re-resolve after storing the BYOK key — this indirection is no longer needed since both paths reach the same `SecretStorage` read.
