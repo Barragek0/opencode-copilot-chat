@@ -65,6 +65,8 @@ export interface UsageLogEntry {
   cachedTokens: number;
   /** Chat session identifier (stable hash per conversation thread). */
   sessionId?: string;
+  /** Credits for VS Code session cost (1 credit = $0.01). */
+  copilotCredits?: number;
 }
 
 /** Aggregated cost for a single chat session. */
@@ -284,8 +286,11 @@ export class GoUsageTracker {
     }
 
     const cost = estimateCost(summary.modelId, prompt, completion, cached, externalCost, this.costResolver);
+    // VS Code session cost reads usage.copilotCredits (1 credit = $0.01).
+    // Compute from USD cost so the session info popover shows accurate totals.
+    const copilotCredits = cost * 100;
 
-    this.log?.(`[go-tracker] RECORD: model=${summary.modelId} prompt=${prompt} completion=${completion} cached=${cached} cost=$${cost.toFixed(6)}`);
+    this.log?.(`[go-tracker] RECORD: model=${summary.modelId} prompt=${prompt} completion=${completion} cached=${cached} cost=$${cost.toFixed(6)} credits=${copilotCredits.toFixed(4)}`);
 
     this.entries.push({
       timestamp:         Date.now(),
@@ -295,6 +300,7 @@ export class GoUsageTracker {
       completionTokens:  completion,
       cachedTokens:      cached,
       sessionId:         summary.sessionId,
+      copilotCredits,
     });
 
     // Accumulate per-session cost

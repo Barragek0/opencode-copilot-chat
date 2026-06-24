@@ -976,8 +976,10 @@ ${text(tokens(s.today.tokens), hasSession ? 296 : 296, hasSession ? 274 : 256, 1
 ${s.yesterday.requests > 0 ? [
     text("Yesterday:", 14, hasSession ? 298 : 278, 13, 400, muted),
     text(usd(s.yesterday.cost), hasSession ? 80 : 80, hasSession ? 298 : 278, 13, 700),
-    text("Requests:", hasSession ? 154 : 154, hasSession ? 298 : 278, 13, 400, muted),
-    text(String(s.yesterday.requests), hasSession ? 218 : 218, hasSession ? 298 : 278, 13, 700),
+    text("Requests:", 138, hasSession ? 298 : 278, 13, 400, muted),
+    text(String(s.yesterday.requests), 202, hasSession ? 298 : 278, 13, 700),
+    text("Tokens:", 236, hasSession ? 298 : 278, 13, 400, muted),
+    text(tokens(s.yesterday.tokens), 296, hasSession ? 298 : 278, 13, 700),
   ].join("") : ""}
 </svg>`;
 }
@@ -1514,6 +1516,21 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     );
     const outputChannel = this.getOutputChannel();
     const onTransportSummary = (summary: TransportRequestSummary) => {
+      // Compute credits for VS Code session cost (1 credit = $0.01).
+      // VS Code reads usage.copilotCredits from the LanguageModelDataPart
+      // to accumulate session cost. We mutate the summary object directly
+      // so emitSummary includes it in the usage data parts.
+      const prompt = summary.promptTokens ?? 0;
+      const completion = summary.completionTokens ?? 0;
+      const cached = summary.cachedTokens ?? 0;
+      const billablePrompt = Math.max(0, prompt - cached);
+      const cost = metadata.cost
+        ? billablePrompt * metadata.cost.input / 1_000_000
+          + completion * metadata.cost.output / 1_000_000
+          + cached * (metadata.cost.cache_read ?? metadata.cost.input * 0.1) / 1_000_000
+        : 0;
+      summary.copilotCredits = cost * 100;
+
       this.recordTransportSummary(
         summary,
         routing.endpointKind,
@@ -1522,7 +1539,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       );
       updateUsageStatusBar(this.definition.displayName, rawModelId, summary);
       if (this.baseVendor === GO_VENDOR && goUsageTracker) {
-        this.log(`[go-usage] Recording: provider=${summary.providerDisplayName} model=${summary.modelId} promptTokens=${summary.promptTokens ?? "n/a"} completionTokens=${summary.completionTokens ?? "n/a"} cachedTokens=${summary.cachedTokens ?? "n/a"} status=${summary.status ?? "n/a"} error=${summary.errorMessage ?? "none"}`);
+        this.log(`[go-usage] Recording: provider=${summary.providerDisplayName} model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached} credits=${summary.copilotCredits.toFixed(4)} status=${summary.status ?? "n/a"} error=${summary.errorMessage ?? "none"}`);
         goUsageTracker.record(summary, metadata.cost);
         refreshGoUsageStatusBar();
         this.log(`[go-usage] After record: entries=${goUsageTracker.getSummary().today.requests}`);
