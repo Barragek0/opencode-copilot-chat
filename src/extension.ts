@@ -472,17 +472,23 @@ export function activate(context: vscode.ExtensionContext) {
       const summary = goUsageTracker.getSummary();
       const items = buildUsageQuickPickItems(summary);
 
-      // Prepend current chat session cost if available
+      // Prepend current chat session cost alongside today/yesterday
       const sessionCost = goUsageTracker.getCurrentSessionCost();
       if (sessionCost && sessionCost.cost > 0) {
-        const sessionSeparator: vscode.QuickPickItem = { label: "Chat Session", kind: vscode.QuickPickItemKind.Separator };
+        const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
         const sessionItem: vscode.QuickPickItem = {
-          label: `$(comment) This Session`,
+          label:      `$(comment) This Session`,
           description: `$${sessionCost.cost.toFixed(4)}`,
-          detail: `${sessionCost.requests} requests · ${tokens(sessionCost.promptTokens + sessionCost.completionTokens)} tokens`,
+          detail:     `${tokens(totalTokens)} tokens · ${sessionCost.requests} requests`,
           alwaysShow: true,
         };
-        items.unshift(sessionSeparator, sessionItem);
+        // Insert at the top of the "Daily Summary" section (after the last period bar)
+        const dailyIdx = items.findIndex(i => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
+        if (dailyIdx >= 0) {
+          items.splice(dailyIdx + 1, 0, sessionItem);
+        } else {
+          items.push(sessionItem);
+        }
       }
 
       const separator: vscode.QuickPickItem = { label: "", kind: vscode.QuickPickItemKind.Separator };
