@@ -4,6 +4,18 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Changed
+
+- **`[Model Picker]` Removed `triggerChange()` cross-provider re-resolution.** The agent-variant providers now resolve their API key independently via the secrets fallback path (`isAgentVariant || options.configuration`). Previously, the base provider called `triggerChange()` on the agent provider to force it to re-resolve after storing the BYOK key — this indirection is no longer needed since both paths reach the same `SecretStorage` read.
+- **`[Model Picker]` Removed `categoryOrder` from `ProviderDefinition`.** This field was left over from the old `category: { label, order }` object that crashed the picker on VS Code ≥1.126 (fixed in 0.3.4). It was never read after the type was changed to a plain string.
+
+### Fixed
+
+- **`[Security]` Picker debug log no longer leaks API keys.** The previous `JSON.stringify(options)` debug log wrote the full `options` object (including `configuration.apiKey`) to the Output channel in plaintext. Removed entirely — the log served only as a temporary diagnostic during the 1.125/1.126 picker investigation and is no longer needed.
+- **`[Security]` `Clear API Key` action now warns about BYOK re-persistence.** When the user clears the key via `SecretStorage`, the next picker resolution re-stores it from `options.configuration` (BYOK). The info message now tells the user to also remove it from the Manage Models panel if they want a full clear.
+- **`[Performance]` `reasoningContentByToolCallId` capped at 500 entries.** In long agent sessions (many tool calls), this `Map` grew without limit — one entry per `toolCallId` was added but never evicted. Over a multi-hour session this could accumulate thousands of entries of reasoning text. Now uses a LRU-style eviction: when the map exceeds 500 entries, the oldest entries (by insertion order) are removed. At ~200–500 tokens per reasoning chunk, 500 entries ≈ 100K–250K tokens of cached reasoning, which comfortably covers the most intensive agent workflows while bounding memory growth.
+- **`[Optimization]` Removed dead `agentProvidersByBaseVendor` map.** This `Map<string, OpenCodeProvider>` was populated during activation but never read after `triggerChange()` was removed. It held strong references to the agent provider instances unnecessarily.
+
 ### Known Issues
 
 ---

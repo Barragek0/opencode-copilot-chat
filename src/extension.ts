@@ -67,9 +67,6 @@ const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummari
 let usageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
 
-/** Maps base vendor → agent-variant provider instance for cross-resolution. */
-const agentProvidersByBaseVendor = new Map<string, OpenCodeProvider>();
-
 let goUsageTracker: GoUsageTracker | undefined;
 let usageWebviewPanel: vscode.WebviewPanel | undefined;
 
@@ -81,7 +78,6 @@ interface ProviderDefinition {
   chatCompletionsUrl: string;
   messagesUrl: string;
   responsesUrl?: string;
-  categoryOrder: number;
   testModelId: string;
   fallbackModels: string[];
   filterModel?: (modelId: string) => boolean;
@@ -113,7 +109,6 @@ function providerVariant(
   base: ProviderDefinition,
   agentVendor: typeof AGENT_GO_VENDOR | typeof AGENT_ZEN_VENDOR,
   displayName: string,
-  categoryOrder: number,
 ): ProviderDefinition {
   return {
     vendor: agentVendor,
@@ -123,7 +118,6 @@ function providerVariant(
     chatCompletionsUrl: base.chatCompletionsUrl,
     messagesUrl: base.messagesUrl,
     responsesUrl: base.responsesUrl,
-    categoryOrder,
     testModelId: base.testModelId,
     fallbackModels: base.fallbackModels,
     filterModel: base.filterModel,
@@ -138,7 +132,6 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
     modelsUrl: "https://opencode.ai/zen/go/v1/models",
     chatCompletionsUrl: "https://opencode.ai/zen/go/v1/chat/completions",
     messagesUrl: "https://opencode.ai/zen/go/v1/messages",
-    categoryOrder: 2,
     testModelId: "deepseek-v4-flash",
     fallbackModels: [
       "deepseek-v4-pro",
@@ -167,7 +160,6 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
     chatCompletionsUrl: "https://opencode.ai/zen/v1/chat/completions",
     messagesUrl: "https://opencode.ai/zen/v1/messages",
     responsesUrl: "https://opencode.ai/zen/v1/responses",
-    categoryOrder: 3,
     testModelId: "deepseek-v4-flash-free",
     fallbackModels: [
       "claude-opus-4-7",
@@ -218,8 +210,8 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
   return {
     [GO_VENDOR]: go,
     [ZEN_VENDOR]: zen,
-    [AGENT_GO_VENDOR]: { ...providerVariant(go, AGENT_GO_VENDOR, "OpenCode Go (Agents)", 4), isAgentVariant: true, baseVendor: GO_VENDOR },
-    [AGENT_ZEN_VENDOR]: { ...providerVariant(zen, AGENT_ZEN_VENDOR, "OpenCode Zen (Agents)", 5), isAgentVariant: true, baseVendor: ZEN_VENDOR },
+    [AGENT_GO_VENDOR]: { ...providerVariant(go, AGENT_GO_VENDOR, "OpenCode Go (Agents)"), isAgentVariant: true, baseVendor: GO_VENDOR },
+    [AGENT_ZEN_VENDOR]: { ...providerVariant(zen, AGENT_ZEN_VENDOR, "OpenCode Zen (Agents)"), isAgentVariant: true, baseVendor: ZEN_VENDOR },
   };
 })();
 
@@ -502,8 +494,6 @@ export function activate(context: vscode.ExtensionContext) {
   if (enableAgents) {
     const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
     const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
-    agentProvidersByBaseVendor.set(GO_VENDOR, agentGoProvider);
-    agentProvidersByBaseVendor.set(ZEN_VENDOR, agentZenProvider);
     subscriptions.push(
       vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider),
       vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider),
@@ -989,19 +979,32 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   private readonly changeEmitter = new vscode.EventEmitter<void>();
   readonly onDidChangeLanguageModelChatInformation = this.changeEmitter.event;
   private readonly apiKeysByModelId = new Map<string, string>();
+  /** Capped to prevent unbounded growth across long sessions. */
   private readonly reasoningContentByToolCallId = new Map<string, string>();
+  private static readonly REASONING_CACHE_LIMIT = 500;
   private readonly liveModelMetadataById = new Map<string, ModelMetadataFields>();
   private readonly recentTransportSummaries: RecentTransportSummary[] = [];
   private outputChannel: vscode.OutputChannel | undefined;
 
-  /** Allow the main provider to trigger re-resolution on the agent variant after BYOK key is stored. */
-  triggerChange(): void {
-    this.changeEmitter.fire();
-  }
-
   /** Resolves agent-host variants to their base vendor for metadata/routing. */
   private get baseVendor(): ProviderVendor {
     return resolveBaseVendor(this.definition.vendor);
+  }
+
+  /** Store reasoning content with a cap to prevent unbounded memory growth. */
+  private storeReasoningContent(toolCallIds: string[], reasoningContent: string): void {
+    for (const toolCallId of toolCallIds) {
+      this.reasoningContentByToolCallId.set(toolCallId, reasoningContent);
+    }
+    // Evict oldest entries if the cache exceeds the limit.
+    if (this.reasoningContentByToolCallId.size > OpenCodeProvider.REASONING_CACHE_LIMIT) {
+      const excess = this.reasoningContentByToolCallId.size - OpenCodeProvider.REASONING_CACHE_LIMIT;
+      const keys = this.reasoningContentByToolCallId.keys();
+      for (let i = 0; i < excess; i++) {
+        const key = keys.next().value;
+        if (key) this.reasoningContentByToolCallId.delete(key);
+      }
+    }
   }
 
   constructor(
@@ -1191,8 +1194,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     if (choice.action === "clear") {
       await this.context.secrets.delete(SECRET_KEY);
+      // Note: if the user also configured the key via VS Code's Manage Models
+      // panel (BYOK), the next picker resolution will re-store it from
+      // options.configuration into secrets.  To fully remove the key, clear
+      // it from the Manage Models panel too.
       this.changeEmitter.fire();
-      vscode.window.showInformationMessage("OpenCode Go API key cleared.");
+      vscode.window.showInformationMessage("OpenCode Go API key cleared. If you also set it via Manage Models, remove it there too.");
       return;
     }
 
@@ -1315,12 +1322,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     options: vscode.PrepareLanguageModelChatModelOptions,
     token: vscode.CancellationToken
   ): Promise<OpenCodeModel[]> {
-    // Debug: log what VS Code actually sends us so we can understand the
-    // calling convention across versions without guessing.
-    this.log(`[picker] options=${JSON.stringify(options)}`);
+    const opts = options as ConfiguredLanguageModelInfoOptions & { group?: string };
 
     // 1. Try BYOK configuration first (VS Code may supply the API key directly).
-    let apiKey = getConfiguredApiKey(options);
+    let apiKey = getConfiguredApiKey(opts);
 
     // 2. Fall back to secret storage when VS Code provided a configuration
     //    object but it did not contain a usable API key.
@@ -1350,14 +1355,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       const existing = await this.context.secrets.get(SECRET_KEY);
       if (existing !== apiKey) {
         await this.context.secrets.store(SECRET_KEY, apiKey);
-      }
-      // Always trigger re-resolution on the matching agent provider so it
-      // picks up the latest key and model list.  Without this, the agent
-      // vendor stays resolved-without-live-models and its cache entries
-      // get dropped by mergeModelsWithCache.
-      const agentProvider = agentProvidersByBaseVendor.get(this.definition.vendor);
-      if (agentProvider) {
-        agentProvider.triggerChange();
       }
     }
 
@@ -1553,9 +1550,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           onTransportSummary,
           stripThinkTags: settings.stripThinkTags,
           onReasoningContent: (toolCallIds, reasoningContent) => {
-          for (const toolCallId of toolCallIds) {
-            this.reasoningContentByToolCallId.set(toolCallId, reasoningContent);
-          }
+            this.storeReasoningContent(toolCallIds, reasoningContent);
           }
         });
         this.log(`Request completed: model=${model.id}`);
@@ -1582,9 +1577,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           onTransportSummary,
           stripThinkTags: settings.stripThinkTags,
           onReasoningContent: (toolCallIds, reasoningContent) => {
-          for (const toolCallId of toolCallIds) {
-            this.reasoningContentByToolCallId.set(toolCallId, reasoningContent);
-          }
+            this.storeReasoningContent(toolCallIds, reasoningContent);
           }
         });
         return;
@@ -1609,9 +1602,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         onTransportSummary,
         stripThinkTags: settings.stripThinkTags,
         onReasoningContent: (toolCallIds, reasoningContent) => {
-          for (const toolCallId of toolCallIds) {
-            this.reasoningContentByToolCallId.set(toolCallId, reasoningContent);
-          }
+          this.storeReasoningContent(toolCallIds, reasoningContent);
         }
       });
       this.log(`Request completed: model=${model.id}`);
