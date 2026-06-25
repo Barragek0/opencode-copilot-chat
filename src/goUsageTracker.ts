@@ -182,7 +182,8 @@ function nextSessionReset(entries: UsageLogEntry[], nowMs: number): Date {
 
 // ─── Cost calculation ────────────────────────────────────────────────────────
 
-function estimateCost(
+/** Priority: caller-provided cost > live models.dev snapshot > bundled table */
+export function estimateCost(
   modelId: string,
   promptTokens: number,
   completionTokens: number,

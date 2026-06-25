@@ -57,6 +57,7 @@ import {
   GO_LIMITS,
   formatGoUsageStatusBarText,
   buildUsageQuickPickItems,
+  estimateCost,
   type UsageBaselineTargets,
 } from "./goUsageTracker";
 
@@ -477,7 +478,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (sessionCost && sessionCost.cost > 0) {
         const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
         const sessionItem: vscode.QuickPickItem = {
-          label:      `$(comment) This Session`,
+          label:      `$(comment) Latest Session`,
           description: `$${sessionCost.cost.toFixed(4)}`,
           detail:     `${tokens(totalTokens)} tokens · ${sessionCost.requests} requests`,
           alwaysShow: true,
@@ -1520,15 +1521,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       // VS Code reads usage.copilotCredits from the LanguageModelDataPart
       // to accumulate session cost. We mutate the summary object directly
       // so emitSummary includes it in the usage data parts.
+      // Use the same estimateCost() helper as goUsageTracker.record() to
+      // guarantee cost and credits stay in sync.
       const prompt = summary.promptTokens ?? 0;
       const completion = summary.completionTokens ?? 0;
       const cached = summary.cachedTokens ?? 0;
-      const billablePrompt = Math.max(0, prompt - cached);
-      const cost = metadata.cost
-        ? billablePrompt * metadata.cost.input / 1_000_000
-          + completion * metadata.cost.output / 1_000_000
-          + cached * (metadata.cost.cache_read ?? metadata.cost.input * 0.1) / 1_000_000
-        : 0;
+      const cost = estimateCost(summary.modelId, prompt, completion, cached, metadata.cost);
       summary.copilotCredits = cost * 100;
 
       this.recordTransportSummary(

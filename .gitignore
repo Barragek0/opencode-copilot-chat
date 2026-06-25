@@ -4,3 +4,5 @@ out/
 .DS_Store
 scripts/validate-models.mjs
 scripts/validate-models.mjs.map
+# Test artifacts from vscode module mocking
+vscode-mock-*/
