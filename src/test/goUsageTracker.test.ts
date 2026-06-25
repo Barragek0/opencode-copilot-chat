@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import Module from "node:module";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import type { ModelCost } from "../metadata.js";
 import type { TransportRequestSummary } from "../streaming.js";
 
@@ -90,7 +91,7 @@ function makeSummary(
  * This avoids the need for mock.module() which is unavailable in this Node version.
  */
 const vscodeMockPath = path.join(
-  fs.mkdtempSync("vscode-mock-"),
+  fs.mkdtempSync(path.join(os.tmpdir(), "vscode-mock-opencode-")),
   "index.js",
 );
 fs.mkdirSync(path.dirname(vscodeMockPath), { recursive: true });
