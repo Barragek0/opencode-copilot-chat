@@ -14,6 +14,7 @@ export type CostResolver = (modelId: string) => ModelCost | undefined;
 
 const STORAGE_KEY = "opencodego.usageLog.v1";
 const BASELINE_STORAGE_KEY = "opencodego.usageBaseline.v1";
+const SESSION_COSTS_KEY = "opencodego.sessionCosts.v1";
 const MAX_LOG_ENTRIES = 2000;
 
 /** OpenCode Go subscription limits in USD, from https://opencode.ai/docs/go */
@@ -62,6 +63,20 @@ export interface UsageLogEntry {
   promptTokens: number;
   completionTokens: number;
   cachedTokens: number;
+  /** Chat session identifier (stable hash per conversation thread). */
+  sessionId?: string;
+  /** Credits for VS Code session cost (1 credit = $0.01). */
+  copilotCredits?: number;
+}
+
+/** Aggregated cost for a single chat session. */
+export interface SessionCostSummary {
+  sessionId: string;
+  cost: number;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  lastActivity: number;
 }
 
 export interface PeriodUsage {
@@ -167,7 +182,8 @@ function nextSessionReset(entries: UsageLogEntry[], nowMs: number): Date {
 
 // ─── Cost calculation ────────────────────────────────────────────────────────
 
-function estimateCost(
+/** Priority: caller-provided cost > live models.dev snapshot > bundled table */
+export function estimateCost(
   modelId: string,
   promptTokens: number,
   completionTokens: number,
@@ -238,6 +254,10 @@ export class GoUsageTracker {
   private baseline: UsageBaseline = {};
   private readonly log?: (msg: string) => void;
   private costResolver?: CostResolver;
+  /** Per-chat-session cost accumulator. Key = sessionId. */
+  private sessionCosts = new Map<string, SessionCostSummary>();
+  private static readonly SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
+  private static readonly MAX_SESSIONS = 50;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -267,8 +287,11 @@ export class GoUsageTracker {
     }
 
     const cost = estimateCost(summary.modelId, prompt, completion, cached, externalCost, this.costResolver);
+    // VS Code session cost reads usage.copilotCredits (1 credit = $0.01).
+    // Compute from USD cost so the session info popover shows accurate totals.
+    const copilotCredits = cost * 100;
 
-    this.log?.(`[go-tracker] RECORD: model=${summary.modelId} prompt=${prompt} completion=${completion} cached=${cached} cost=$${cost.toFixed(6)}`);
+    this.log?.(`[go-tracker] RECORD: model=${summary.modelId} prompt=${prompt} completion=${completion} cached=${cached} cost=$${cost.toFixed(6)} credits=${copilotCredits.toFixed(4)}`);
 
     this.entries.push({
       timestamp:         Date.now(),
@@ -277,7 +300,31 @@ export class GoUsageTracker {
       promptTokens:      prompt,
       completionTokens:  completion,
       cachedTokens:      cached,
+      sessionId:         summary.sessionId,
+      copilotCredits,
     });
+
+    // Accumulate per-session cost
+    if (summary.sessionId) {
+      const existing = this.sessionCosts.get(summary.sessionId);
+      if (existing) {
+        existing.cost += cost;
+        existing.requests++;
+        existing.promptTokens += prompt;
+        existing.completionTokens += completion;
+        existing.lastActivity = Date.now();
+      } else {
+        this.sessionCosts.set(summary.sessionId, {
+          sessionId: summary.sessionId,
+          cost,
+          requests: 1,
+          promptTokens: prompt,
+          completionTokens: completion,
+          lastActivity: Date.now(),
+        });
+      }
+      this.pruneSessions();
+    }
 
     this.prune();
     this.persist();
@@ -525,8 +572,47 @@ export class GoUsageTracker {
       .slice(-MAX_LOG_ENTRIES);
   }
 
+  /** Remove idle sessions and cap total count. */
+  private pruneSessions(): void {
+    const now = Date.now();
+    const idleCutoff = now - GoUsageTracker.SESSION_IDLE_MS;
+    for (const [id, s] of this.sessionCosts) {
+      if (s.lastActivity < idleCutoff) {
+        this.sessionCosts.delete(id);
+      }
+    }
+    // If still over limit, remove oldest by lastActivity
+    if (this.sessionCosts.size > GoUsageTracker.MAX_SESSIONS) {
+      const sorted = [...this.sessionCosts.entries()]
+        .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+      const toRemove = sorted.length - GoUsageTracker.MAX_SESSIONS;
+      for (let i = 0; i < toRemove; i++) {
+        this.sessionCosts.delete(sorted[i][0]);
+      }
+    }
+  }
+
+  /** Returns the most recent chat session's cost summary. */
+  getCurrentSessionCost(): SessionCostSummary | undefined {
+    let latest: SessionCostSummary | undefined;
+    for (const s of this.sessionCosts.values()) {
+      if (!latest || s.lastActivity > latest.lastActivity) {
+        latest = s;
+      }
+    }
+    return latest;
+  }
+
+  /** Returns up to `limit` most recent session cost summaries, ordered by last activity (newest first). */
+  getRecentSessionCosts(limit = 5): SessionCostSummary[] {
+    return [...this.sessionCosts.values()]
+      .sort((a, b) => b.lastActivity - a.lastActivity)
+      .slice(0, limit);
+  }
+
   private persist(): void {
     void this.context.globalState.update(STORAGE_KEY, this.entries);
+    void this.context.globalState.update(SESSION_COSTS_KEY, [...this.sessionCosts.values()]);
   }
 
   private persistBaseline(): void {
@@ -555,6 +641,17 @@ export class GoUsageTracker {
     const baseline = this.context.globalState.get<UsageBaseline>(BASELINE_STORAGE_KEY, {});
     if (baseline && typeof baseline === "object") {
       this.baseline = baseline;
+    }
+
+    // Restore session costs from persistence
+    const storedSessions = this.context.globalState.get<SessionCostSummary[]>(SESSION_COSTS_KEY, []);
+    if (Array.isArray(storedSessions)) {
+      for (const s of storedSessions) {
+        if (s && typeof s.sessionId === "string" && typeof s.cost === "number") {
+          this.sessionCosts.set(s.sessionId, s);
+        }
+      }
+      this.pruneSessions();
     }
   }
 }

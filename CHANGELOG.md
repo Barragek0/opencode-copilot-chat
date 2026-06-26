@@ -4,6 +4,11 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Added
+
+- **`[Usage]` Session-level cost tracking.** The status bar tooltip, SVG hover card, and usage QuickPick now show the cost of the current chat session (requests, tokens, USD). Each chat thread gets a unique `sessionId` derived from conversation content; the tracker accumulates costs per session in memory. Sessions idle for >2h are pruned automatically, capped at 50 active sessions, and persisted across restarts.
+- **`[Usage]` VS Code session cost fields (`copilotCredits`).** Added `copilotCredits` to `UsageSnapshot`, `ProviderUsagePayload`, `TransportRequestSummary`, and `UsageLogEntry`. The `onTransportSummary` callback now computes credits (`cost × 100`, since 1 credit = $0.01) and mutates the summary directly so the `LanguageModelDataPart("usage")` emitted at the end of each response includes the credit total. This is the standard mechanism VS Code uses to accumulate per-session cost in `IChatModel.sessionCost`.
+
 ### Changed
 
 - **`[Model Picker]` Removed `triggerChange()` cross-provider re-resolution.** The agent-variant providers now resolve their API key independently via the secrets fallback path (`isAgentVariant || options.configuration`). Previously, the base provider called `triggerChange()` on the agent provider to force it to re-resolve after storing the BYOK key — this indirection is no longer needed since both paths reach the same `SecretStorage` read.
@@ -18,7 +23,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Known Issues
 
----
+- **`[Usage]` Session cost does not appear in the VS Code session info popover (the "ring" below the chat input).** VS Code 1.126 accumulates session cost by reading `usage.copilotCredits` from `IChatUsage` progress events (`{ kind: 'usage', copilotCredits: ... }`). This works for the Copilot provider because the Copilot extension's `ToolCallingLoop` explicitly calls `stream.usage({ copilotCredits })` after each model fetch. For BYOK providers (like OpenCode), the extension reports a `LanguageModelDataPart` with MIME `"usage"` at the end of the response stream — the same pattern used by Copilot's own BYOK providers (`AnthropicLMProvider`, `GeminiNativeProvider`). However, VS Code 1.126 does not convert `{ type: 'data', mimeType: 'usage' }` from BYOK provider streams into `IChatUsage` progress events. This is a VS Code limitation, not a missing extension feature. The data is correctly structured and available; the VS Code ChatService (`acceptResponseProgress`) simply does not process BYOK usage data parts yet. We expect this to be addressed in a future VS Code release. In the meantime, session cost is visible in the extension's own status bar tooltip and usage QuickPick.
 
 ## [0.3.4] — 2026-06-23
 

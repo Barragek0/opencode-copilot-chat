@@ -4,6 +4,8 @@ export interface UsageSnapshot {
   totalTokens?: number;
   cachedTokens?: number;
   finishReason?: string;
+  /** Computed credits (for VS Code session cost accumulation). */
+  copilotCredits?: number;
 }
 
 export interface ProviderUsagePayload {
@@ -14,6 +16,8 @@ export interface ProviderUsagePayload {
     cached_tokens?: number;
   };
   finish_reason?: string;
+  /** Credits for VS Code session cost accumulation. */
+  copilotCredits?: number;
 }
 
 export function withUsageTotals(usage: UsageSnapshot): UsageSnapshot {
@@ -174,5 +178,8 @@ export function toProviderUsagePayload(
     ...(normalized.finishReason === undefined
       ? {}
       : { finish_reason: normalized.finishReason }),
+    ...(normalized.copilotCredits === undefined
+      ? {}
+      : { copilotCredits: normalized.copilotCredits }),
   };
 }

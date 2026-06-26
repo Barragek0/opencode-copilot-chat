@@ -57,6 +57,7 @@ import {
   GO_LIMITS,
   formatGoUsageStatusBarText,
   buildUsageQuickPickItems,
+  estimateCost,
   type UsageBaselineTargets,
 } from "./goUsageTracker";
 
@@ -471,6 +472,26 @@ export function activate(context: vscode.ExtensionContext) {
       if (!goUsageTracker) return;
       const summary = goUsageTracker.getSummary();
       const items = buildUsageQuickPickItems(summary);
+
+      // Prepend current chat session cost alongside today/yesterday
+      const sessionCost = goUsageTracker.getCurrentSessionCost();
+      if (sessionCost && sessionCost.cost > 0) {
+        const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
+        const sessionItem: vscode.QuickPickItem = {
+          label:      `$(comment) Latest Session (est)`,
+          description: `$${sessionCost.cost.toFixed(4)}`,
+          detail:     `${tokens(totalTokens)} tokens · ${sessionCost.requests} requests`,
+          alwaysShow: true,
+        };
+        // Insert at the top of the "Daily Summary" section (after the last period bar)
+        const dailyIdx = items.findIndex(i => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
+        if (dailyIdx >= 0) {
+          items.splice(dailyIdx + 1, 0, sessionItem);
+        } else {
+          items.push(sessionItem);
+        }
+      }
+
       const separator: vscode.QuickPickItem = { label: "", kind: vscode.QuickPickItemKind.Separator };
       const setTargetItem: vscode.QuickPickItem & { _action?: string } = { label: "$(edit) Set spent targets…", _action: "setUsageTargets" };
       const panelItem: vscode.QuickPickItem & { _action?: string } = { label: "$(graph) Open full usage panel", _action: "showUsageDetails" };
@@ -673,7 +694,7 @@ function refreshGoUsageStatusBar(): void {
   if (!goUsageStatusBarItem || !goUsageTracker) return;
   const s = goUsageTracker.getSummary();
   goUsageStatusBarItem.text    = formatGoUsageStatusBarText(s);
-  goUsageStatusBarItem.tooltip = buildUsageTooltip(s);
+  goUsageStatusBarItem.tooltip = buildUsageTooltip(s, goUsageTracker.getCurrentSessionCost());
   goUsageStatusBarItem.show();
   updateWebviewContent();
 }
@@ -704,6 +725,7 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
 function updateWebviewContent(): void {
   if (!usageWebviewPanel || !goUsageTracker) return;
   const s = goUsageTracker.getSummary();
+  const sc = goUsageTracker.getCurrentSessionCost();
 
   usageWebviewPanel.webview.html = `
     <!DOCTYPE html>
@@ -744,21 +766,21 @@ function updateWebviewContent(): void {
     </head>
     <body>
       <div class="container">
-        ${buildUsageTooltipSvg(s)}
+        ${buildUsageTooltipSvg(s, sc)}
       </div>
     </body>
     </html>
   `;
 }
 
-function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>): vscode.MarkdownString {
+function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>, sessionCost?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): vscode.MarkdownString {
   const md = new vscode.MarkdownString("", true);
   md.supportHtml = true;
   md.isTrusted = true;
   // supportedCommands is a proposed API — cast to bypass type check.
   (md as any).supportedCommands = ["opencodego.setUsageTargets"];
   md.appendMarkdown(
-    `<img alt="OpenCode Go usage summary" src="${usageTooltipSvgDataUri(s)}" width="330">`,
+    `<img alt="OpenCode Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost)}" width="330">`,
   );
   md.appendMarkdown(
     "\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)"
@@ -872,14 +894,18 @@ async function showUsageTargetEditor(
 
 type _UsageSummary = ReturnType<GoUsageTracker["getSummary"]>;
 
-function usageTooltipSvgDataUri(s: _UsageSummary): string {
-  const svg = buildUsageTooltipSvg(s);
+function usageTooltipSvgDataUri(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): string {
+  const svg = buildUsageTooltipSvg(s, sc);
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function buildUsageTooltipSvg(s: _UsageSummary): string {
-  const width = 330;
-  const height = s.hasData ? 286 : 78;
+function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): string {
+  const hasSession = sc && sc.cost > 0;
+  // Session label is longer ("Session (est):") so widen the card and shift
+  // the cost column right when session data is present.
+  const cx = hasSession ? 105 : 60; // cost value column
+  const width = hasSession ? 345 : 330;
+  const height = s.hasData ? (hasSession ? 310 : 286) : 78;
   const bg = "#1e1e1e";
   const fg = "#d4d4d4";
   const muted = "#a6a6a6";
@@ -937,17 +963,27 @@ ${period("Session (5h rolling)", s.session, 54)}
 ${period("Weekly", s.weekly, 116)}
 ${period("Monthly", s.monthly, 178)}
 <line x1="14" y1="224" x2="316" y2="224" stroke="${line}" stroke-width="1"/>
-${text("Today:", 14, 256, 13, 400, muted)}
-${text(usd(s.today.cost), 58, 256, 13, 700)}
-${text("Requests:", 138, 256, 13, 400, muted)}
-${text(String(s.today.requests), 202, 256, 13, 700)}
-${text("Tokens:", 236, 256, 13, 400, muted)}
-${text(tokens(s.today.tokens), 296, 256, 13, 700)}
+${hasSession ? [
+    text("Session (est):", 14, 250, 13, 400, muted),
+    text(`$${sc!.cost.toFixed(4)}`, cx, 250, 13, 700),
+    text("Requests:", 138, 250, 13, 400, muted),
+    text(String(sc!.requests), 202, 250, 13, 700),
+    text("Tokens:", 236, 250, 13, 400, muted),
+    text(tokens(sc!.promptTokens + sc!.completionTokens), 296, 250, 13, 700),
+  ].join("") : ""}
+${text("Today:", 14, hasSession ? 274 : 256, 13, 400, muted)}
+${text(usd(s.today.cost), cx, hasSession ? 274 : 256, 13, 700)}
+${text("Requests:", 138, hasSession ? 274 : 256, 13, 400, muted)}
+${text(String(s.today.requests), 202, hasSession ? 274 : 256, 13, 700)}
+${text("Tokens:", 236, hasSession ? 274 : 256, 13, 400, muted)}
+${text(tokens(s.today.tokens), 296, hasSession ? 274 : 256, 13, 700)}
 ${s.yesterday.requests > 0 ? [
-    text("Yesterday:", 14, 278, 13, 400, muted),
-    text(usd(s.yesterday.cost), 80, 278, 13, 700),
-    text("Requests:", 154, 278, 13, 400, muted),
-    text(String(s.yesterday.requests), 218, 278, 13, 700),
+    text("Yesterday:", 14, hasSession ? 298 : 278, 13, 400, muted),
+    text(usd(s.yesterday.cost), cx, hasSession ? 298 : 278, 13, 700),
+    text("Requests:", 138, hasSession ? 298 : 278, 13, 400, muted),
+    text(String(s.yesterday.requests), 202, hasSession ? 298 : 278, 13, 700),
+    text("Tokens:", 236, hasSession ? 298 : 278, 13, 400, muted),
+    text(tokens(s.yesterday.tokens), 296, hasSession ? 298 : 278, 13, 700),
   ].join("") : ""}
 </svg>`;
 }
@@ -1484,6 +1520,18 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     );
     const outputChannel = this.getOutputChannel();
     const onTransportSummary = (summary: TransportRequestSummary) => {
+      // Compute credits for VS Code session cost (1 credit = $0.01).
+      // VS Code reads usage.copilotCredits from the LanguageModelDataPart
+      // to accumulate session cost. We mutate the summary object directly
+      // so emitSummary includes it in the usage data parts.
+      // Use the same estimateCost() helper as goUsageTracker.record() to
+      // guarantee cost and credits stay in sync.
+      const prompt = summary.promptTokens ?? 0;
+      const completion = summary.completionTokens ?? 0;
+      const cached = summary.cachedTokens ?? 0;
+      const cost = estimateCost(summary.modelId, prompt, completion, cached, metadata.cost);
+      summary.copilotCredits = cost * 100;
+
       this.recordTransportSummary(
         summary,
         routing.endpointKind,
@@ -1492,7 +1540,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       );
       updateUsageStatusBar(this.definition.displayName, rawModelId, summary);
       if (this.baseVendor === GO_VENDOR && goUsageTracker) {
-        this.log(`[go-usage] Recording: provider=${summary.providerDisplayName} model=${summary.modelId} promptTokens=${summary.promptTokens ?? "n/a"} completionTokens=${summary.completionTokens ?? "n/a"} cachedTokens=${summary.cachedTokens ?? "n/a"} status=${summary.status ?? "n/a"} error=${summary.errorMessage ?? "none"}`);
+        this.log(`[go-usage] Recording: provider=${summary.providerDisplayName} model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached} credits=${summary.copilotCredits.toFixed(4)} status=${summary.status ?? "n/a"} error=${summary.errorMessage ?? "none"}`);
         goUsageTracker.record(summary, metadata.cost);
         refreshGoUsageStatusBar();
         this.log(`[go-usage] After record: entries=${goUsageTracker.getSummary().today.requests}`);

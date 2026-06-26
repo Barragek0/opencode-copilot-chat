@@ -71,6 +71,8 @@ export interface TransportRequestSummary {
   totalTokens?: number;
   cachedTokens?: number;
   finishReason?: string;
+  /** Credits for VS Code session cost (1 credit = $0.01). */
+  copilotCredits?: number;
   rateLimitSummary?: string;
   abortedReason?: "request-timeout" | "stream-idle-timeout" | "cancelled";
   errorMessage?: string;
@@ -198,6 +200,7 @@ interface RequestUsageSummary {
   totalTokens?: number;
   cachedTokens?: number;
   finishReason?: string;
+  copilotCredits?: number;
 }
 
 function reportProgressPart(
@@ -293,6 +296,10 @@ async function streamOpenCodeResponse(
       ...extra,
     };
 
+    // Let the caller enrich the summary (e.g. add copilotCredits) before
+    // we create the usage data parts, so VS Code session cost works.
+    options.onTransportSummary?.(summary);
+
     options.output?.appendLine(
       `[response-summary] status=${summary.status ?? "n/a"} durationMs=${summary.durationMs} ttfbMs=${summary.ttfbMs ?? "n/a"} promptTokens=${summary.promptTokens ?? "n/a"} completionTokens=${summary.completionTokens ?? "n/a"} totalTokens=${summary.totalTokens ?? "n/a"} cachedTokens=${summary.cachedTokens ?? "n/a"} finishReason=${summary.finishReason ?? "<unknown>"} totalBytes=${summary.totalBytes} totalEvents=${summary.totalEvents}`,
     );
@@ -306,7 +313,6 @@ async function streamOpenCodeResponse(
     if (usageLog) {
       options.output?.appendLine(`[usage] ${usageLog}`);
     }
-    options.onTransportSummary?.(summary);
 
     if (localRequestId) {
       reportUsageToContextWindowForRequest(localRequestId, {
@@ -327,6 +333,7 @@ async function streamOpenCodeResponse(
             totalTokens: summary.totalTokens,
             cachedTokens: summary.cachedTokens,
             finishReason: summary.finishReason,
+            copilotCredits: summary.copilotCredits,
           });
     for (const usagePart of usageParts) {
       reportProgressPart(localRequestId, options.progress, usagePart);
