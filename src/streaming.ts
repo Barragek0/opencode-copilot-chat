@@ -524,9 +524,11 @@ async function streamOpenCodeResponse(
       }
     }
 
-    options.output?.appendLine(
-      `[sse-stats] totalBytes=${totalBytes} totalEvents=${totalEvents} bufferTailLen=${buffer.length}`,
-    );
+    if (options.debugReasoning && options.output) {
+      options.output.appendLine(
+        `[sse-stats] totalBytes=${totalBytes} totalEvents=${totalEvents} bufferTailLen=${buffer.length}`,
+      );
+    }
     emitSummary(totalBytes, totalEvents, { rateLimitSummary });
   } catch (error) {
     if (abortReason === "cancelled") {
