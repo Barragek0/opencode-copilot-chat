@@ -101,6 +101,9 @@ export interface UsageSummary {
     tokens: number;
   };
   hasData: boolean;
+  /** When true, cost data comes from the OpenCode CLI SQLite database
+      (actual billed amounts). When false, costs are estimated locally. */
+  sqliteAvailable: boolean;
 }
 
 interface UsageBaselinePeriod {
@@ -335,8 +338,65 @@ export class GoUsageTracker {
     const clamp = (v: number, limit: number) =>
       Math.round(Math.min(100, (v / limit) * 100) * 10) / 10;
 
-    // ── Primary: extension-tracked data (works without CLI) ────────────
+    // Try SQLite first (actual billed amounts from OpenCode CLI).
+    const sqliteRows = readOpenCodeHistory();
+    if (sqliteRows) {
+      return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+    }
+
+    // Fall back to extension-tracked data (works without CLI).
     return this.buildSummaryFromTracked(nowMs, clamp);
+  }
+
+  /** Build summary from SQLite, enriched with token/request counts from tracked entries. */
+  private buildSqliteEnrichedSummary(
+    nowMs: number,
+    rows: HistoryRow[],
+    clamp: (v: number, limit: number) => number,
+  ): UsageSummary {
+    const base = this.buildSummaryFromRows(nowMs, rows, clamp, true);
+
+    // Enrich today/yesterday tokens+requests from tracked entries (SQLite doesn't store tokens).
+    const dayMs       = startOfUtcDay(nowMs);
+    const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
+    let todayReq = base.today.requests;
+    let todayTokens = 0;
+    let yestReq = base.yesterday.requests;
+    let yestTokens = 0;
+    for (const e of this.entries) {
+      if (e.timestamp >= dayMs) {
+        todayTokens += e.promptTokens + e.completionTokens;
+      } else if (e.timestamp >= yesterdayMs) {
+        yestTokens += e.promptTokens + e.completionTokens;
+      }
+    }
+
+    // Apply baselines on top of SQLite costs.
+    const activeBaselineSession = this.getActiveBaselineAmount("session", nowMs);
+    const activeBaselineWeekly  = this.getActiveBaselineAmount("weekly", nowMs);
+    const activeBaselineMonthly = this.getActiveBaselineAmount("monthly", nowMs);
+
+    return {
+      session: {
+        ...base.session,
+        spent: Math.round((base.session.spent + activeBaselineSession) * 10000) / 10000,
+        percent: clamp(base.session.spent + activeBaselineSession, GO_LIMITS.session),
+      },
+      weekly: {
+        ...base.weekly,
+        spent: Math.round((base.weekly.spent + activeBaselineWeekly) * 10000) / 10000,
+        percent: clamp(base.weekly.spent + activeBaselineWeekly, GO_LIMITS.weekly),
+      },
+      monthly: {
+        ...base.monthly,
+        spent: Math.round((base.monthly.spent + activeBaselineMonthly) * 10000) / 10000,
+        percent: clamp(base.monthly.spent + activeBaselineMonthly, GO_LIMITS.monthly),
+      },
+      today: { ...base.today, requests: todayReq, tokens: todayTokens },
+      yesterday: { ...base.yesterday, requests: yestReq, tokens: yestTokens },
+      hasData: true,
+      sqliteAvailable: true,
+    };
   }
 
   /** Build summary from opencode.db rows (enrichment data from CLI history) */
@@ -417,6 +477,7 @@ export class GoUsageTracker {
         tokens:   0,
       },
       hasData,
+      sqliteAvailable: false,
     };
   }
 
@@ -506,6 +567,7 @@ export class GoUsageTracker {
         tokens:   yestTokens,
       },
       hasData: this.entries.length > 0,
+      sqliteAvailable: false,
     };
   }
 
