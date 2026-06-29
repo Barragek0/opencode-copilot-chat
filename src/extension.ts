@@ -1510,7 +1510,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const metadata = this.resolveModelMetadata(rawModelId, metadataSnapshot);
     const routing = resolveModelRouting(rawModelId, this.definition);
 
-    const limits = modelLimits(metadata, settings, contextSizeOverride);
+    // Estimate prompt tokens to cap output budget and prevent context overflow.
+    // The server counts tokens differently from our local estimate, so this
+    // is a conservative approximation — the actual output budget may be
+    // slightly smaller or larger, but it prevents hard 400 rejections.
+    const promptTokens = estimateTokenCount(JSON.stringify(apiMessages));
+    const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
     const hasImageInput = messagesHaveImages(apiMessages);
     const thinkingPayload = buildThinkingPayload(rawModelId, settings.thinking, hasImageInput);
     const requestHeaders = buildOpenCodeRequestHeaders(
@@ -2850,6 +2855,7 @@ function modelLimits(
   metadata: ResolvedModelMetadata,
   settings = getSettings(),
   contextSizeOverride?: number,
+  promptTokens?: number,
 ): ModelLimits {
   const baseContextWindow = positiveOverride(settings.maxInputTokensOverride) ?? metadata.contextWindow;
   // If the user selected a specific context size tier, cap the window to that
@@ -2857,7 +2863,12 @@ function modelLimits(
     ? Math.min(baseContextWindow, contextSizeOverride)
     : baseContextWindow;
   const maxOutputTokens = positiveOverride(settings.maxOutputTokensOverride) ?? metadata.maxOutputTokens;
-  const apiMaxOutputTokens = Math.min(maxOutputTokens, contextWindow);
+  // Cap output so that prompt + output never exceeds the context window.
+  // When promptTokens is known (from message normalization), use the actual
+  // count; otherwise fall back to a conservative 80% reserve for the prompt.
+  const promptReserve = promptTokens ?? Math.floor(contextWindow * 0.8);
+  const safeOutputBudget = Math.max(1, contextWindow - promptReserve);
+  const apiMaxOutputTokens = Math.min(maxOutputTokens, safeOutputBudget);
   // advertisedContextWindow = actual model context window (not inflated).
   // Adding apiMaxOutputTokens here inflates the value above the real limit,
   // which causes VS Code to round up and display "2M" instead of "1M" for a
