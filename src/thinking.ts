@@ -18,7 +18,7 @@ import type { ResolvedModelMetadata } from "./metadata";
 /** Per-family thinking settings stored in the workspace configuration. */
 export interface ThinkingSettings {
   deepseek: "off" | "low" | "medium" | "high" | "max";
-  glm: "on" | "off";
+  glm: "off" | "high" | "max";
   kimi: "on" | "off";
   minimax: "off" | "on";
   qwen: "auto" | "on" | "off";
@@ -191,7 +191,27 @@ export function buildFamilyThinkingSchema(
     };
   }
 
-  if (family === "glm" || family === "kimi") {
+  if (family === "glm") {
+    return {
+      properties: {
+        reasoningEffort: {
+          type: "string",
+          title: "Thinking Effort",
+          enum: ["off", "high", "max"],
+          enumItemLabels: ["Off", "High", "Max"],
+          enumDescriptions: [
+            "Fastest responses",
+            "Greater reasoning depth",
+            "Maximum reasoning effort"
+          ],
+          default: "off",
+          group: "navigation"
+        }
+      }
+    };
+  }
+
+  if (family === "kimi") {
     return {
       properties: {
         reasoningEffort: {
@@ -313,10 +333,10 @@ export function applyRequestThinkingOverride(
     }
   }
   if (family === "glm" && typeof thinkingMode === "string") {
-    if (thinkingMode === "on" || thinkingMode === "off") next.glm = thinkingMode;
+    if (["off", "high", "max"].includes(thinkingMode)) next.glm = thinkingMode as ThinkingSettings["glm"];
   }
   if (family === "glm" && typeof reasoningEffort === "string") {
-    if (reasoningEffort === "on" || reasoningEffort === "off") next.glm = reasoningEffort;
+    if (["off", "high", "max"].includes(reasoningEffort)) next.glm = reasoningEffort as ThinkingSettings["glm"];
   }
   if (family === "kimi" && typeof thinkingMode === "string") {
     if (thinkingMode === "on" || thinkingMode === "off") next.kimi = thinkingMode;
@@ -384,7 +404,14 @@ export function buildThinkingPayload(modelId: string, thinking: ThinkingSettings
     // The gateway's transform.ts variants() returns {} for GLM — no variants
     // are exposed, meaning the gateway doesn't validate or transform GLM
     // thinking parameters. We send through as-is to the upstream API.
-    return { thinking: { type: thinking.glm === "on" ? "enabled" : "disabled" } };
+    //
+    // When the value is a concrete effort level (e.g. "high", "max", or future
+    // "low"/"medium"), send reasoning_effort directly — the gateway or upstream
+    // API determines support. Only "off" maps to disabled.
+    if (thinking.glm === "off") {
+      return { thinking: { type: "disabled" } };
+    }
+    return { reasoning_effort: thinking.glm };
   }
 
   if (/^kimi-/i.test(modelId)) {

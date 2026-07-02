@@ -161,9 +161,10 @@ function buildThinkingTests(model: ModelInfo): ParamTest[] {
     }
     tests.push({ name: "no-reasoning (off)", settings: { deepseek: "off" } });
   }
-  // GLM: thinking type
+  // GLM: thinking type with effort values (GLM 5.2: high/max, older: enabled)
   else if (/^glm-/i.test(id)) {
-    tests.push({ name: "thinking=enabled", settings: { glm: "on" } });
+    tests.push({ name: "thinking=high", settings: { glm: "high" } });
+    tests.push({ name: "thinking=max", settings: { glm: "max" } });
     tests.push({ name: "thinking=disabled", settings: { glm: "off" } });
   }
   // Qwen: enable_thinking + budget

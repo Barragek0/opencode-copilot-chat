@@ -582,7 +582,7 @@ async function showModelPickerDiagnostics(): Promise<void> {
 async function showThinkingEffortPicker(): Promise<void> {
   const families: { label: string; key: keyof ThinkingSettings; options: string[] }[] = [
     { label: "DeepSeek (deepseek-v4-*)", key: "deepseek", options: ["off", "low", "medium", "high", "max"] },
-    { label: "GLM (glm-5, glm-5.1)", key: "glm", options: ["on", "off"] },
+    { label: "GLM (glm-5, glm-5.1, glm-5.2)", key: "glm", options: ["off", "high", "max"] },
     { label: "Kimi (kimi-k2.*)", key: "kimi", options: ["on", "off"] },
     { label: "Mimo (mimo-v2.*)", key: "mimo", options: ["off", "low", "medium", "high"] },
     { label: "MiniMax (minimax-m*)", key: "minimax", options: ["off", "on"] },
@@ -1277,7 +1277,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       const responseText = await response.text();
       statusBar.dispose();
       this.log(`Test response (${response.status}): ${responseText}`);
-      this.getOutputChannel().show(true);
 
       if (response.ok) {
         vscode.window.showInformationMessage(`${this.definition.displayName}: Connection OK (HTTP ${response.status}). Check Output panel for details.`);
@@ -1288,7 +1287,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       statusBar.dispose();
       const message = error instanceof Error ? error.message : String(error);
       this.log(`Test connection error: ${message}`);
-      this.getOutputChannel().show(true);
       vscode.window.showErrorMessage(`${this.definition.displayName}: Connection error - ${message}`);
     }
   }
@@ -1398,7 +1396,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       return [];
     }
 
-    const models = await this.fetchModels();
+    const models = await this.fetchModels(apiKey);
     if (models.length === 0) {
       return [];
     }
@@ -1662,7 +1660,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.log(`ERROR model=${model.id}: ${message}`);
-      this.getOutputChannel().show(true);
       if (error instanceof OpenCodeRequestError) {
         vscode.window.showErrorMessage(error.userMessage);
       }
@@ -1680,9 +1677,13 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       : estimateChatMessageTokenCount(text);
   }
 
-  private async fetchModels(): Promise<string[]> {
+  private async fetchModels(apiKey?: string): Promise<string[]> {
     try {
-      const response = await fetch(this.definition.modelsUrl);
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
+      const response = await fetch(this.definition.modelsUrl, { headers });
 
       if (!response.ok) {
         throw new Error(`Model list request failed (${response.status}): ${response.statusText}`);
