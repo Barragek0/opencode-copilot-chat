@@ -182,3 +182,105 @@ describe("thinkingFamily — detection", () => {
     assert.equal(thinkingFamily("unknown-model"), null);
   });
 });
+
+/**
+ * Tests for GLM models with effort-style reasoning (issue #61).
+ *
+ * models.dev reports:
+ *   glm-5.2 → reasoning_options = [{ type: "effort", values: ["high", "max"] }]
+ *   glm-5.1 → no reasoning_options (toggle-based)
+ *   glm-5   → no reasoning_options (toggle-based)
+ *
+ * The new "high"/"max" values must map to thinking enabled in the payload,
+ * and the per-model picker should expose only the relevant options.
+ */
+describe("buildThinkingPayload — GLM with effort values (issue #61)", () => {
+  it("glm-5.2 with glm='high' emits reasoning_effort: 'high'", () => {
+    const payload = buildThinkingPayload("glm-5.2", { ...defaultSettings, glm: "high" });
+    assert.deepEqual(payload, { reasoning_effort: "high" });
+  });
+
+  it("glm-5.2 with glm='max' emits reasoning_effort: 'max'", () => {
+    const payload = buildThinkingPayload("glm-5.2", { ...defaultSettings, glm: "max" });
+    assert.deepEqual(payload, { reasoning_effort: "max" });
+  });
+
+  it("glm-5.2 with glm='off' emits thinking disabled", () => {
+    const payload = buildThinkingPayload("glm-5.2", { ...defaultSettings, glm: "off" });
+    assert.deepEqual(payload, { thinking: { type: "disabled" } });
+  });
+
+  it("glm-5 (toggle-only) with glm='high' sends reasoning_effort (gateway resolves)", () => {
+    const payload = buildThinkingPayload("glm-5", { ...defaultSettings, glm: "high" });
+    assert.deepEqual(payload, { reasoning_effort: "high" });
+  });
+
+  it("glm-5 (toggle-only) with glm='off' emits thinking disabled", () => {
+    const payload = buildThinkingPayload("glm-5", { ...defaultSettings, glm: "off" });
+    assert.deepEqual(payload, { thinking: { type: "disabled" } });
+  });
+});
+
+describe("buildFamilyThinkingSchema — GLM 5.2 with reasoning_options metadata", () => {
+  it("exposes off, high, max when reasoning_options has effort values", () => {
+    const metadata = {
+      reasoning: true,
+      reasoningOptions: [{ type: "effort" as const, values: ["high", "max"] }],
+      contextWindow: 202752,
+      maxOutputTokens: 32768,
+      supportsVision: false,
+      supportsAudio: false,
+      supportsVideo: false,
+      supportsPdf: false,
+      source: "models.dev" as const,
+    };
+    const schema = buildFamilyThinkingSchema("glm-5.2", metadata);
+    assert.ok(schema, "expected schema to be defined");
+    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    assert.deepEqual(reasoningEffort.enum, ["off", "high", "max"]);
+    assert.deepEqual(reasoningEffort.enumItemLabels, ["Off", "High", "Max"]);
+    assert.equal(reasoningEffort.default, "off");
+  });
+
+  it("falls back to off/high/max for GLM models without reasoning_options (no invalid 'on')", () => {
+    const schema = buildFamilyThinkingSchema("glm-5");
+    assert.ok(schema, "expected schema to be defined");
+    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    assert.deepEqual(reasoningEffort.enum, ["off", "high", "max"]);
+    assert.deepEqual(reasoningEffort.enumItemLabels, ["Off", "High", "Max"]);
+  });
+});
+
+describe("applyRequestThinkingOverride — GLM with effort values (issue #61)", () => {
+  it("accepts 'high' override for glm-5.2", () => {
+    const result = applyRequestThinkingOverride("glm-5.2", defaultSettings, {
+      reasoningEffort: "high",
+    });
+    assert.equal(result.glm, "high");
+  });
+
+  it("accepts 'max' override for glm-5.2", () => {
+    const result = applyRequestThinkingOverride("glm-5.2", defaultSettings, {
+      reasoningEffort: "max",
+    });
+    assert.equal(result.glm, "max");
+  });
+
+  it("accepts 'off' override for glm-5.2", () => {
+    const result = applyRequestThinkingOverride("glm-5.2", defaultSettings, {
+      reasoningEffort: "off",
+    });
+    assert.equal(result.glm, "off");
+  });
+
+  it("rejects invalid values like 'on' and 'medium' for glm", () => {
+    const resultOn = applyRequestThinkingOverride("glm-5.2", defaultSettings, {
+      reasoningEffort: "on",
+    });
+    assert.equal(resultOn.glm, "off"); // stays at default
+    const resultMed = applyRequestThinkingOverride("glm-5.2", defaultSettings, {
+      reasoningEffort: "medium",
+    });
+    assert.equal(resultMed.glm, "off"); // stays at default
+  });
+});

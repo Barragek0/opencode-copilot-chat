@@ -172,9 +172,9 @@
         },
         "opencodego.thinking.glm": {
           "type": "string",
-          "enum": ["on", "off"],
+          "enum": ["off", "high", "max"],
           "default": "off",
-          "markdownDescription": "Thinking mode for GLM models (`glm-5`, `glm-5.1`). Maps to `thinking: { type: 'enabled' | 'disabled' }`."
+          "markdownDescription": "Thinking mode for GLM models. `high`/`max` enable thinking (interpreted as `on` for models that use toggle, e.g., GLM 5/5.1). Per-model picker shows only options supported by each model."
         },
         "opencodego.thinking.kimi": {
           "type": "string",
