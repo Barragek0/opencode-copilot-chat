@@ -28,7 +28,8 @@ The target model-family behavior was:
 | Family | User Choice | Request Mapping |
 |---|---|---|
 | DeepSeek | `off` / `low` / `medium` / `high` / `max` | `reasoning_effort` when not `off` |
-| GLM | `on` / `off` | `thinking: { type: "enabled" | "disabled" }` |
+| GLM 5/5.1 | `high` / `max` / `off` | `reasoning_effort` (gateway resolves to toggle for older models) |
+| GLM 5.2 | `high` / `max` / `off` | `reasoning_effort: "high" \| "max"`; `"off"` → `thinking: { type: "disabled" }` |
 | Kimi | `on` / `off` | `thinking: { type: "enabled" | "disabled" }` |
 | MiniMax | `on` / `off` | `thinking: { type: "enabled" | "disabled" | "adaptive" }` depending on route/model |
 | Mimo | `off` / `low` / `medium` / `high` | `reasoning_effort` when not `off` |

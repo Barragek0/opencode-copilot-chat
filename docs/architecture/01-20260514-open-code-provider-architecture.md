@@ -2,13 +2,13 @@
 
 # OpenCode Provider Architecture
 
-**Topic:** provider / models / routing / usage  
-**Updated:** 2026-06-13  
+**Topic:** provider / models / routing / usage / security  
+**Updated:** 2026-06-24  
 **Tags:** #provider #models #routing #byok #vscode #tool-calling #thinking #usage #security  
 **Supersedes:** -
 **Original Session:** 2026-05-14  
 **Documented:** 2026-06-12
-**Last verified:** 2026-06-13
+**Last verified:** 2026-06-24
 
 > **Note:** This is a living reference document. All timeline entries below are ✅ Solved and reflect the current codebase. The document is periodically updated as new releases are shipped.
 
@@ -27,7 +27,7 @@ The extension exposes two independent BYOK providers:
 
 Both providers can be configured at the same time through VS Code **Language Models → Add Models...**. Each provider group owns its own API key secret in VS Code's native provider configuration flow, so Go and Zen can be added, configured, and removed separately.
 
-This document is intentionally backdated to the original provider-architecture session on 2026-05-14. Later sections include follow-up changes through 2026-06-12 so maintainers can understand the full evolution without opening multiple changelog entries.
+This document is intentionally backdated to the original provider-architecture session on 2026-05-14. Later sections include follow-up changes through 2026-07-02 so maintainers can understand the full evolution without opening multiple changelog entries.
 
 ---
 
@@ -46,6 +46,8 @@ This document is intentionally backdated to the original provider-architecture s
 | 2026-06-05 | 0.2.0 | Go Usage Tracker for subscription limits and cost tracking | ✅ Solved |
 | 2026-06-09 | 0.2.4 | Context Size selector, dynamic reasoning options, Mimo/MiniMax/DeepSeek/Kimi thinking controls, and strip-think-tags setting | ✅ Solved |
 | 2026-06-12 | 0.2.7 | Temperature support guard and Kimi thinking documentation correction | ✅ Solved |
+| 2026-06-23 | 0.3.4 | VS Code ≥1.126 model picker crash fix: `category` type from object to string, secrets fallback via `options.configuration` discriminator, agent variant independent resolution | ✅ Solved |
+| 2026-06-24 | 0.3.4 | Security hardening: removed API key debug log leak, Clear API Key BYOK warning, `reasoningContentByToolCallId` memory cap at 500, removed dead `agentProvidersByBaseVendor` map and `categoryOrder` field | ✅ Solved |
 
 ---
 

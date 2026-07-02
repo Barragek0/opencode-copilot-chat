@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `main` | **Updated:** 2026-06-23 Asia/Jakarta | **Current Phase:** v0.3.4 — Model Picker 1.126 Fix ✅
+**Branch:** `main` | **Updated:** 2026-07-02 Asia/Jakarta | **Current Phase:** v0.3.5 — Session Cost + CopilotCredits ✅
 
 ---
 
@@ -7,11 +7,114 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-06-23 |
-| **Worked On** | Reviewed and merged PR #53 (community, @Wallacy). Fixed two model picker regressions on VS Code ≥1.126: (1) `category` field type mismatch crash, (2) model duplication from two-phase resolution + unconditional secret fallback. Documented in `docs/issues/27-...`. CHANGELOG v0.3.4 entries already present from PR. |
-| **Stopped At** | `main` at v0.3.4. Compile clean (0 errors). Issue doc 27 written. Devlog updated. PR #53 merge commit on `main`. |
-| **Next Action** | → Optional: strip dead `categoryOrder` field from `ProviderDefinition` (interface + `providerVariant` + `PROVIDERS` assignments) as a small follow-up PR. → Optional: trim the single remaining `this.log(\`[picker] options=${JSON.stringify(options)}\`)` if it proves noisy in the OutputChannel. |
-| **Open Issues** | (1) Issue #23 — Go Usage tracker out of sync: awaiting user feedback. (2) Qwen image requests can hit provider-side Alibaba quota. (3) `qwen3.6-plus-free` can loop tool calls during broad agent tasks. (4) `ProviderDefinition.categoryOrder` is now dead code (PR #53 side effect). |
+| **Last Session** | 2026-07-02 |
+| **Worked On** | Documented PR #60 (@Wallacy): SQLite-backed cost accuracy (fixes #59), DeepSeek context overflow fix, SSE log gating. Issue doc `30-20260630-pr60-*` written. Feature doc `03-20260605-go-usage-tracker.md` updated with SQLite integration section. Devlog entry added. Also documented PR #68 (@Wallacy): GLM thinking effort values, output channel popup removal, Authorization header on model fetch. Issue doc `31-20260702-pr68-*` written. Thinking controls feature doc `02-20260517-*` updated. |
+| **Stopped At** | `main` post-PR #68 merge. Issue docs + devlog complete. |
+| **Next Action** | → Any open issues or PR reviews. |
+| **Open Issues** | (1) VS Code API gap: `ProvideLanguageModelChatResponseOptions` lacks thread ID → `getCurrentSessionCost()` uses global most-recent (by design for now). (2) Qwen image requests can hit Alibaba quota. (3) `qwen3.6-plus-free` can loop tool calls. (4) Issue #57/#58 — Agent model visibility sync blocked by VS Code API limitation (workaround: `showAgentModelsInManagePanel: true`). |
+
+---
+
+## ✅ PR #60 Review & Merge — SQLite-backed Cost Accuracy, DeepSeek Context Overflow — Session 2026-06-30 🟢 DONE
+
+**Action:** Reviewed community PR #60 (@Wallacy, 4 commits after cleanup). SQLite-backed subscription cost accuracy (fixes #59), DeepSeek context overflow prevention, SSE log gating. Approved after review. Wallacy cleaned up commit history (removed revert+re-apply noise). Merged via `--merge`. Issue doc `docs/issues/30-20260630-pr60-*` written. Feature doc `docs/features/03-20260605-go-usage-tracker.md` updated with SQLite integration section.
+
+**What it does:**
+
+1. **SQLite-backed cost accuracy (#59).** `getSummary()` now reads `~/.local/share/opencode/opencode.db` as its primary cost source. The database contains actual billed amounts, replacing the local estimate that drifted 9–15% (issue #23 root cause). When the CLI database is available, subscription totals (session 5h, weekly, monthly, today, yesterday) reflect real billing data. Token and request counts are still enriched from tracked entries (SQLite stores cost only). Falls back to the local estimate when the CLI database is absent.
+
+2. **DeepSeek 400 error fix.** When the prompt is large (e.g. 668K tokens on `deepseek-v4-flash`), the requested `max_tokens` (384K) combined with the prompt exceeded the 1048K context window. `modelLimits()` now caps `maxOutputTokens` to `contextWindow - promptReserve` using the estimated prompt size, preventing context overflow across all providers.
+
+3. **SSE log gating.** `[sse-stats]` logged unconditionally on every response, adding noise to the Output channel. Now gated behind `debugReasoning`, matching other SSE-level logs.
+
+**Review notes:**
+
+- SQLite-first approach is clean: `readOpenCodeHistory()` was already in the codebase but dead code. Now wired into `getSummary()` as primary source.
+- `buildSqliteEnrichedSummary()` correctly applies baselines after SQLite aggregation (no double-counting).
+- `promptTokens` estimation via `JSON.stringify(apiMessages)` over-counts slightly (JSON structure overhead), but this is the right direction for safety.
+- Commit history had revert+re-apply of #58 fix (agent-variant sync). Wallacy cleaned this up before merge.
+- Issue #57/#58 (agent model visibility) remain open — VS Code API limitation, workaround documented.
+
+**Changes:**
+
+| # | Change | Files | Impact |
+|---|--------|-------|--------|
+| P0 | SQLite-backed cost accuracy for subscription totals | `src/goUsageTracker.ts` | Usage percentages reflect actual billing |
+| P0 | `buildSqliteEnrichedSummary()` method | `src/goUsageTracker.ts` | Combines SQLite costs with tracked tokens |
+| P0 | `sqliteAvailable` field on `UsageSummary` | `src/goUsageTracker.ts` | Downstream consumers know data source |
+| P0 | `promptTokens` param on `modelLimits()` | `src/extension.ts` | Prevents context window overflow |
+| P1 | `[sse-stats]` gated behind `debugReasoning` | `src/streaming.ts` | Output channel cleaner |
+| D1 | Issue doc | `docs/issues/30-20260630-pr60-*` | Full root cause, fix, lessons learned |
+| D2 | Feature doc update | `docs/features/03-20260605-go-usage-tracker.md` | SQLite integration section added |
+| D3 | Devlog entry | `docs/devlog.md` | This entry |
+
+**Verification:**
+
+```bash
+npm run compile    # 0 errors
+npm test           # 75/75 pass
+```
+
+**Follow-up:**
+
+- Double DB read: `hasSQLiteData` getter and `getSummary()` both call `readOpenCodeHistory()`. Could cache per-call if profiling shows it matters.
+- Prompt estimation: `JSON.stringify` over-counts tokens. Could be refined with a dedicated tokenizer in the future.
+
+---
+
+## ✅ PR #55 Review & Merge — Session-Level Cost Tracking + copilotCredits — Session 2026-06-26 🟢 DONE
+
+**Action:** Reviewed community PR #55 (@Wallacy, 7 commits). Session-level cost tracking across the extension's usage UI, plus `copilotCredits` plumbing for VS Code session cost. Went through one review iteration; Wallacy addressed all 5 points in a follow-up push (2 commits). Merged via `--merge` (merge commit, all 7 commits preserved). Feature doc `docs/features/09-20260626-session-level-cost-tracking.md` written.
+
+**What it does:**
+
+Each chat thread now accumulates its cost, request count, and token usage, keyed by the `sessionId` from `x-opencode-session` header. Visible in:
+
+- SVG hover card: `Session (est): $0.0042  Requests: 3  Tokens: 4.2K`
+- QuickPick: `💬 Latest Session (est)` in Daily Summary
+- Usage webview: same SVG card
+- Persisted via `globalState` (max 50 sessions, idle >2h pruned)
+
+Added `copilotCredits` (= cost × 100, since 1 credit = $0.01) to `UsageSnapshot`, `ProviderUsagePayload`, `TransportRequestSummary`, and `UsageLogEntry`. This follows the exact pattern Copilot's own BYOK providers (`AnthropicLMProvider`, `GeminiNativeProvider`) use. Session cost is an **estimate** (not the billed amount), hence the `(est)` marker.
+
+**Review concerns (verified against branch code):**
+
+1. **Cost computed twice.** `onTransportSummary` computed cost inline, then `goUsageTracker.record()` recomputed via `estimateCost()` — two formulas could drift. → Fixed: `estimateCost()` exported as shared helper, called from both sites.
+2. **No unit tests.** Claimed "40/40 pass" was existing suite only. → Fixed: 35 new tests in `goUsageTracker.test.ts` (40 → 75 total). Covers accumulation, pruning, restoration, edge cases.
+3. **Session cost = estimate.** `getSummary()` returns `buildSummaryFromTracked(...)` (local estimate). SQLite reader exists but is dead code. → Clarified: `(est)` marker added to tooltip/QuickPick. Tracked in issue #59.
+4. **"This Session" label ambiguous.** `getCurrentSessionCost()` returns global most-recent, not focused thread. → Renamed to `Latest Session (est)`.
+5. **Missing trailing newline in `usage.ts`.** → Fixed.
+
+**VS Code limitation (Known Issue):**
+
+VS Code 1.126 does not convert `LanguageModelDataPart({ type: 'data', mimeType: 'usage' })` from BYOK provider streams into `IChatUsage` progress events. The `copilotCredits` data is correctly structured; the plumbing stops at the `ChatService` boundary. Session cost is visible in the extension's own UI, not in VS Code's native session info popover.
+
+**Changes:**
+
+| # | Change | Files | Impact |
+|---|--------|-------|--------|
+| P0 | Session cost accumulation (Map by sessionId, prune, persist) | `src/goUsageTracker.ts` | Per-thread cost visible in tooltip/QuickPick/webview |
+| P0 | `copilotCredits` in usage data parts | `src/extension.ts`, `src/streaming.ts`, `src/usage.ts` | VS Code can accumulate session cost (when BYOK limitation is fixed) |
+| P0 | `estimateCost()` exported as shared helper | `src/goUsageTracker.ts`, `src/extension.ts` | Eliminates dual cost computation |
+| P0 | `onTransportSummary` moved before data part creation | `src/streaming.ts` | Callers can enrich summary before emission |
+| P1 | `(est)` marker + SVG card resize | `src/extension.ts` | Accurate labeling: session cost is local estimate |
+| P1 | "Latest Session (est)" label rename | `src/extension.ts` | Avoids ambiguity with multi-thread panels |
+| T1 | 35 unit tests | `src/test/goUsageTracker.test.ts` | Coverage for accumulation, pruning, restoration, edge cases |
+| D1 | Feature doc | `docs/features/09-20260626-session-level-cost-tracking.md` | 196-line living reference |
+| D2 | Issue #59 filed | GitHub Issues | SQLite wire-up follow-up (issue #23 root cause) |
+| D3 | Repo memory updated | `opencode-go-usage-accuracy.md` | Cross-link to issue #59 |
+
+**Verification:**
+
+```bash
+npm run compile    # 0 errors
+npm test           # 75/75 pass (40 existing + 35 new)
+```
+
+**Follow-up:**
+
+- Issue #59: Wire SQLite reader into `getSummary()` for subscription-level accuracy.
+- VS Code API gap: `ProvideLanguageModelChatResponseOptions` has no thread ID → `getCurrentSessionCost()` stays global-most-recent until VS Code adds a stable chat thread hook.
 
 ---
 

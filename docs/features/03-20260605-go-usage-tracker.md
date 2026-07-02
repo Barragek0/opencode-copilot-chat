@@ -3,8 +3,8 @@
 # Go Usage Tracker — Feature Implementation
 
 **Topic:** usage / features / status-bar / provider / tracking
-**Updated:** 2026-06-05
-**Tags:** #usage #features #status-bar #go-usage #pricing #byok
+**Updated:** 2026-07-02
+**Tags:** #usage #features #status-bar #go-usage #pricing #byok #sqlite
 **Supersedes:** —
 
 ---
@@ -136,4 +136,70 @@ npx @vscode/vsce package --no-dependencies  # 106 KB VSIX
 
 ## Follow-up
 
-Status bar did not update after testing — see `docs/issues/14-20260605-go-usage-status-bar-not-updating.md` for the debugging session.
+Status bar did not update after testing — see `docs/issues/13-20260605-go-usage-status-bar-not-updating.md` for the debugging session.
+
+---
+
+## SQLite-backed Cost Accuracy (PR #60, merged 2026-06-30)
+
+**Status:** ✅ Solved | **Issue:** [#59](https://github.com/ltmoerdani/opencode-copilot-chat/issues/59) | **Contributor:** [@Wallacy](https://github.com/Wallacy)
+
+### Problem
+
+The original `getSummary()` returned `buildSummaryFromTracked(...)`, which estimated costs from locally recorded token counts × model pricing. This estimate drifted 9–15% from actual billing because it missed server-side cache affinity and CLI/TUI usage.
+
+### Solution
+
+`getSummary()` now tries SQLite first:
+
+1. Calls `readOpenCodeHistory()` which reads `~/.local/share/opencode/opencode.db` via `sqlite3` CLI
+2. Aggregates actual billed costs into subscription buckets (session 5h, weekly, monthly, today, yesterday)
+3. Enriches today/yesterday with token/request counts from tracked entries (SQLite stores cost only)
+4. Applies baselines on top of SQLite costs
+5. Falls back to `buildSummaryFromTracked()` when no SQLite DB exists
+
+New `UsageSummary` field: `sqliteAvailable: boolean` — indicates whether cost data comes from SQLite (actual billing) or local estimation.
+
+```typescript
+// getSummary() now tries SQLite first
+const sqliteRows = readOpenCodeHistory();
+if (sqliteRows) {
+  return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+}
+return this.buildSummaryFromTracked(nowMs, clamp);
+```
+
+### Data Flow
+
+```
+opencode.db (SQLite)
+  → readOpenCodeHistory() — sqlite3 CLI, 5s timeout
+  → buildSummaryFromRows() — aggregate costs by time window
+  → buildSqliteEnrichedSummary() — enrich with tracked tokens, apply baselines
+  → UsageSummary { sqliteAvailable: true }
+```
+
+When SQLite is unavailable:
+```
+Tracked entries (globalState)
+  → buildSummaryFromTracked() — aggregate estimated costs
+  → UsageSummary { sqliteAvailable: false }
+```
+
+### Key Design Decisions
+
+- **SQLite as primary source:** When available, SQLite costs replace local estimates entirely. The `buildSummaryFromRows()` method (previously dead code) is now the primary aggregator.
+- **Token enrichment from tracked entries:** SQLite stores cost only, not token counts. Today/yesterday token counts are enriched from the extension's tracked entries.
+- **Baselines applied on top:** `buildSqliteEnrichedSummary()` applies baselines after SQLite aggregation, not during. This prevents double-counting.
+- **Graceful fallback:** If `sqlite3` CLI is not installed or `opencode.db` doesn't exist, the extension falls back to local estimation with no breaking change.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/goUsageTracker.ts` | `buildSqliteEnrichedSummary()` method, `sqliteAvailable` field, SQLite-first logic in `getSummary()` |
+
+### Related
+
+- Issue doc: `docs/issues/30-20260630-pr60-sqlite-cost-deepseek-overflow.md`
+- Original research: `docs/features/03-20260605-go-usage-tracker.md` §Research Findings

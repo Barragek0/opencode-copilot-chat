@@ -158,4 +158,4 @@ No type errors across `src/streaming.ts` or `src/extension.ts`.
 
 ---
 
-_Related: [Issue #15 — PR #13 Review (v0.2.2)](../issues/15-20260608-pr13-minimax-think-tags-review-merge-release.md) | [GitHub Issue #12](https://github.com/ltmoerdani/opencode-copilot-chat/issues/12)_
+_Related: [Issue #15 — PR #13 Review (v0.2.2)](../issues/14-20260608-pr13-minimax-think-tags-review-merge-release.md) | [GitHub Issue #12](https://github.com/ltmoerdani/opencode-copilot-chat/issues/12)_

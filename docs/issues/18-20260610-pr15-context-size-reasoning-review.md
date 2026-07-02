@@ -201,7 +201,7 @@ PR #15 was **merged on 2026-06-10** (`mergedAt: 2026-06-10T03:08:19Z`). All feat
 | MiniMax thinking | `src/extension.ts` — `thinking.minimax` → `adaptive` / `enabled` | ✅ Implemented |
 | Kimi thinking format | `src/extension.ts` — `thinking: { type }` (later corrected by PR #18) | ✅ Implemented |
 
-**Follow-up:** PR #18 (merged 2026-06-11) corrected the Kimi format from `enable_thinking` back to `thinking: { type }` after gateway testing showed `enable_thinking` caused HTTP 400. See `docs/issues/20-20260611-pr18-kimi-thinking-format-review.md`.
+**Follow-up:** PR #18 (merged 2026-06-11) corrected the Kimi format from `enable_thinking` back to `thinking: { type }` after gateway testing showed `enable_thinking` caused HTTP 400. See `docs/issues/19-20260611-pr18-kimi-thinking-format-review.md`.
 
 **Status changed:** 🟢 Active → ✅ Solved
 

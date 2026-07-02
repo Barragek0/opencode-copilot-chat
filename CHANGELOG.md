@@ -4,6 +4,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-07-02
+
 ### Added
 
 - **`[Usage]` Session-level cost tracking.** The status bar tooltip, SVG hover card, and usage QuickPick now show the cost of the current chat session (requests, tokens, USD). Each chat thread gets a unique `sessionId` derived from conversation content; the tracker accumulates costs per session in memory. Sessions idle for >2h are pruned automatically, capped at 50 active sessions, and persisted across restarts.
@@ -14,9 +16,11 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 - **`[Model Picker]` Removed `triggerChange()` cross-provider re-resolution.** The agent-variant providers now resolve their API key independently via the secrets fallback path (`isAgentVariant || options.configuration`). Previously, the base provider called `triggerChange()` on the agent provider to force it to re-resolve after storing the BYOK key — this indirection is no longer needed since both paths reach the same `SecretStorage` read.
 - **`[Model Picker]` Removed `categoryOrder` from `ProviderDefinition`.** This field was left over from the old `category: { label, order }` object that crashed the picker on VS Code ≥1.126 (fixed in 0.3.4). It was never read after the type was changed to a plain string.
+- **`[Deps]` Bumped `@types/node` 25.9.3 → 26.1.0, `@vscode/vsce` 3.9.1 → 3.9.2, `@types/vscode` 1.120.0 → 1.125.0.** Minimum VS Code engine bumped from 1.120.0 to 1.125.0 to match `@types/vscode`.
 
 ### Fixed
 
+- **`[Thinking]` GLM thinking enum values corrected, output popup removed, API key passed on model fetch.** [#61](https://github.com/ltmoerdani/opencode-copilot-chat/issues/61): Removed invalid `'on'` from GLM thinking enum — GLM models now accept only `'off'`/`'high'`/`'max'`. `reasoning_effort` is sent for GLM when the value is effort-based (`high`/`max`). Combined GLM/Kimi thinking schema split into separate blocks for clarity. [#67](https://github.com/ltmoerdani/opencode-copilot-chat/issues/67): Removed `getOutputChannel().show(true)` calls that caused random output popups during model fetch. [#62](https://github.com/ltmoerdani/opencode-copilot-chat/issues/62): `Authorization` header is now passed when fetching the model list (previously missing). Added comprehensive unit tests for GLM effort values. PR [#68](https://github.com/ltmoerdani/opencode-copilot-chat/pull/68) by [@Wallacy](https://github.com/Wallacy).
 - **`[Request]` DeepSeek 400 error when prompt + completion exceeds context window.** When the prompt is large (e.g. 668K tokens on deepseek-v4-flash), the requested `max_tokens` (384K) combined with the prompt exceeded the 1048K context window, causing a 400 error from the provider. `modelLimits()` now caps `maxOutputTokens` to `contextWindow - promptReserve` using the estimated prompt size, preventing context overflow across all providers and endpoint types.
 - **`[Security]` Picker debug log no longer leaks API keys.** The previous `JSON.stringify(options)` debug log wrote the full `options` object (including `configuration.apiKey`) to the Output channel in plaintext. Removed entirely — the log served only as a temporary diagnostic during the 1.125/1.126 picker investigation and is no longer needed.
 - **`[Security]` `Clear API Key` action now warns about BYOK re-persistence.** When the user clears the key via `SecretStorage`, the next picker resolution re-stores it from `options.configuration` (BYOK). The info message now tells the user to also remove it from the Manage Models panel if they want a full clear.
@@ -144,7 +148,7 @@ Fixes [#11](https://github.com/ltmoerdani/opencode-copilot-chat/issues/11). PR [
 
 ### Documentation
 
-- New issue doc: `docs/issues/23-20260614-thinking-off-missing-for-effort-only-schemas.md`
+- New issue doc: `docs/issues/22-20260614-thinking-off-missing-for-effort-only-schemas.md`
 
 ---
 
