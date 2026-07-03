@@ -114,7 +114,12 @@ interface UsageBaselinePeriod {
 interface UsageBaseline {
   session?: UsageBaselinePeriod;
   weekly?: UsageBaselinePeriod;
-  monthly?: UsageBaselinePeriod;
+  monthly?: UsageBaselinePeriod & {
+    /** The user's billing anchor day (1-31) for the monthly reset. */
+    anchorDay?: number;
+    /** The user's billing anchor hour (0-23 UTC) for the monthly reset. */
+    anchorHour?: number;
+  };
 }
 
 export interface UsageBaselineTargets {
@@ -142,33 +147,55 @@ function startOfUtcWeek(nowMs: number): number {
   return d.getTime();
 }
 
-function anchoredMonthStart(nowMs: number, anchorMs: number | null): number {
-  if (anchorMs === null) {
-    const d = new Date(nowMs);
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
-  }
-  const now    = new Date(nowMs);
-  const anchor = new Date(anchorMs);
-  let year  = now.getUTCFullYear();
+function anchoredMonthStart(nowMs: number, anchorDay: number, anchorHour: number): number {
+  const now = new Date(nowMs);
+  let year = now.getUTCFullYear();
   let month = now.getUTCMonth();
-  let candidate = Date.UTC(year, month, anchor.getUTCDate());
+  let candidate = Date.UTC(year, month, anchorDay, anchorHour, 0, 0, 0);
   if (candidate > nowMs) {
     if (month === 0) { year--; month = 11; } else { month--; }
-    candidate = Date.UTC(year, month, anchor.getUTCDate());
+    candidate = Date.UTC(year, month, anchorDay, anchorHour, 0, 0, 0);
   }
   return candidate;
 }
 
-function anchoredMonthEnd(startMs: number, anchorMs: number | null): number {
+function anchoredMonthEnd(startMs: number, anchorDay: number, anchorHour: number): number {
   const d = new Date(startMs);
-  if (anchorMs === null) {
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
-  }
-  const anchor = new Date(anchorMs!);
-  let year  = d.getUTCFullYear();
+  let year = d.getUTCFullYear();
   let month = d.getUTCMonth() + 1;
   if (month > 11) { year++; month = 0; }
-  return Date.UTC(year, month, anchor.getUTCDate());
+  return Date.UTC(year, month, anchorDay, anchorHour, 0, 0, 0);
+}
+
+/** Build the monthly window: manual anchor > auto-anchor from earliest row > calendar month. */
+function buildMonthlyWindow(
+  nowMs: number,
+  baseline: UsageBaseline,
+  earliestMs?: number | null,
+): { monthStartMs: number; monthEndMs: number } {
+  // Priority 1: user-configured anchor (set via "Set spent targets")
+  const monthlyAnchor = baseline.monthly?.anchorDay;
+  if (monthlyAnchor && monthlyAnchor >= 1 && monthlyAnchor <= 31) {
+    const hour = baseline.monthly!.anchorHour ?? 0;
+    const start = anchoredMonthStart(nowMs, monthlyAnchor, hour);
+    const end = anchoredMonthEnd(start, monthlyAnchor, hour);
+    return { monthStartMs: start, monthEndMs: end };
+  }
+  // Priority 2: auto-anchor from earliest SQLite row (actual billing start)
+  if (earliestMs != null) {
+    const d = new Date(earliestMs);
+    const day = d.getUTCDate();
+    const hour = d.getUTCHours();
+    const start = anchoredMonthStart(nowMs, day, hour);
+    const end = anchoredMonthEnd(start, day, hour);
+    return { monthStartMs: start, monthEndMs: end };
+  }
+  // Fallback: calendar month
+  const now = new Date(nowMs);
+  return {
+    monthStartMs: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    monthEndMs:   Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+  };
 }
 
 /** Rolling reset: oldest entry in the current 5h window + 5h */
@@ -410,11 +437,8 @@ export class GoUsageTracker {
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
     const weekMs      = startOfUtcWeek(nowMs);
     const sessionStart = nowMs - FIVE_HOURS_MS;
-
-    // Use stored activation date as anchor; fall back to earliest row.
-    const earliest = Math.min(...rows.map(r => r.createdMs));
-    const monthStartMs = anchoredMonthStart(nowMs, earliest);
-    const monthEndMs   = anchoredMonthEnd(monthStartMs, earliest);
+    const earliest = rows.length > 0 ? Math.min(...rows.map(r => r.createdMs)) : null;
+    const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, this.baseline, earliest);
     const weekEnd      = weekMs + WEEK_MS;
 
     let sessionCost = 0, weeklyCost = 0, monthlyCost = 0;
@@ -495,11 +519,7 @@ export class GoUsageTracker {
     const dayMs       = startOfUtcDay(nowMs);
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
     const weekMs      = startOfUtcWeek(nowMs);
-    const earliest    = this.entries.length > 0
-      ? Math.min(...this.entries.map(e => e.timestamp))
-      : null;
-    const monthStartMs = anchoredMonthStart(nowMs, earliest);
-    const monthEndMs   = anchoredMonthEnd(monthStartMs, earliest);
+    const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, this.baseline);
     const sessionStart = nowMs - FIVE_HOURS_MS;
 
     let trackedSessionCost = 0, trackedWeeklyCost = 0, trackedMonthlyCost = 0;
@@ -573,20 +593,70 @@ export class GoUsageTracker {
 
   setManualSpentTargets(targets: UsageBaselineTargets): void {
     const nowMs = Date.now();
-    const summary = this.getSummary();
 
-    // For all periods: baseline = target - tracked. This can be negative
-    // (offsetting tracked entries downward) or positive (adding to tracked).
-    // Display = tracked + baseline = tracked + (target - tracked) = target.
-    // When the window rolls (5h session, Mon weekly, anchor monthly),
-    // expiresAt triggers, baseline is cleared, and display resets to 0.
+    // ── Monthly ───────────────────────────────────────────────────────────
+    // The monthly window may change AFTER we store the anchor. To keep
+    // display = tracked + baseline = target, we compute trackedMonthly
+    // using the PROSPECTIVE window (with the new anchor), not the current one.
+    const sqliteRows = readOpenCodeHistory();
+    let sqliteMonthlyCost = 0;
+    if (sqliteRows && sqliteRows.length > 0) {
+      const earliest = Math.min(...sqliteRows.map(r => r.createdMs));
+      // Build a temporary baseline to let buildMonthlyWindow find the anchor
+      const tempBaseline: UsageBaseline = { ...this.baseline };
+      if (targets.monthlyAnchorDay && targets.monthlyAnchorDay >= 1 && targets.monthlyAnchorDay <= 31) {
+        tempBaseline.monthly = {
+          ...(tempBaseline.monthly ?? { amount: 0, expiresAt: 0 }),
+          anchorDay: targets.monthlyAnchorDay,
+          anchorHour: targets.monthlyAnchorHour ?? 0,
+        };
+      }
+      const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, tempBaseline, earliest);
+      for (const r of sqliteRows) {
+        if (r.createdMs >= monthStartMs && r.createdMs < monthEndMs) {
+          sqliteMonthlyCost += r.cost;
+        }
+      }
+    }
+
+    const currentBaselineMonthly = this.getActiveBaselineAmount("monthly", nowMs);
+    // trackedMonthly = what SQLite shows for the target window + tracked entries baseline adjustment
+    // When no SQLite, fall back to tracked entries for the target window
+    let trackedMonthly = sqliteMonthlyCost;
+    if (!sqliteRows) {
+      // No SQLite: compute from tracked entries using the target window
+      const tempBaseline: UsageBaseline = { ...this.baseline };
+      if (targets.monthlyAnchorDay && targets.monthlyAnchorDay >= 1 && targets.monthlyAnchorDay <= 31) {
+        tempBaseline.monthly = {
+          ...(tempBaseline.monthly ?? { amount: 0, expiresAt: 0 }),
+          anchorDay: targets.monthlyAnchorDay,
+          anchorHour: targets.monthlyAnchorHour ?? 0,
+        };
+      }
+      const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, tempBaseline);
+      for (const e of this.entries) {
+        if (e.timestamp >= monthStartMs && e.timestamp < monthEndMs) {
+          trackedMonthly += e.cost;
+        }
+      }
+    }
+    // If SQLite had no rows (empty array), use summary fallback
+    if (sqliteRows && sqliteRows.length === 0) {
+      const summary = this.getSummary();
+      trackedMonthly = Math.max(0, summary.monthly.spent - currentBaselineMonthly);
+    }
+    // For SQLite path, subtract the current baseline so we don't double-count
+    if (sqliteRows && sqliteRows.length > 0) {
+      trackedMonthly = Math.max(0, trackedMonthly - currentBaselineMonthly);
+    }
+
+    // ── Session and Weekly ────────────────────────────────────────────────
+    const summary = this.getSummary();
     const currentBaselineSession = this.getActiveBaselineAmount("session", nowMs);
     const currentBaselineWeekly = this.getActiveBaselineAmount("weekly", nowMs);
-    const currentBaselineMonthly = this.getActiveBaselineAmount("monthly", nowMs);
 
     const trackedSession = Math.max(0, summary.session.spent - currentBaselineSession);
     const trackedWeekly = Math.max(0, summary.weekly.spent - currentBaselineWeekly);
-    const trackedMonthly = Math.max(0, summary.monthly.spent - currentBaselineMonthly);
 
     this.baseline.session = {
       amount: targets.session - trackedSession,
@@ -614,7 +684,12 @@ export class GoUsageTracker {
         if (month > 11) { year++; month = 0; }
         candidate = Date.UTC(year, month, targets.monthlyAnchorDay, hour, 0, 0, 0);
       }
-      this.baseline.monthly.expiresAt = candidate;
+      this.baseline.monthly = {
+        amount: this.baseline.monthly.amount,
+        expiresAt: candidate,
+        anchorDay: targets.monthlyAnchorDay,
+        anchorHour: hour,
+      };
     }
 
     this.persistBaseline();

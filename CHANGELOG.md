@@ -4,6 +4,10 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Fixed
+
+- **`[Usage]` Monthly cost aggregation now respects the subscription anchor.** The monthly window was using calendar month after a regression, but OpenCode Go billing is anchor-based (subscription day/hour). The tracker now derives the window from three tiers: (1) user-configured anchor via "Set spent targets", (2) auto-anchor from the earliest SQLite row (matching actual billing start), (3) calendar month fallback. Also fixes `setManualSpentTargets` which previously computed the monthly cost for the old window before storing the anchor, causing tracked+baseline to mismatch the target. Now reads SQLite costs directly using the prospective window (with the new anchor).
+
 ## [0.3.5] — 2026-07-02
 
 ### Added
