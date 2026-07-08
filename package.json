@@ -2,7 +2,7 @@
   "name": "opencode-copilot-chat",
   "displayName": "OpenCode for Copilot Chat — BYOK 30+ AI Models",
   "description": "Use 30+ frontier AI models (DeepSeek V4, Kimi K2.6, GLM-5.1, Qwen3.7, MiMo V2.5, MiniMax M2.7, free Claude Opus, GPT-5.5, Gemini 3.5, Grok) in GitHub Copilot Chat. Bring Your Own Key — no Copilot Pro needed.",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "publisher": "ltmoerdani",
   "license": "MIT",
   "icon": "media/opencodego.png",
@@ -160,49 +160,84 @@
         },
         "opencodego.stripThinkTags": {
           "type": "string",
-          "enum": ["never", "auto", "always"],
+          "enum": [
+            "never",
+            "auto",
+            "always"
+          ],
           "default": "auto",
           "markdownDescription": "How to handle `<think>...</think>` tags in model output. `auto` strips tags only for known reasoning models that inline thinking in the content field (minimax), accumulating the extracted reasoning content into the existing reasoning fallback. `always` strips for every model. `never` passes text through unchanged (use if a model legitimately uses `<think>` in its output)."
         },
         "opencodego.thinking.deepseek": {
           "type": "string",
-          "enum": ["off", "low", "medium", "high", "max"],
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
           "default": "off",
           "markdownDescription": "Thinking mode for DeepSeek models (`deepseek-v4-flash`, `deepseek-v4-pro`). Maps to `reasoning_effort`. `low`/`medium`/`high` adjust reasoning depth; `max` enables maximum reasoning."
         },
         "opencodego.thinking.glm": {
           "type": "string",
-          "enum": ["off", "high", "max"],
+          "enum": [
+            "off",
+            "high",
+            "max"
+          ],
           "default": "off",
           "markdownDescription": "Thinking mode for GLM models. `high`/`max` enable thinking (interpreted as `on` for models that use toggle, e.g., GLM 5/5.1). Per-model picker shows only options supported by each model."
         },
         "opencodego.thinking.kimi": {
           "type": "string",
-          "enum": ["on", "off"],
+          "enum": [
+            "on",
+            "off"
+          ],
           "default": "off",
           "markdownDescription": "Thinking mode for Kimi models (`kimi-k2.5`, `kimi-k2.6`). Maps to `thinking: { type: 'enabled' | 'disabled' }`."
         },
         "opencodego.thinking.minimax": {
           "type": "string",
-          "enum": ["off", "on"],
+          "enum": [
+            "off",
+            "on"
+          ],
           "default": "off",
           "markdownDescription": "Thinking mode for MiniMax models (`minimax-m2.5`, `minimax-m3`, etc.). Maps to `thinking: { type: 'disabled'|'adaptive'|'enabled' }`. The OpenCode gateway only supports on/off for this family (`reasoning_effort` is silently ignored)."
         },
         "opencodego.thinking.mimo": {
           "type": "string",
-          "enum": ["off", "low", "medium", "high"],
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high"
+          ],
           "default": "off",
           "markdownDescription": "Thinking mode for Mimo (Xiaomi) models. Maps to `reasoning_effort`. `low`/`medium`/`high` adjust reasoning depth."
         },
         "opencodego.thinking.qwen": {
           "type": "string",
-          "enum": ["auto", "on", "off"],
+          "enum": [
+            "auto",
+            "on",
+            "off"
+          ],
           "default": "off",
           "markdownDescription": "Thinking mode for Qwen models (`qwen3.5-plus`, `qwen3.6-plus`, `qwen3.6-plus-free`). Maps to `enable_thinking`. `auto` lets the model decide (omits the flag), `on`/`off` force-enable or disable hybrid thinking. Off is the recommended default to avoid empty Copilot replies."
         },
         "opencodego.thinking.qwenBudget": {
           "type": "string",
-          "enum": ["auto", "4096", "16384", "32768", "81920"],
+          "enum": [
+            "auto",
+            "4096",
+            "16384",
+            "32768",
+            "81920"
+          ],
           "default": "auto",
           "markdownDescription": "Optional `thinking_budget` for Qwen models when thinking is `on` or `auto`. `auto` omits the field. Ignored when Qwen thinking is `off`."
         }

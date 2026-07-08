@@ -103,7 +103,7 @@ const KNOWN_UNAVAILABLE_MODEL_IDS = new Set([
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const OPEN_CODE_CLIENT = "vscode-copilot-chat";
-const OPEN_CODE_USER_AGENT = "opencode-copilot-chat/0.3.2 VSCode";
+const OPEN_CODE_USER_AGENT = "opencode-copilot-chat/0.3.6 VSCode";
 
 /** Create an agent-variant provider definition that inherits URLs, models, and filters from a base. */
 function providerVariant(
@@ -531,7 +531,50 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  checkUtilityModelConfiguration(context);
+
   void warmModelPickerMetadata();
+}
+
+/**
+ * VS Code 1.128 introduced `chat.byokUtilityModelDefault` with a default of "none",
+ * which breaks all background utility tasks (title generation, commit messages, intent
+ * detection) for BYOK users. This function auto-configures it to "mainAgent" on first
+ * activation so background tasks continue to work seamlessly.
+ *
+ * RULES:
+ * - Only runs on VS Code 1.128+.
+ * - Skips if any utility model setting is already explicitly configured.
+ * - Uses a one-time globalState flag to avoid showing the notification on every activation.
+ * - Valid enum (from VS Code 1.128 desktop bundle): "none" | "mainAgent" | "copilot".
+ */
+function checkUtilityModelConfiguration(context: vscode.ExtensionContext): void {
+  const [major, minor] = vscode.version.split(".").map(Number);
+  if (major < 1 || (major === 1 && minor < 128)) return;
+
+  const chat = vscode.workspace.getConfiguration("chat");
+  const byokDefault    = chat.get<string>("byokUtilityModelDefault", "");
+  const utilitySmall   = chat.get<string>("utilitySmallModel", "");
+  const utilityGeneral = chat.get<string>("utilityModel", "");
+
+  // Treat VS Code's schema default values as "not configured"
+  const isConfigured =
+    (byokDefault !== "" && byokDefault !== undefined && byokDefault !== "none") ||
+    (utilitySmall !== "" && utilitySmall !== undefined && utilitySmall !== "Default") ||
+    (utilityGeneral !== "" && utilityGeneral !== undefined && utilityGeneral !== "Default");
+  if (isConfigured) return;
+
+  void chat
+    .update("byokUtilityModelDefault", "mainAgent", vscode.ConfigurationTarget.Global)
+    .then(() => {
+      const NOTICE_KEY = "opencode.utilityModelAutoFixed.v1128";
+      if (context.globalState.get<boolean>(NOTICE_KEY)) return;
+      void context.globalState.update(NOTICE_KEY, true);
+      void vscode.window.showInformationMessage(
+        "OpenCode: Automatically fixed VS Code 1.128 utility model setting. " +
+          "Background tasks (chat titles, commit messages) now use your OpenCode model.",
+      );
+    });
 }
 
 async function warmModelPickerMetadata(): Promise<void> {

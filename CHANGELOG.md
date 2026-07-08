@@ -8,6 +8,12 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 - **`[Usage]` Monthly cost aggregation now respects the subscription anchor.** The monthly window was using calendar month after a regression, but OpenCode Go billing is anchor-based (subscription day/hour). The tracker now derives the window from three tiers: (1) user-configured anchor via "Set spent targets", (2) auto-anchor from the earliest SQLite row (matching actual billing start), (3) calendar month fallback. Also fixes `setManualSpentTargets` which previously computed the monthly cost for the old window before storing the anchor, causing tracked+baseline to mismatch the target. Now reads SQLite costs directly using the prospective window (with the new anchor).
 
+## [0.3.6] — 2026-07-08
+
+### Fixed
+
+- **`[Compatibility]` Auto-fix VS Code 1.128 BYOK utility model error.** VS Code 1.128 changed the default of `chat.byokUtilityModelDefault` to `"none"`, silently breaking all background utility tasks (chat title generation, commit messages, intent detection) for BYOK users. On activation, the extension now checks whether any utility model setting is already configured; if not, it automatically writes `chat.byokUtilityModelDefault = "mainAgent"` to global settings and shows a one-time toast. The fix runs only on VS Code ≥1.128 and never overwrites a value the user has already set. See `docs/issues/32-20260708-vscode-128-byok-utility-model.md`.
+
 ## [0.3.5] — 2026-07-02
 
 ### Added
