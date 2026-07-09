@@ -8,6 +8,16 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 - **`[Usage]` Monthly cost aggregation now respects the subscription anchor.** The monthly window was using calendar month after a regression, but OpenCode Go billing is anchor-based (subscription day/hour). The tracker now derives the window from three tiers: (1) user-configured anchor via "Set spent targets", (2) auto-anchor from the earliest SQLite row (matching actual billing start), (3) calendar month fallback. Also fixes `setManualSpentTargets` which previously computed the monthly cost for the old window before storing the anchor, causing tracked+baseline to mismatch the target. Now reads SQLite costs directly using the prospective window (with the new anchor).
 
+## [0.3.7] — 2026-07-09
+
+### Added
+
+- **`[Thinking]` Reasoning now surfaced to Copilot Chat as collapsible thinking blocks.** Previously, reasoning content from OpenCode models (DeepSeek, Kimi, GLM, Qwen, MiniMax, MiMo) was accumulated internally but never emitted to the VS Code Chat UI as a thinking part — so `chat.agent.thinkingStyle` (`collapsed` / `collapsedPreview` / `fixedScrolling`) had no effect, and reasoning either appeared as flat plain text or was silently dropped. The extension now streams reasoning per-chunk via the proposed `LanguageModelThinkingPart` API (available at runtime since VS Code ~1.102, well within our `^1.125.0` floor), across all four transports (chat-completions, Anthropic messages, OpenAI responses, Google Gemini) and both streaming + non-stream response paths. This makes `chat.agent.thinkingStyle` work for OpenCode BYOK models, matching the behavior of Copilot-hosted models. Falls back to the legacy accumulate-and-flush behavior on hypothetical older hosts via a runtime guard. Tool-call replication (`onReasoningContent`) and think-tag filtering (`opencodego.stripThinkTags`) remain intact and compose with the new surfacing. No `enabledApiProposals` declaration needed. Verified working with DeepSeek and Kimi in Copilot Chat. Fixes [#22](https://github.com/ltmoerdani/opencode-copilot-chat/issues/22) and [#71](https://github.com/ltmoerdani/opencode-copilot-chat/issues/71). See `docs/issues/33-20260709-thinking-part-byok-surfacing-research.md`.
+
+### Changed
+
+- **`[Streaming]` `[stream-summary]` log now reports total reasoning characters accurately.** Previously, `reasoningChars` in the log reflected only the remaining `reasoningContent` string, which is cleared by `flushToolCalls` (for tool-call replication) and `flushReasoningFallback` — so the metric showed `0` even when reasoning was streamed. Now tracks a monotonic `totalReasoningChars` counter that survives clears, giving accurate per-response reasoning metrics for debugging.
+
 ## [0.3.6] — 2026-07-08
 
 ### Fixed

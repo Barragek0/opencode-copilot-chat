@@ -86,6 +86,8 @@ export async function streamChatCompletions(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),
     thinkFilter,
+    options.progress,
+    options.requestHeaders["x-opencode-request"],
   );
 
   await streamOpenCodeResponse({
@@ -117,6 +119,8 @@ export async function streamAnthropicMessages(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),
     thinkFilter,
+    options.progress,
+    options.requestHeaders["x-opencode-request"],
   );
 
   await streamOpenCodeResponse({
@@ -142,6 +146,8 @@ export async function streamResponsesApi(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),
     thinkFilter,
+    options.progress,
+    options.requestHeaders["x-opencode-request"],
   );
 
   await streamOpenCodeResponse({
@@ -169,6 +175,8 @@ export async function streamGoogleGenerateContent(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),
     thinkFilter,
+    options.progress,
+    options.requestHeaders["x-opencode-request"],
   );
 
   await streamOpenCodeResponse({
@@ -214,6 +222,68 @@ function reportProgressPart(
   }
 
   reportProgressWithContextWindowRequest(localRequestId, progress, part);
+}
+
+/**
+ * CONTRACT — Reasoning surfacing via LanguageModelThinkingPart
+ *
+ * RULES:
+ *   1. `LanguageModelThinkingPart` is a proposed VS Code API available at
+ *      runtime since VS Code ~1.102 (Aug 2025). Our `engines.vscode: ^1.125.0`
+ *      guarantees it is present, but we guard defensively so the extension
+ *      degrades gracefully on any hypothetical older host.
+ *   2. When available, reasoning is streamed to the Copilot Chat UI per-chunk
+ *      as a thinking part. This lets `chat.agent.thinkingStyle`
+ *      (`collapsed` / `collapsedPreview` / `fixedScrolling`) apply, fixing
+ *      issues #22 and #71.
+ *   3. When NOT available (very old host), the caller falls back to the
+ *      legacy accumulate-and-flush behavior (reasoning emitted as a
+ *      LanguageModelTextPart only when the response is otherwise empty).
+ *
+ * INVARIANTS:
+ *   - Never throws: if the constructor is missing or `progress.report` fails,
+ *     the reasoning is silently dropped (the visible response is unaffected).
+ *   - The returned boolean tells the caller whether the thinking part was
+ *     successfully emitted, so the caller can decide whether to also
+ *     accumulate into `reasoningContent` for the legacy fallback path.
+ */
+const thinkingPartConstructor: // eslint-disable-line @typescript-eslint/no-explicit-any
+  | (new (value: string | string[]) => vscode.LanguageModelResponsePart2)
+  | undefined = (() => {
+  const ctor = (vscode as unknown as {
+    LanguageModelThinkingPart?: unknown;
+  }).LanguageModelThinkingPart;
+  return typeof ctor === "function"
+    ? (ctor as new (value: string | string[]) => vscode.LanguageModelResponsePart2)
+    : undefined;
+})();
+
+/**
+ * Emit a reasoning chunk to the Copilot Chat UI as a thinking part.
+ *
+ * @returns `true` if the thinking part was emitted successfully;
+ *          `false` if the API is unavailable (caller should accumulate
+ *          for the legacy fallback path).
+ */
+function emitThinkingPart(
+  localRequestId: string | undefined,
+  progress: vscode.Progress<vscode.LanguageModelResponsePart2>,
+  reasoningChunk: string,
+): boolean {
+  if (!reasoningChunk || !thinkingPartConstructor) {
+    return false;
+  }
+  try {
+    reportProgressPart(
+      localRequestId,
+      progress,
+      new thinkingPartConstructor(reasoningChunk),
+    );
+    return true;
+  } catch {
+    // Defensive: never let a thinking-part emit failure break the visible response.
+    return false;
+  }
 }
 
 async function streamOpenCodeResponse(
@@ -771,6 +841,13 @@ class OpenAiResponseExtractor {
   private reasoningContent = "";
   private emittedTextLength = 0;
   private emittedToolCallsCount = 0;
+  /**
+   * Total reasoning characters seen across the entire stream. Unlike
+   * `reasoningContent` (which is cleared by flushToolCalls/flushReasoningFallback
+   * for tool-call replication), this counter is monotonically increasing and
+   * used for the [stream-summary] log line so metrics stay accurate.
+   */
+  private totalReasoningChars = 0;
 
   constructor(
     private readonly onReasoningContent?: (
@@ -779,6 +856,14 @@ class OpenAiResponseExtractor {
     ) => void,
     private readonly onReasoningDebug?: (reasoningContent: string) => void,
     private readonly thinkFilter?: ThinkTagFilter,
+    /**
+     * Progress reporter used to stream reasoning chunks to the Copilot Chat UI
+     * as `LanguageModelThinkingPart`. When provided (together with
+     * `localRequestId`), reasoning is surfaced live so that
+     * `chat.agent.thinkingStyle` applies (fixes #22, #71).
+     */
+    private readonly progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
+    private readonly localRequestId?: string,
   ) {}
 
   get emittedText(): number {
@@ -790,7 +875,28 @@ class OpenAiResponseExtractor {
   }
 
   get reasoningChars(): number {
-    return this.reasoningContent.length;
+    return this.totalReasoningChars;
+  }
+
+  /**
+   * Accumulate reasoning for tool-call replication, and — when the thinking
+   * part API is available — stream it live to the Copilot Chat UI.
+   *
+   * Returns the reasoning string that was handled (for logging/debug).
+   */
+  private handleReasoning(reasoning: string): string {
+    if (!reasoning) {
+      return "";
+    }
+    this.reasoningContent += reasoning;
+    this.totalReasoningChars += reasoning.length;
+    // Stream reasoning to the UI per-chunk as a thinking part, so that
+    // chat.agent.thinkingStyle (collapsed / collapsedPreview / fixedScrolling)
+    // can apply. Falls back to legacy accumulate-only when the API is absent.
+    if (this.progress) {
+      emitThinkingPart(this.localRequestId, this.progress, reasoning);
+    }
+    return reasoning;
   }
 
   extractStreamParts(data: unknown): vscode.LanguageModelResponsePart[] {
@@ -813,11 +919,11 @@ class OpenAiResponseExtractor {
         parts.push(new vscode.LanguageModelTextPart(visible));
       }
       if (thinking) {
-        this.reasoningContent += thinking;
+        this.handleReasoning(thinking);
       }
       const reasoning = extractReasoningFromDelta(delta);
       if (reasoning) {
-        this.reasoningContent += reasoning;
+        this.handleReasoning(reasoning);
       }
       this.collectOpenAiToolCalls(delta.tool_calls);
     }
@@ -831,11 +937,11 @@ class OpenAiResponseExtractor {
         parts.push(new vscode.LanguageModelTextPart(visible));
       }
       if (thinking) {
-        this.reasoningContent += thinking;
+        this.handleReasoning(thinking);
       }
       const reasoning = extractReasoningFromDelta(message);
       if (reasoning) {
-        this.reasoningContent += reasoning;
+        this.handleReasoning(reasoning);
       }
       this.collectOpenAiToolCalls(message.tool_calls);
     }
@@ -876,7 +982,8 @@ class OpenAiResponseExtractor {
         );
       }
       if (thinking) {
-        this.reasoningContent += thinking;
+        // Surface remaining think-filter carry through the thinking part channel.
+        this.handleReasoning(thinking);
       }
     }
 
@@ -884,6 +991,17 @@ class OpenAiResponseExtractor {
     if (!reasoning) {
       return;
     }
+    // If the thinking part API is available, reasoning was already streamed
+    // live during extractStreamParts via handleReasoning(). The accumulated
+    // reasoningContent is retained only for tool-call replication
+    // (flushToolCalls → onReasoningContent). Nothing more to emit here.
+    if (thinkingPartConstructor) {
+      this.reasoningContent = "";
+      return;
+    }
+    // Legacy fallback (API unavailable): emit reasoning as plain text only
+    // when the response is otherwise empty, to avoid breaking the visible
+    // output. This preserves the pre-fix safety-net semantics.
     if (this.emittedTextLength > 0 || this.emittedToolCallsCount > 0) {
       this.reasoningContent = "";
       return;
@@ -967,6 +1085,11 @@ class AnthropicResponseExtractor {
   private reasoningContent = "";
   private emittedTextLength = 0;
   private emittedToolCallsCount = 0;
+  /**
+   * Total reasoning characters seen across the entire stream (monotonic).
+   * See OpenAiResponseExtractor.totalReasoningChars for rationale.
+   */
+  private totalReasoningChars = 0;
 
   constructor(
     private readonly onReasoningContent?: (
@@ -975,6 +1098,12 @@ class AnthropicResponseExtractor {
     ) => void,
     private readonly onReasoningDebug?: (reasoningContent: string) => void,
     private readonly thinkFilter?: ThinkTagFilter,
+    /**
+     * Progress reporter used to stream reasoning chunks to the Copilot Chat UI
+     * as `LanguageModelThinkingPart`. See OpenAiResponseExtractor for contract.
+     */
+    private readonly progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
+    private readonly localRequestId?: string,
   ) {}
 
   get emittedText(): number {
@@ -986,7 +1115,24 @@ class AnthropicResponseExtractor {
   }
 
   get reasoningChars(): number {
-    return this.reasoningContent.length;
+    return this.totalReasoningChars;
+  }
+
+  /**
+   * Accumulate reasoning for tool-call replication, and — when the thinking
+   * part API is available — stream it live to the Copilot Chat UI.
+   * Mirror of OpenAiResponseExtractor.handleReasoning.
+   */
+  private handleReasoning(reasoning: string): string {
+    if (!reasoning) {
+      return "";
+    }
+    this.reasoningContent += reasoning;
+    this.totalReasoningChars += reasoning.length;
+    if (this.progress) {
+      emitThinkingPart(this.localRequestId, this.progress, reasoning);
+    }
+    return reasoning;
   }
 
   extractStreamParts(data: unknown): vscode.LanguageModelResponsePart[] {
@@ -1021,7 +1167,7 @@ class AnthropicResponseExtractor {
         }
         this.pendingToolCalls.set(index, pending);
       } else if (contentBlock && contentBlock.type === "thinking" && typeof contentBlock.thinking === "string") {
-        this.reasoningContent += contentBlock.thinking;
+        this.handleReasoning(contentBlock.thinking);
       } else if (contentBlock && typeof contentBlock.text === "string" && contentBlock.text.length > 0) {
         const { visible, thinking } = this.filterText(contentBlock.text);
         if (visible) {
@@ -1029,7 +1175,7 @@ class AnthropicResponseExtractor {
           parts.push(new vscode.LanguageModelTextPart(visible));
         }
         if (thinking) {
-          this.reasoningContent += thinking;
+          this.handleReasoning(thinking);
         }
       }
 
@@ -1048,10 +1194,10 @@ class AnthropicResponseExtractor {
           parts.push(new vscode.LanguageModelTextPart(visible));
         }
         if (thinking) {
-          this.reasoningContent += thinking;
+          this.handleReasoning(thinking);
         }
       } else if (delta.type === "thinking_delta" && typeof delta.thinking === "string" && delta.thinking.length > 0) {
-        this.reasoningContent += delta.thinking;
+        this.handleReasoning(delta.thinking);
       } else if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
         const index = typeof data.index === "number" ? data.index : this.pendingToolCalls.size - 1;
         const pending = this.pendingToolCalls.get(index) ?? {
@@ -1098,18 +1244,18 @@ class AnthropicResponseExtractor {
           parts.push(new vscode.LanguageModelTextPart(visible));
         }
         if (thinking) {
-          this.reasoningContent += thinking;
+          this.handleReasoning(thinking);
         }
       }
 
       if (typeof delta.thinking === "string" && delta.thinking.length > 0) {
-        this.reasoningContent += delta.thinking;
+        this.handleReasoning(delta.thinking);
       }
       if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
-        this.reasoningContent += delta.reasoning_content;
+        this.handleReasoning(delta.reasoning_content);
       }
       if (typeof delta.reasoning === "string" && delta.reasoning.length > 0) {
-        this.reasoningContent += delta.reasoning;
+        this.handleReasoning(delta.reasoning);
       }
 
       if (typeof delta.type === "string") {
@@ -1173,7 +1319,8 @@ class AnthropicResponseExtractor {
         );
       }
       if (thinking) {
-        this.reasoningContent += thinking;
+        // Surface remaining think-filter carry through the thinking part channel.
+        this.handleReasoning(thinking);
       }
     }
 
@@ -1181,6 +1328,17 @@ class AnthropicResponseExtractor {
     if (!reasoning) {
       return;
     }
+    // If the thinking part API is available, reasoning was already streamed
+    // live during extractStreamParts via handleReasoning(). The accumulated
+    // reasoningContent is retained only for tool-call replication
+    // (flushToolCalls → onReasoningContent). Nothing more to emit here.
+    if (thinkingPartConstructor) {
+      this.reasoningContent = "";
+      return;
+    }
+    // Legacy fallback (API unavailable): emit reasoning as plain text only
+    // when the response is otherwise empty, to avoid breaking the visible
+    // output. This preserves the pre-fix safety-net semantics.
     if (this.emittedTextLength > 0 || this.emittedToolCallsCount > 0) {
       this.reasoningContent = "";
       return;
@@ -1243,7 +1401,14 @@ function extractChatCompletionParts(
     } else {
       const reasoning = extractReasoningFromDelta(message);
       if (reasoning.trim()) {
-        parts.push(new vscode.LanguageModelTextPart(reasoning));
+        // Non-stream path: emit reasoning via thinking part when the API is
+        // available (so chat.agent.thinkingStyle applies), else fall back to
+        // plain text. Cast needed because LanguageModelThinkingPart is in the
+        // LanguageModelResponsePart2 union, not the stable LanguageModelResponsePart.
+        const thinkingPart = thinkingPartConstructor
+          ? (new thinkingPartConstructor(reasoning) as unknown as vscode.LanguageModelResponsePart)
+          : new vscode.LanguageModelTextPart(reasoning);
+        parts.push(thinkingPart);
       }
     }
     for (const toolCallPart of toolCallPartsFromOpenAiMessage(
@@ -1319,6 +1484,7 @@ function extractAnthropicParts(data: unknown): vscode.LanguageModelResponsePart[
 
   const parts: vscode.LanguageModelResponsePart[] = [];
   const textParts: string[] = [];
+  const reasoningParts: string[] = [];
 
   for (const block of data.content) {
     if (!isRecord(block)) {
@@ -1327,6 +1493,16 @@ function extractAnthropicParts(data: unknown): vscode.LanguageModelResponsePart[
 
     if (typeof block.text === "string" && block.text.length > 0) {
       textParts.push(block.text);
+      continue;
+    }
+
+    // Anthropic thinking blocks — surface via thinking part when available.
+    if (
+      (block.type === "thinking" || block.type === "redacted_thinking") &&
+      typeof block.thinking === "string" &&
+      block.thinking.length > 0
+    ) {
+      reasoningParts.push(block.thinking);
       continue;
     }
 
@@ -1340,6 +1516,15 @@ function extractAnthropicParts(data: unknown): vscode.LanguageModelResponsePart[
   const text = textParts.join("");
   if (text) {
     parts.unshift(new vscode.LanguageModelTextPart(text));
+  }
+
+  // Emit accumulated reasoning via thinking part (or text fallback) at the front.
+  const reasoning = reasoningParts.join("");
+  if (reasoning) {
+    const thinkingPart = thinkingPartConstructor
+      ? (new thinkingPartConstructor(reasoning) as unknown as vscode.LanguageModelResponsePart)
+      : new vscode.LanguageModelTextPart(reasoning);
+    parts.unshift(thinkingPart);
   }
 
   return parts;

@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `main` | **Updated:** 2026-07-02 Asia/Jakarta | **Current Phase:** v0.3.5 — Session Cost + CopilotCredits ✅
+**Branch:** `fix/thinking-part-byok-surfacing-22-71` | **Updated:** 2026-07-09 Asia/Jakarta | **Current Phase:** v0.3.7 — Thinking Part Surfacing ✅ Solved
 
 ---
 
@@ -7,11 +7,52 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-07-02 |
-| **Worked On** | Documented PR #60 (@Wallacy): SQLite-backed cost accuracy (fixes #59), DeepSeek context overflow fix, SSE log gating. Issue doc `30-20260630-pr60-*` written. Feature doc `03-20260605-go-usage-tracker.md` updated with SQLite integration section. Devlog entry added. Also documented PR #68 (@Wallacy): GLM thinking effort values, output channel popup removal, Authorization header on model fetch. Issue doc `31-20260702-pr68-*` written. Thinking controls feature doc `02-20260517-*` updated. |
-| **Stopped At** | `main` post-PR #68 merge. Issue docs + devlog complete. |
-| **Next Action** | → Any open issues or PR reviews. |
-| **Open Issues** | (1) VS Code API gap: `ProvideLanguageModelChatResponseOptions` lacks thread ID → `getCurrentSessionCost()` uses global most-recent (by design for now). (2) Qwen image requests can hit Alibaba quota. (3) `qwen3.6-plus-free` can loop tool calls. (4) Issue #57/#58 — Agent model visibility sync blocked by VS Code API limitation (workaround: `showAgentModelsInManagePanel: true`). |
+| **Last Session** | 2026-07-09 |
+| **Worked On** | Implemented + verified fix for issues #22 + #71 on branch `fix/thinking-part-byok-surfacing-22-71`. Reasoning from OpenCode models now streamed live via `LanguageModelThinkingPart` across all 4 transports (chat-completions, Anthropic, responses, Google) and both streaming + non-stream paths. `chat.agent.thinkingStyle` now respected. Manual test passed (DeepSeek + Kimi). Version bumped to 0.3.7. CHANGELOG, issue doc #33 (✅ Solved), and devlog updated. |
+| **Stopped At** | v0.3.7 ready. Pending commit + push + reply to #22/#71. |
+| **Next Action** | → Commit, push branch, open PR. Draft reply to #22/#71 (after merge or before). |
+| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. |
+
+---
+
+## 🔬 Issues #22 + #71 Deep-Dive — Thinking Part BYOK Surfacing — Session 2026-07-09 ✅ SOLVED
+
+**Action:** User asked to compare issues #22 (`chat.agent.thinkingStyle` not respected) and #71 (thinking tokens not displaying). Confirmed they are duplicates. Deep-dive research overturned the previous "upstream blocker" conclusion from doc `23-*`.
+
+**Key findings:**
+
+1. **Issues #22 and #71 are the same bug.** Both report reasoning from OpenCode models never rendered as a collapsible thinking block. #71 author explicitly frustrated ("negatively affecting results by a huge margin").
+
+2. **The "upstream blocker" narrative was wrong.** Doc `23-*` (2026-06-15) concluded this was blocked on `microsoft/vscode#318211` and unfixable extension-side. Research on 2026-07-09 found:
+   - `LanguageModelThinkingPart` API shipped to VS Code in **August 2025** (PR #259939). Our `engines.vscode: ^1.125.0` guarantees it is present at runtime.
+   - `Vizards/deepseek-v4-for-copilot` v0.6.2 (Marketplace, engine `^1.116.0`) **already solves this** for DeepSeek BYOK via `progress.report(new vscode.LanguageModelThinkingPart(text))` — with **no `enabledApiProposals`** in `package.json`.
+   - User @yinhx3 confirmed in #71: deepseek-v4-for-copilot "is able to display reasoning content."
+   - DeepSeek-v4 tracker has **zero open issues** about reasoning not displaying.
+
+3. **Root cause in our codebase:** `src/streaming.ts` `OpenAiResponseExtractor` accumulates `reasoningContent` but never emits it as a thinking part. `flushReasoningFallback` drops it silently when text/tool calls are present.
+
+**Verified implementation plan (6 steps):**
+1. Create `src/vscode.proposed.languageModelThinkingPart.d.ts` (type augmentation).
+2. Emit reasoning per-chunk via `LanguageModelThinkingPart` in the streaming extractor.
+3. Runtime guard `typeof vscode.LanguageModelThinkingPart === 'function'` (defensive only — our floor is 1.125.0).
+4. Refactor `flushReasoningFallback` to route through thinking part.
+5. **No `package.json` change** (no `enabledApiProposals` needed).
+6. Verify: `npm run compile` + manual test per model family + all three `thinkingStyle` values.
+
+**Documentation produced:**
+- `docs/issues/33-20260709-thinking-part-byok-surfacing-research.md` — comprehensive issue doc (status ✅ Solved).
+- `docs/issues/23-20260615-thinking-style-setting-not-respected.md` — marked ⚠️ Deprecated with redirect banner.
+- `/memories/repo/issue22-71-thinking-part-bypass.md` — repo memory snapshot with full research.
+
+**Implementation + verification:**
+- `src/vscode.proposed.languageModelThinkingPart.d.ts` — type augmentation (NEW).
+- `src/streaming.ts` — `emitThinkingPart()` helper + runtime guard; both extractors extended with `handleReasoning()`; all 4 transport call sites updated; `flushReasoningFallback` refactored; non-stream path (`extractChatCompletionParts`, `extractAnthropicParts`) also updated; `totalReasoningChars` monotonic counter for accurate log metrics.
+- `npm run compile` + `npx tsc --noEmit --strict` → both pass.
+- Manual test: DeepSeek + Kimi in Copilot Chat → reasoning rendered as collapsible thinking block. `chat.agent.thinkingStyle` respected. Tool-call replication intact.
+
+**Released in:** v0.3.7.
+
+**Next:** Commit, push branch, open PR, reply to #22/#71.
 
 ---
 

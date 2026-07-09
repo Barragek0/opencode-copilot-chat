@@ -1,4 +1,8 @@
-**Status:** 🟢 Active
+**Status:** ⚠️ Deprecated
+
+> **⚠️ Superseded by [`33-20260709-thinking-part-byok-surfacing-research.md`](./33-20260709-thinking-part-byok-surfacing-research.md).**
+>
+> The conclusion below ("blocked on upstream, no extension-side fix") was **overturned** on 2026-07-09 after deep-dive research found that `LanguageModelThinkingPart` is available in the VS Code runtime we target, and a shipping Marketplace extension (`Vizards/deepseek-v4-for-copilot`) already solves this exact problem. This document is retained for historical reference only — do not act on its "Recommended Action" section. See doc `33-*` for the verified, implementable fix plan.
 
 # `chat.agent.thinkingStyle` Not Respected — Reasoning Always Expanded
 
