@@ -60,16 +60,114 @@ import {
   estimateCost,
   type UsageBaselineTargets,
 } from "./goUsageTracker";
+import {
+  LEGACY_FINGERPRINT,
+  keyFingerprint,
+  readActiveProfile,
+  readProfiles,
+  writeActiveProfile,
+  writeProfiles,
+  readActiveProfiles,
+  readMigratedTo,
+  writeMigratedTo,
+  findProfile,
+  renameProfile,
+  nonLegacyCount,
+  type UsageProfile,
+} from "./usageProfile";
 
 const SECRET_KEY = "opencodego.apiKey";
+const SECRET_STORE_KEY = "opencodego.activeApiKey";
 const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
 const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
 
 let usageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
-
+/** Singleton tracker — the first/legacy account. Used for backward compat until first migration. */
 let goUsageTracker: GoUsageTracker | undefined;
+/** Per-profile trackers indexed by key fingerprint. */
+const goUsageTrackers: Map<string, GoUsageTracker> = new Map();
 let usageWebviewPanel: vscode.WebviewPanel | undefined;
+
+let profilesCache: UsageProfile[] = [];
+let activeProfileFingerprint: string = LEGACY_FINGERPRINT;
+
+/** Look up (or create) the GoUsageTracker for a given key fingerprint. */
+function getOrCreateTracker(fingerprint: string): GoUsageTracker {
+  // The singleton tracker does not have a storage suffix
+  if (fingerprint === LEGACY_FINGERPRINT && goUsageTracker) return goUsageTracker;
+  let tracker = goUsageTrackers.get(fingerprint);
+  if (tracker) return tracker;
+  tracker = new GoUsageTracker(
+    _extensionContext!,
+    (msg) => _usageLogChannel!.appendLine(`[${new Date().toISOString()}] [${fingerprint}] ${msg}`),
+    (modelId) => modelMetadataSnapshot?.providers[GO_VENDOR]?.[modelId]?.cost,
+    fingerprint,
+  );
+  goUsageTrackers.set(fingerprint, tracker);
+  return tracker;
+}
+
+/** Return the tracker for the currently active profile. */
+function activeGoUsageTracker(): GoUsageTracker | undefined {
+  if (activeProfileFingerprint === LEGACY_FINGERPRINT) return goUsageTracker;
+  return goUsageTrackers.get(activeProfileFingerprint);
+}
+
+/** Switch the active profile and refresh the UI. */
+async function setActiveProfile(fingerprint: string): Promise<void> {
+  activeProfileFingerprint = fingerprint;
+  await writeActiveProfile(_extensionContext!, fingerprint);
+  refreshGoUsageStatusBar();
+  updateWebviewContent();
+}
+
+/**
+ * Ensure a profile exists in the in-memory cache for the given API key.
+ * This is called both from provideLanguageModelChatInformation (at startup,
+ * when VS Code resolves all providers) and from onTransportSummary (when
+ * a request completes). The first call creates the profile; subsequent
+ * calls are no-ops. Persistence is fire-and-forget.
+ */
+function ensureProfileSync(apiKey: string): void {
+  const fp = keyFingerprint(apiKey);
+  const tracker = getOrCreateTracker(fp);
+
+  if (!findProfile(profilesCache, fp)) {
+    const nextNumber = nonLegacyCount(profilesCache) + 1;
+    profilesCache.push({
+      fingerprint: fp,
+      label: `Profile ${nextNumber}`,
+      lastSeenAt: Date.now(),
+    });
+    writeProfiles(_extensionContext!, profilesCache);
+  }
+
+  // One-time migration from singleton
+  if (!readMigratedTo(_extensionContext!)) {
+    if (goUsageTracker && fp !== LEGACY_FINGERPRINT) {
+      tracker.migrateFromSingleton();
+    }
+    writeMigratedTo(_extensionContext!, fp);
+    profilesCache = readProfiles(_extensionContext!);
+  }
+
+  // Update active profile to this one
+  activeProfileFingerprint = fp;
+  writeActiveProfile(_extensionContext!, fp);
+}
+
+/**
+ * Same as ensureProfileSync, but also refreshes the UI.
+ * Called from onTransportSummary during request recording.
+ */
+function ensureProfileForApiKey(apiKey: string, _displayName: string): GoUsageTracker {
+  ensureProfileSync(apiKey);
+  return getOrCreateTracker(keyFingerprint(apiKey));
+}
+
+let _extensionContext: vscode.ExtensionContext;
+let _usageLogChannel: vscode.OutputChannel;
 
 interface ProviderDefinition {
   vendor: AllProviderVendor;
@@ -444,6 +542,17 @@ export function activate(context: vscode.ExtensionContext) {
   }, (modelId) => {
     return modelMetadataSnapshot?.providers[GO_VENDOR]?.[modelId]?.cost;
   });
+  _extensionContext = context;
+  _usageLogChannel = goUsageLogChannel;
+  profilesCache = readProfiles(context);
+  activeProfileFingerprint = readActiveProfile(context);
+
+  // Eagerly load the tracker for the active profile so the status bar
+  // has data to display immediately, even before the first request.
+  if (activeProfileFingerprint !== LEGACY_FINGERPRINT) {
+    getOrCreateTracker(activeProfileFingerprint);
+  }
+
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
   const goProvider = new OpenCodeProvider(context, PROVIDERS[GO_VENDOR]);
@@ -460,21 +569,22 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => showUsageWebview(context)),
     vscode.commands.registerCommand("opencodego.setUsageTargets", async () => {
-      if (!goUsageTracker) return;
-      const targets = await showUsageTargetEditor(goUsageTracker);
+      const tracker = activeGoUsageTracker();
+      if (!tracker) return;
+      const targets = await showUsageTargetEditor(tracker);
       if (targets) {
-        goUsageTracker.setManualSpentTargets(targets);
-        refreshGoUsageStatusBar(); // Update tooltip immediately
+        tracker.setManualSpentTargets(targets);
+        refreshGoUsageStatusBar();
         vscode.window.showInformationMessage("OpenCode Go usage targets updated.");
       }
     }),
     vscode.commands.registerCommand("opencodego.showUsageQuickPick", async () => {
-      if (!goUsageTracker) return;
-      const summary = goUsageTracker.getSummary();
+      const tracker = activeGoUsageTracker();
+      if (!tracker) return;
+      const summary = tracker.getSummary();
       const items = buildUsageQuickPickItems(summary);
 
-      // Prepend current chat session cost alongside today/yesterday
-      const sessionCost = goUsageTracker.getCurrentSessionCost();
+      const sessionCost = tracker.getCurrentSessionCost();
       if (sessionCost && sessionCost.cost > 0) {
         const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
         const sessionItem: vscode.QuickPickItem = {
@@ -483,13 +593,35 @@ export function activate(context: vscode.ExtensionContext) {
           detail:     `${tokens(totalTokens)} tokens · ${sessionCost.requests} requests`,
           alwaysShow: true,
         };
-        // Insert at the top of the "Daily Summary" section (after the last period bar)
         const dailyIdx = items.findIndex(i => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
         if (dailyIdx >= 0) {
           items.splice(dailyIdx + 1, 0, sessionItem);
         } else {
           items.push(sessionItem);
         }
+      }
+
+      // Profile switching section — visible when 2+ profiles exist.
+      // Lists ALL profiles; the active one is marked and serves as
+      // a no-op picker label while others are clickable switches.
+      if (profilesCache.length > 1) {
+        items.push({ label: "", kind: vscode.QuickPickItemKind.Separator });
+        for (const p of profilesCache) {
+          if (p.fingerprint === activeProfileFingerprint) {
+            items.push({
+              label: `$(check) ${p.label} (active)`,
+              _fp: p.fingerprint,
+              _action: "none",
+            } as vscode.QuickPickItem & { _fp?: string; _action?: string });
+          } else {
+            items.push({
+              label: `       Switch to ${p.label}`,
+              _fp: p.fingerprint,
+              _action: "switchProfile",
+            } as vscode.QuickPickItem & { _fp?: string; _action?: string });
+          }
+        }
+        items.push({ label: "", kind: vscode.QuickPickItemKind.Separator });
       }
 
       const separator: vscode.QuickPickItem = { label: "", kind: vscode.QuickPickItemKind.Separator };
@@ -501,12 +633,77 @@ export function activate(context: vscode.ExtensionContext) {
         title: "Usage Summary",
       });
       if (!picked || !("_action" in picked)) return;
-      const action = (picked as typeof setTargetItem)._action;
+      const action = (picked as { _action: string })._action;
       if (action === "setUsageTargets") {
         vscode.commands.executeCommand("opencodego.setUsageTargets");
       } else if (action === "showUsageDetails") {
         vscode.commands.executeCommand("opencodego.showUsageDetails");
+      } else if (action === "switchProfile" && "_fp" in picked) {
+        setActiveProfile((picked as { _fp: string })._fp);
       }
+    }),
+    vscode.commands.registerCommand("opencodego.renameActiveProfile", async () => {
+      const active = findProfile(profilesCache, activeProfileFingerprint);
+      if (!active) {
+        vscode.window.showInformationMessage("No active profile to rename.");
+        return;
+      }
+      const newLabel = await vscode.window.showInputBox({
+        title: "Rename Go Profile",
+        prompt: `Current label: ${active.label}`,
+        value: active.label,
+        placeHolder: "e.g. OpenCode Go (Works)",
+      });
+      if (!newLabel || !newLabel.trim()) return;
+      await renameProfile(_extensionContext, activeProfileFingerprint, newLabel);
+      profilesCache = readProfiles(_extensionContext);
+      refreshGoUsageStatusBar();
+      updateWebviewContent();
+      vscode.window.showInformationMessage(`Profile renamed to "${newLabel}".`);
+    }),
+    vscode.commands.registerCommand("opencodego.deleteProfile", async () => {
+      const profiles = readActiveProfiles(_extensionContext);
+      if (profiles.length === 0) {
+        vscode.window.showInformationMessage("No profiles to delete.");
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        profiles.map(p => ({
+          label: p.label,
+          description: `fingerprint: ${p.fingerprint}`,
+          _fp: p.fingerprint,
+        })),
+        { placeHolder: "Select a profile to delete" },
+      );
+      if (!picked || !("_fp" in picked)) return;
+      const fp = (picked as { _fp: string })._fp;
+      const profile = findProfile(profiles, fp);
+      if (!profile) return;
+      const confirm = await vscode.window.showWarningMessage(
+        `Permanently delete profile "${profile.label}"? Its usage history will be removed. This cannot be undone.`,
+        { modal: true },
+        "Delete",
+      );
+      if (confirm !== "Delete") return;
+
+      goUsageTrackers.delete(fp);
+      const ctx = _extensionContext;
+      ctx.globalState.update(`opencodego.usageLog.v1.${fp}`, []);
+      ctx.globalState.update(`opencodego.usageBaseline.v1.${fp}`, {});
+      ctx.globalState.update(`opencodego.sessionCosts.v1.${fp}`, []);
+
+      const remaining = readProfiles(ctx).filter(p => p.fingerprint !== fp);
+      await writeProfiles(ctx, remaining);
+      profilesCache = remaining;
+
+      if (activeProfileFingerprint === fp) {
+        activeProfileFingerprint = LEGACY_FINGERPRINT;
+        await writeActiveProfile(ctx, LEGACY_FINGERPRINT);
+      }
+
+      refreshGoUsageStatusBar();
+      updateWebviewContent();
+      vscode.window.showInformationMessage(`Profile "${profile.label}" deleted.`);
     }),
   ];
 
@@ -734,10 +931,21 @@ function ensureGoUsageStatusBar(context: vscode.ExtensionContext): void {
 
 
 function refreshGoUsageStatusBar(): void {
-  if (!goUsageStatusBarItem || !goUsageTracker) return;
-  const s = goUsageTracker.getSummary();
-  goUsageStatusBarItem.text    = formatGoUsageStatusBarText(s);
-  goUsageStatusBarItem.tooltip = buildUsageTooltip(s, goUsageTracker.getCurrentSessionCost());
+  if (!goUsageStatusBarItem) return;
+  const tracker = activeGoUsageTracker();
+  if (!tracker) {
+    goUsageStatusBarItem.text = "OpenCode Go";
+    goUsageStatusBarItem.tooltip = new vscode.MarkdownString("");
+    goUsageStatusBarItem.show();
+    return;
+  }
+  const s = tracker.getSummary();
+  const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
+  const baseText = formatGoUsageStatusBarText(s);
+  goUsageStatusBarItem.text = activeProfile && profilesCache.length > 1
+    ? `${baseText} [${activeProfile.label}]`
+    : baseText;
+  goUsageStatusBarItem.tooltip = buildUsageTooltip(s, tracker.getCurrentSessionCost());
   goUsageStatusBarItem.show();
   updateWebviewContent();
 }
@@ -767,8 +975,15 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
 
 function updateWebviewContent(): void {
   if (!usageWebviewPanel || !goUsageTracker) return;
-  const s = goUsageTracker.getSummary();
-  const sc = goUsageTracker.getCurrentSessionCost();
+  const tracker = activeGoUsageTracker();
+  if (!tracker) {
+    usageWebviewPanel.webview.html = `<html><body><p>No active tracker</p></body></html>`;
+    return;
+  }
+  const s = tracker.getSummary();
+  const sc = tracker.getCurrentSessionCost();
+  const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
+  const profileLabel = activeProfile?.label ?? "OpenCode Go";
 
   usageWebviewPanel.webview.html = `
     <!DOCTYPE html>
@@ -776,7 +991,7 @@ function updateWebviewContent(): void {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>OpenCode Usage Summary</title>
+      <title>OpenCode Usage Summary — ${escapeSvg(profileLabel)}</title>
       <style>
         body {
           display: flex;
@@ -820,14 +1035,26 @@ function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>, sessionC
   const md = new vscode.MarkdownString("", true);
   md.supportHtml = true;
   md.isTrusted = true;
-  // supportedCommands is a proposed API — cast to bypass type check.
-  (md as any).supportedCommands = ["opencodego.setUsageTargets"];
+  const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
+  const profileLabel = activeProfile?.label ?? "OpenCode Go";
+
+  const commands = ["opencodego.setUsageTargets"];
+  if (nonLegacyCount(profilesCache) > 0) {
+    commands.push("opencodego.renameActiveProfile");
+  }
+  (md as any).supportedCommands = commands;
+
   md.appendMarkdown(
-    `<img alt="OpenCode Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost)}" width="330">`,
+    `<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="330">`,
   );
   md.appendMarkdown(
-    "\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)"
+    "\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)",
   );
+  if (nonLegacyCount(profilesCache) > 0) {
+    md.appendMarkdown(
+      " \u00B7 [$(pencil) Rename](command:opencodego.renameActiveProfile)",
+    );
+  }
   return md;
 }
 
@@ -937,12 +1164,12 @@ async function showUsageTargetEditor(
 
 type _UsageSummary = ReturnType<GoUsageTracker["getSummary"]>;
 
-function usageTooltipSvgDataUri(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): string {
+function usageTooltipSvgDataUri(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }, profileLabel?: string): string {
   const svg = buildUsageTooltipSvg(s, sc);
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }): string {
+function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }, profileLabel?: string): string {
   const hasSession = sc && sc.cost > 0;
   // Session label is longer ("Session (est):") so widen the card and shift
   // the cost column right when session data is present.
@@ -956,6 +1183,13 @@ function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: n
   const accent = "#73c991";
   const line = "#333333";
   const font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  const svgTitle = escapeSvg(profileLabel ? `${profileLabel} - Usage` : "OpenCode Go - Usage");
+  const noDataMsg = s.hasData
+    ? null
+    : nonLegacyCount(profilesCache) > 0
+      ? "No data yet for this profile."
+      : "No usage data yet.";
 
   const text = (
     value: string,
@@ -994,14 +1228,14 @@ function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: n
   if (!s.hasData) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text("OpenCode Go - Usage", 14, 26, 16, 700)}
-${text("No usage data yet. Send a chat message to start tracking.", 14, 50, 12, 400, muted)}
+${text(svgTitle, 14, 26, 16, 700)}
+${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", 14, 50, 12, 400, muted)}
 </svg>`;
   }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text("OpenCode Go - Usage", 14, 26, 16, 700)}
+${text(svgTitle, 14, 26, 16, 700)}
 ${period("Session (5h rolling)", s.session, 54)}
 ${period("Weekly", s.weekly, 116)}
 ${period("Monthly", s.monthly, 178)}
@@ -1439,6 +1673,13 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       return [];
     }
 
+    // Create profile for this API key before fetching models, so the
+    // profile is always registered in both the in-memory cache and
+    // globalState, regardless of whether a request has been recorded.
+    if (this.baseVendor === GO_VENDOR) {
+      ensureProfileSync(apiKey);
+    }
+
     const models = await this.fetchModels(apiKey);
     if (models.length === 0) {
       return [];
@@ -1451,10 +1692,16 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       const metadata = this.resolveModelMetadata(modelId, metadataSnapshot);
       const routing = resolveModelRouting(modelId, this.definition);
       const effectiveModelId = toEffectiveModelId(modelId, this.definition.vendor);
-      const agentHostModelId = `${effectiveModelId}::agent-host`;
+      // Add the key fingerprint to the model ID so two Manage Language
+      // Models entries with the same vendor produce distinct model IDs,
+      // preventing the apiKeysByModelId map from overwriting keys
+      // (fixes issue #63).
+      const fp = keyFingerprint(apiKey);
+      const fpEffectiveModelId = `${effectiveModelId}::${fp}`;
+      const agentHostModelId = `${fpEffectiveModelId}::agent-host`;
       const limits = modelLimits(metadata, settings);
       this.apiKeysByModelId.set(modelId, apiKey);
-      this.apiKeysByModelId.set(effectiveModelId, apiKey);
+      this.apiKeysByModelId.set(fpEffectiveModelId, apiKey);
       this.apiKeysByModelId.set(agentHostModelId, apiKey);
 
       const capacityNote = CAPACITY_LIMITED_MODEL_NOTES[modelId];
@@ -1509,7 +1756,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       }
 
       // General variant — no targetChatSessionType → visible in Chat view
-      const info: OpenCodeModel = { ...sharedFields, id: effectiveModelId };
+      const info: OpenCodeModel = { ...sharedFields, id: fpEffectiveModelId };
 
       this.log(`Model registered: id=${info.id} family=${info.family} metadataSource=${metadata.source} endpointKind=${routing.endpointKind} endpointUrl=${routing.endpointUrl} configurationSchema=${configurationSchema ? JSON.stringify(configurationSchema) : "none"}`);
 
@@ -1585,11 +1832,14 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         options.requestInitiator,
       );
       updateUsageStatusBar(this.definition.displayName, rawModelId, summary);
-      if (this.baseVendor === GO_VENDOR && goUsageTracker) {
-        this.log(`[go-usage] Recording: provider=${summary.providerDisplayName} model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached} credits=${summary.copilotCredits.toFixed(4)} status=${summary.status ?? "n/a"} error=${summary.errorMessage ?? "none"}`);
-        goUsageTracker.record(summary, metadata.cost);
-        refreshGoUsageStatusBar();
-        this.log(`[go-usage] After record: entries=${goUsageTracker.getSummary().today.requests}`);
+      if (this.baseVendor === GO_VENDOR) {
+        const tracker = ensureProfileForApiKey(apiKey, this.definition.displayName);
+        if (tracker) {
+          this.log(`[go-usage] Recording profile=${activeProfileFingerprint}: model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached}`);
+          tracker.record(summary, metadata.cost);
+          refreshGoUsageStatusBar();
+          this.log(`[go-usage] After record profile=${activeProfileFingerprint}: entries=${tracker.getSummary().today.requests}`);
+        }
       }
     };
 
