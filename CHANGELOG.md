@@ -4,9 +4,10 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- **`[Usage]` Monthly cost aggregation now respects the subscription anchor.** The monthly window was using calendar month after a regression, but OpenCode Go billing is anchor-based (subscription day/hour). The tracker now derives the window from three tiers: (1) user-configured anchor via "Set spent targets", (2) auto-anchor from the earliest SQLite row (matching actual billing start), (3) calendar month fallback. Also fixes `setManualSpentTargets` which previously computed the monthly cost for the old window before storing the anchor, causing tracked+baseline to mismatch the target. Now reads SQLite costs directly using the prospective window (with the new anchor).
+- **`[Usage]` Per-profile Go usage tracking for multi-account setups (issue #63).** Users can now add multiple OpenCode Go entries in the Manage Language Models panel, each with its own API key. The extension automatically creates a "Profile 1", "Profile 2", etc. on the first request sent with each key. Profiles have isolated storage and the active profile auto-switches to the most recently used model. The SVG hover card and status bar show the active profile label. Click the status bar to open the QuickPick with profile switch options. Commands: `Rename Active Profile` and `Delete Active Profile`. In single-key mode the extension behaves exactly as before; the feature only activates when a second key is detected. No SQLite consultation in multi-key mode (opencode.db is shared per-machine and cannot be attributed to a specific key).
+
 
 ## [0.3.7] — 2026-07-09
 
@@ -17,6 +18,10 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 ### Changed
 
 - **`[Streaming]` `[stream-summary]` log now reports total reasoning characters accurately.** Previously, `reasoningChars` in the log reflected only the remaining `reasoningContent` string, which is cleared by `flushToolCalls` (for tool-call replication) and `flushReasoningFallback` — so the metric showed `0` even when reasoning was streamed. Now tracks a monotonic `totalReasoningChars` counter that survives clears, giving accurate per-response reasoning metrics for debugging.
+
+### Fixed
+
+- **`[Usage]` Monthly cost aggregation now respects the subscription anchor.** The monthly window was using calendar month after a regression, but OpenCode Go billing is anchor-based (subscription day/hour). The tracker now derives the window from three tiers: (1) user-configured anchor via "Set spent targets", (2) auto-anchor from the earliest SQLite row (matching actual billing start), (3) calendar month fallback. Also fixes `setManualSpentTargets` which previously computed the monthly cost for the old window before storing the anchor, causing tracked+baseline to mismatch the target. Now reads SQLite costs directly using the prospective window (with the new anchor).
 
 ## [0.3.6] — 2026-07-08
 
