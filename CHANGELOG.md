@@ -6,7 +6,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Added
 
-- **`[Vision]` Transparent vision proxy for text-only models (#74).** Enable `opencodego.visionProxy` in settings, then run **OpenCode Go: Configure Vision Proxy** from the Command Palette to pick a vision-capable model. When a non-vision OpenCode model receives an image, the extension forwards it to a configured vision model, receives a text description, and feeds that to the original model — so text-only models "see" images with zero extra steps. The picker shows only vision-capable models, with a "None" option to disable. A **Customize prompt** entry in the picker lets you edit the description instruction. Model ID and prompt are stored in extension state, set exclusively via the command. Implemented with `vscode.lm.selectChatModels` + `sendRequest`.
+- **`[Vision]` Transparent vision proxy for text-only models (#74).** Run **OpenCode Go: Configure Vision Proxy** from the Command Palette to pick a vision-capable model. When a non-vision OpenCode model receives an image, the extension forwards it to the configured model, receives a text description, and feeds that to the original model — so text-only models "see" images with zero extra steps. The picker shows only vision-capable models (filtered by `models.dev` metadata), with a **None** option to disable and a **Customize prompt** entry to edit the description instruction. No settings to toggle — if a model is configured, the proxy is on. Implemented with `vscode.lm.selectChatModels` + `sendRequest`.
 
 ### Fixed
 

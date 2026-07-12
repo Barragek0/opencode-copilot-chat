@@ -403,8 +403,6 @@ interface ApiSettings {
   streamIdleTimeoutMs: number;
   thinking: ThinkingSettings;
   stripThinkTags: "never" | "auto" | "always";
-  /** Whether the vision proxy is enabled (opencodego.visionProxy boolean). */
-  visionProxy: boolean;
 }
 
 interface LanguageModelConfiguration {
@@ -710,6 +708,10 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("opencodego.configureVisionProxy", async () => {
       await showVisionProxyPicker(context);
+      // The proxy model changed — refresh capabilities so VS Code stops
+      // stripping images from non-vision models when the proxy is on.
+      goProvider.notifyModelInfoChanged();
+      zenProvider.notifyModelInfoChanged();
     }),
   ];
 
@@ -731,15 +733,10 @@ export function activate(context: vscode.ExtensionContext) {
       if (event.affectsConfiguration("opencodego.showUsageStatusBar")) {
         resetUsageStatusBar();
       }
-      if (event.affectsConfiguration("opencodego.visionProxy")) {
-        goProvider.notifyModelInfoChanged();
-        zenProvider.notifyModelInfoChanged();
-      }
     }),
   );
 
   checkUtilityModelConfiguration(context);
-  migrateVisionProxySettings(context);
 
   void warmModelPickerMetadata();
 }
@@ -1826,7 +1823,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     // Vision proxy: when a text-only model receives images, relay them
     // through a configured vision-capable Copilot model, then replace
     // the image parts with the text description.
-    const visionProxyModelId = settings.visionProxy
+    const visionProxyModelId = isVisionProxyEnabled()
       ? (this.context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "") || "")
       : "";
     if (hasImageInput && !actuallySupportsVision && visionProxyModelId) {
@@ -3213,7 +3210,6 @@ function getSettings(): ApiSettings {
       mimo: config.get<ThinkingSettings["mimo"]>("thinking.mimo", "off"),
     },
     stripThinkTags: config.get<ApiSettings["stripThinkTags"]>("stripThinkTags", "auto"),
-    visionProxy: config.get<boolean>("visionProxy", false),
   };
 }
 
@@ -3279,14 +3275,11 @@ function positiveOverride(value: number): number | undefined {
 }
 
 function modelCapabilities(metadata: ResolvedModelMetadata): CopilotCompatibleCapabilities {
-  // When a vision proxy is enabled AND a model is configured, report
-  // imageInput: true for ALL models so VS Code does not strip image
-  // parts from the request before they reach our provider. The vision
-  // proxy code in provideLanguageModelChatResponse intercepts images
-  // and forwards them to the configured vision model transparently.
-  const visionProxyEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("visionProxy", false)
-    && _extensionContext?.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "").length > 0;
-  const supportsVision = metadata.supportsVision || visionProxyEnabled;
+  // When a vision proxy model is configured (non-empty ID in globalState),
+  // report imageInput: true for ALL models so VS Code does not strip image
+  // parts before they reach our provider. The vision proxy interceptor
+  // forwards images to the configured model transparently.
+  const supportsVision = metadata.supportsVision || isVisionProxyEnabled();
 
   return {
     imageInput: supportsVision,
@@ -3442,37 +3435,11 @@ const DEFAULT_VISION_PROXY_PROMPT =
   "Include all visible text, layout, colors, objects, and context.";
 
 /**
- * One-time migration from the old `opencodego.visionModel` string setting
- * (pre-0.4.1) to the new `opencodego.visionProxy` boolean + globalState model
- * ID storage. Runs on every activation but only acts when needed.
+ * True when a vision proxy model has been configured (non-empty model ID
+ * stored in globalState via the "OpenCode Go: Configure Vision Proxy" command).
  */
-function migrateVisionProxySettings(context: vscode.ExtensionContext): void {
-  const config = vscode.workspace.getConfiguration("opencodego");
-  const oldModel = config.get<string>("visionModel", "");
-  if (!oldModel) return; // nothing to migrate
-
-  // The new boolean setting
-  const alreadyEnabled = config.get<boolean>("visionProxy", false);
-
-  // If the globalState already has a model ID and the boolean is on,
-  // migration was already done — just clean up the old string setting.
-  const stored = context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "");
-  if (stored && alreadyEnabled) {
-    void config.update("visionModel", undefined, vscode.ConfigurationTarget.Global);
-    return;
-  }
-
-  // Migrate: store model ID in globalState, enable the boolean, clear old key.
-  void context.globalState.update(VISION_PROXY_MODEL_ID_KEY, oldModel);
-  // Also migrate the prompt if it was customized
-  const oldPrompt = config.get<string>("visionPrompt", "");
-  if (oldPrompt && oldPrompt !== DEFAULT_VISION_PROXY_PROMPT) {
-    void context.globalState.update(VISION_PROXY_PROMPT_KEY, oldPrompt);
-  }
-  void config.update("visionProxy", true, vscode.ConfigurationTarget.Global);
-  // Clear old settings
-  void config.update("visionModel", undefined, vscode.ConfigurationTarget.Global);
-  void config.update("visionPrompt", undefined, vscode.ConfigurationTarget.Global);
+function isVisionProxyEnabled(): boolean {
+  return (_extensionContext?.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "") ?? "").length > 0;
 }
 
 /**
@@ -3482,7 +3449,6 @@ function migrateVisionProxySettings(context: vscode.ExtensionContext): void {
  * Saves to globalState; toggles the visionProxy boolean accordingly.
  */
 async function showVisionProxyPicker(context: vscode.ExtensionContext): Promise<void> {
-  const config = vscode.workspace.getConfiguration("opencodego");
   const currentModelId = context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "");
   const currentPrompt = context.globalState.get<string>(VISION_PROXY_PROMPT_KEY, "")
     || DEFAULT_VISION_PROXY_PROMPT;
@@ -3586,7 +3552,6 @@ async function showVisionProxyPicker(context: vscode.ExtensionContext): Promise<
   // --- "None" ---
   if (picked._kind === "none") {
     await context.globalState.update(VISION_PROXY_MODEL_ID_KEY, "");
-    await config.update("visionProxy", false, vscode.ConfigurationTarget.Global);
     vscode.window.showInformationMessage("Vision proxy disabled.");
     return;
   }
@@ -3594,7 +3559,6 @@ async function showVisionProxyPicker(context: vscode.ExtensionContext): Promise<
   // --- Model selected ---
   if (!picked._id) return;
   await context.globalState.update(VISION_PROXY_MODEL_ID_KEY, picked._id);
-  await config.update("visionProxy", true, vscode.ConfigurationTarget.Global);
   vscode.window.showInformationMessage(`Vision proxy set to: ${picked.label}`);
 }
 

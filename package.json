@@ -180,11 +180,6 @@
           "default": "auto",
           "markdownDescription": "How to handle `<think>...</think>` tags in model output. `auto` strips tags only for known reasoning models that inline thinking in the content field (minimax), accumulating the extracted reasoning content into the existing reasoning fallback. `always` strips for every model. `never` passes text through unchanged (use if a model legitimately uses `<think>` in its output)."
         },
-        "opencodego.visionProxy": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Enable the vision proxy to let text-only OpenCode models understand images. When a non-vision model receives an image, the extension forwards it to a vision-capable model, receives a text description, and feeds that to the original model. Use **OpenCode Go: Configure Vision Proxy** from the Command Palette (`Ctrl+Shift+P`) to select the vision model and customize the description prompt."
-        },
         "opencodego.thinking.deepseek": {
           "type": "string",
           "enum": [

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { fallbackModelMetadata } from "../metadata.js";
+import { fallbackModelMetadata, VISION_CAPABLE_MODELS } from "../metadata.js";
 import { GO_VENDOR, ZEN_VENDOR } from "../providerTypes.js";
 
 /**
@@ -70,5 +70,27 @@ describe("fallbackModelMetadata — non-kimi models unaffected", () => {
   it("claude-opus-4-7 on ZEN does not report temperature: false", () => {
     const meta = fallbackModelMetadata("claude-opus-4-7", ZEN_VENDOR);
     assert.notEqual(meta?.temperature, false);
+  });
+});
+
+describe("VISION_CAPABLE_MODELS", () => {
+  it("includes known vision models (minimax-m2.7, kimi-k2.6, mimo-v2.5)", () => {
+    assert.ok(VISION_CAPABLE_MODELS.has("minimax-m2.7"));
+    assert.ok(VISION_CAPABLE_MODELS.has("kimi-k2.6"));
+    assert.ok(VISION_CAPABLE_MODELS.has("mimo-v2.5"));
+    assert.ok(VISION_CAPABLE_MODELS.has("glm-5.1"));
+    assert.ok(VISION_CAPABLE_MODELS.has("mimo-v2.5-pro"));
+  });
+
+  it("does NOT include text-only models (deepseek-v4-flash, hy3-preview, big-pickle)", () => {
+    assert.ok(!VISION_CAPABLE_MODELS.has("deepseek-v4-flash"));
+    assert.ok(!VISION_CAPABLE_MODELS.has("deepseek-v4-pro"));
+    assert.ok(!VISION_CAPABLE_MODELS.has("hy3-preview"));
+    assert.ok(!VISION_CAPABLE_MODELS.has("big-pickle"));
+  });
+
+  it("is an exported Set", () => {
+    assert.ok(VISION_CAPABLE_MODELS instanceof Set);
+    assert.ok(VISION_CAPABLE_MODELS.size > 10);
   });
 });
