@@ -425,10 +425,14 @@ export class GoUsageTracker {
     const clamp = (v: number, limit: number) =>
       Math.round(Math.min(100, (v / limit) * 100) * 10) / 10;
 
-    // Try SQLite first (actual billed amounts from OpenCode CLI).
-    const sqliteRows = readOpenCodeHistory();
-    if (sqliteRows) {
-      return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+    // When namespaced (per-profile), skip the shared SQLite — it has no
+    // key column, so reading it would mix quota from all accounts.
+    const isPerProfile = this.storageKeySuffix.length > 0;
+    if (!isPerProfile) {
+      const sqliteRows = readOpenCodeHistory();
+      if (sqliteRows) {
+        return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+      }
     }
 
     // Fall back to extension-tracked data (works without CLI).
@@ -655,10 +659,10 @@ export class GoUsageTracker {
     const nowMs = Date.now();
 
     // ── Monthly ───────────────────────────────────────────────────────────
-    // The monthly window may change AFTER we store the anchor. To keep
-    // display = tracked + baseline = target, we compute trackedMonthly
-    // using the PROSPECTIVE window (with the new anchor), not the current one.
-    const sqliteRows = readOpenCodeHistory();
+    // When namespaced, skip SQLite — it has no key column and would mix
+    // quota from all accounts.
+    const isPerProfile = this.storageKeySuffix.length > 0;
+    const sqliteRows = isPerProfile ? null : readOpenCodeHistory();
     let sqliteMonthlyCost = 0;
     if (sqliteRows && sqliteRows.length > 0) {
       const earliest = Math.min(...sqliteRows.map(r => r.createdMs));
