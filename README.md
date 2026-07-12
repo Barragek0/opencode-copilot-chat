@@ -234,6 +234,32 @@ Per-model reasoning configuration, dynamically enhanced with `reasoning_options`
 - **Response usage bar** — latest prompt/output/total/cache summary after each response.
 - **Normalized usage DataPart** — emits `usage` MIME so Copilot Chat's context widget shows accurate token counts.
 
+#### Multiple Go accounts
+
+You can use more than one OpenCode Go account in the same VS Code window.
+When a **second** Go API key is added via the Manage Language Models panel,
+the extension creates a new usage profile ("Profile 1", "Profile 2", etc.)
+on the first request made with each key.
+
+- **Auto-switch** — the status bar and SVG hover card follow the model you
+  last used. If you chat with a model from a different account, the panel
+  switches automatically.
+- **QuickPick** — click the status bar to see which profile is active and
+  switch to another profile.
+- **Commands** — `OpenCode Go: Rename Active Profile` and `OpenCode Go:
+  Delete Active Profile` help you manage your profiles. The label you give
+  a profile appears in the status bar and SVG title.
+- **Storage isolation** — each profile has its own `globalState` storage
+  namespace (`opencodego.usageLog.v1.<fingerprint>`) so data never mixes.
+- **SQLite** — when 2+ profiles exist, the extension does not consult the
+  shared `opencode.db` (which is per-machine and cannot be attributed to a
+  specific API key). Accuracy falls back to in-memory entries for
+  multi-account setups.
+
+> **Upgrading from a single-account install?** Your existing usage data
+> is migrated into Profile 1 the first time a second profile is created.
+> Your original stats are preserved — nothing is lost.
+
 ### 🪟 Agents Window (Copilot CLI) Support
 
 OpenCode models appear in the VS Code **Agents window** model picker when starting a Copilot CLI / Background agent session — not just the regular Chat view. Two sets of models are available:

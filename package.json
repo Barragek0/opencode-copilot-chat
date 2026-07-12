@@ -97,6 +97,14 @@
       {
         "command": "opencodego.showUsageQuickPick",
         "title": "OpenCode Go: Show Usage Quick Pick"
+      },
+      {
+        "command": "opencodego.renameActiveProfile",
+        "title": "OpenCode Go: Rename Active Profile"
+      },
+      {
+        "command": "opencodego.deleteProfile",
+        "title": "OpenCode Go: Delete Profile"
       }
     ],
     "configuration": {

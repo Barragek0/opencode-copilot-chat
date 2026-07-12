@@ -293,10 +293,70 @@ export class GoUsageTracker {
     private readonly context: vscode.ExtensionContext,
     log?: (msg: string) => void,
     costResolver?: CostResolver,
+    /**
+     * Per-profile storage suffix. When set, storage keys are namespaced
+     * so multiple Go accounts can coexist. Empty string = legacy mode
+     * (single account, shared key).
+     */
+    private readonly storageKeySuffix: string = "",
   ) {
     this.log = log;
     this.costResolver = costResolver;
     this.restore();
+  }
+
+  private storageKey(base: string): string {
+    return this.storageKeySuffix ? `${base}.${this.storageKeySuffix}` : base;
+  }
+
+  /**
+   * Copy all data from the singleton legacy keys (without suffix) into
+   * this profile's namespaced storage. Called once during the first
+   * activation after a single-account user upgrades to multi-account.
+   */
+  migrateFromSingleton(): void {
+    if (!this.storageKeySuffix) return; // i am the singleton
+    const hasLegacyEntries =
+      this.context.globalState.get<unknown[]>(STORAGE_KEY, []).length > 0;
+    if (!hasLegacyEntries) return;
+
+    this.log?.("[go-tracker] migrating legacy singleton data into profile");
+
+    // Migrate entries
+    const legacyEntries = this.context.globalState.get<UsageLogEntry[]>(STORAGE_KEY, []);
+    if (Array.isArray(legacyEntries) && legacyEntries.length > 0) {
+      const targetKey = this.storageKey(STORAGE_KEY);
+      this.context.globalState.update(targetKey, legacyEntries);
+      this.context.globalState.update(STORAGE_KEY, []);
+      this.entries = legacyEntries.filter(
+        e => typeof e.timestamp === "number" && typeof e.cost === "number",
+      );
+    }
+
+    // Migrate baseline
+    const legacyBaseline = this.context.globalState.get<UsageBaseline>(BASELINE_STORAGE_KEY, {});
+    if (legacyBaseline && Object.keys(legacyBaseline).length > 0) {
+      const targetBase = this.storageKey(BASELINE_STORAGE_KEY);
+      this.context.globalState.update(targetBase, legacyBaseline);
+      this.context.globalState.update(BASELINE_STORAGE_KEY, {});
+      this.baseline = legacyBaseline;
+    }
+
+    // Migrate session costs
+    const legacySessions = this.context.globalState.get<SessionCostSummary[]>(SESSION_COSTS_KEY, []);
+    if (Array.isArray(legacySessions) && legacySessions.length > 0) {
+      const targetSess = this.storageKey(SESSION_COSTS_KEY);
+      this.context.globalState.update(targetSess, legacySessions);
+      this.context.globalState.update(SESSION_COSTS_KEY, []);
+      for (const s of legacySessions) {
+        if (s && typeof s.sessionId === "string" && typeof s.cost === "number") {
+          this.sessionCosts.set(s.sessionId, s);
+        }
+      }
+    }
+
+    this.persist();
+    this.persistBaseline();
   }
 
   /** Record a completed Go request. externalCost is from resolved metadata if available. */
@@ -365,10 +425,14 @@ export class GoUsageTracker {
     const clamp = (v: number, limit: number) =>
       Math.round(Math.min(100, (v / limit) * 100) * 10) / 10;
 
-    // Try SQLite first (actual billed amounts from OpenCode CLI).
-    const sqliteRows = readOpenCodeHistory();
-    if (sqliteRows) {
-      return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+    // When namespaced (per-profile), skip the shared SQLite — it has no
+    // key column, so reading it would mix quota from all accounts.
+    const isPerProfile = this.storageKeySuffix.length > 0;
+    if (!isPerProfile) {
+      const sqliteRows = readOpenCodeHistory();
+      if (sqliteRows) {
+        return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+      }
     }
 
     // Fall back to extension-tracked data (works without CLI).
@@ -595,10 +659,10 @@ export class GoUsageTracker {
     const nowMs = Date.now();
 
     // ── Monthly ───────────────────────────────────────────────────────────
-    // The monthly window may change AFTER we store the anchor. To keep
-    // display = tracked + baseline = target, we compute trackedMonthly
-    // using the PROSPECTIVE window (with the new anchor), not the current one.
-    const sqliteRows = readOpenCodeHistory();
+    // When namespaced, skip SQLite — it has no key column and would mix
+    // quota from all accounts.
+    const isPerProfile = this.storageKeySuffix.length > 0;
+    const sqliteRows = isPerProfile ? null : readOpenCodeHistory();
     let sqliteMonthlyCost = 0;
     if (sqliteRows && sqliteRows.length > 0) {
       const earliest = Math.min(...sqliteRows.map(r => r.createdMs));
@@ -748,12 +812,12 @@ export class GoUsageTracker {
   }
 
   private persist(): void {
-    void this.context.globalState.update(STORAGE_KEY, this.entries);
-    void this.context.globalState.update(SESSION_COSTS_KEY, [...this.sessionCosts.values()]);
+    void this.context.globalState.update(this.storageKey(STORAGE_KEY), this.entries);
+    void this.context.globalState.update(this.storageKey(SESSION_COSTS_KEY), [...this.sessionCosts.values()]);
   }
 
   private persistBaseline(): void {
-    void this.context.globalState.update(BASELINE_STORAGE_KEY, this.baseline);
+    void this.context.globalState.update(this.storageKey(BASELINE_STORAGE_KEY), this.baseline);
   }
 
   private getActiveBaselineAmount(period: keyof UsageBaseline, nowMs: number): number {
@@ -768,20 +832,20 @@ export class GoUsageTracker {
   }
 
   private restore(): void {
-    const stored = this.context.globalState.get<UsageLogEntry[]>(STORAGE_KEY, []);
+    const stored = this.context.globalState.get<UsageLogEntry[]>(this.storageKey(STORAGE_KEY), []);
     if (Array.isArray(stored)) {
       this.entries = stored.filter(
         e => typeof e.timestamp === "number" && typeof e.cost === "number",
       );
     }
 
-    const baseline = this.context.globalState.get<UsageBaseline>(BASELINE_STORAGE_KEY, {});
+    const baseline = this.context.globalState.get<UsageBaseline>(this.storageKey(BASELINE_STORAGE_KEY), {});
     if (baseline && typeof baseline === "object") {
       this.baseline = baseline;
     }
 
     // Restore session costs from persistence
-    const storedSessions = this.context.globalState.get<SessionCostSummary[]>(SESSION_COSTS_KEY, []);
+    const storedSessions = this.context.globalState.get<SessionCostSummary[]>(this.storageKey(SESSION_COSTS_KEY), []);
     if (Array.isArray(storedSessions)) {
       for (const s of storedSessions) {
         if (s && typeof s.sessionId === "string" && typeof s.cost === "number") {
