@@ -235,7 +235,7 @@ const MODELS_WITHOUT_TEMPERATURE = new Set([
   "kimi-k2.7-code",
 ]);
 
-const VISION_CAPABLE_MODELS = new Set([
+export const VISION_CAPABLE_MODELS = new Set([
   "minimax-m2.7",
   "minimax-m2.5",
   "minimax-m2.5-free",

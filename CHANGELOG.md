@@ -2,6 +2,17 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **`[Vision]` Transparent vision proxy for text-only models (#74).** Enable `opencodego.visionProxy` in settings, then run **OpenCode Go: Configure Vision Proxy** from the Command Palette to pick a vision-capable model. When a non-vision OpenCode model receives an image, the extension forwards it to a configured vision model, receives a text description, and feeds that to the original model — so text-only models "see" images with zero extra steps. The picker shows only vision-capable models, with a "None" option to disable. A **Customize prompt** entry in the picker lets you edit the description instruction. Model ID and prompt are stored in extension state, set exclusively via the command. Implemented with `vscode.lm.selectChatModels` + `sendRequest`.
+
+### Fixed
+
+- **`[Streaming]` Context overflow 400 when prompt + output approached the model's limit.** `estimateTokenCount` can underestimate by 0–2%, pushing payloads past the context window on large prompts. Added a 64-token safety margin to `promptReserve` in `modelLimits()`. Affects all models (reported with GLM-5.2).
+- **`[Streaming]` Empty response warning no longer steals focus to the Output pane (#67).** Removed the stray `.show(true)` call on the empty-response diagnostic log.
+
 ## [0.4.0] — 2026-07-13
 
 ### Added
@@ -14,19 +25,6 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 ### Fixed
 
 - **`[Usage]` 5-hour rolling usage now isolates per profile in multi-profile mode.** The shared `opencode.db` SQLite database has no API key column, so reading it in multi-account mode mixed quota from all accounts. The tracker now skips SQLite entirely when multiple profiles exist and falls back to extension-tracked entries (which are namespaced per profile). This trades billed-accuracy for correct per-profile isolation.
-
-### Fixed
-
-- **`[Streaming]` Context overflow 400 when prompt + output approached the model's limit.** The `estimateTokenCount` heuristic (client-side) can underestimate real token count by 0–2%. On large prompts (~130K tokens on a 262K window), this pushed payload 1 token over the limit, causing a 400 from the provider. Added a 64-token safety margin to `promptReserve` in `modelLimits()` — enough headroom without meaningfully reducing output budget. Affects all models (reported with GLM-5.2).
-
-## [Unreleased]
-
-### Added
-
-- **`[Vision]` Transparent vision proxy for text-only models (issue #74).** Configure a vision-capable model via `opencodego.visionModel` (e.g. `copilot:gpt-5.5`). When a non-vision OpenCode model receives an image, the extension automatically forwards it to the configured vision model, receives a text description, and feeds that description to the original model — so text-only models can "see" images with zero extra steps. Set `opencodego.visionPrompt` to customize the description instruction. Disabled by default (empty string). Implemented using `vscode.lm.selectChatModels` + `sendRequest` — no extra dependencies.
-
-
-## [0.3.7] — 2026-07-09
 
 ### Added
 

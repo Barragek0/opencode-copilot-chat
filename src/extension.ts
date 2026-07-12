@@ -15,6 +15,7 @@ import {
   normalizeModelsDevSnapshot,
   resolveModelMetadata,
   toEffectiveModelId,
+  VISION_CAPABLE_MODELS,
   type BaseModelLimits,
   type CachedModelMetadataSnapshot,
   type ContextSizeOption,
@@ -402,10 +403,8 @@ interface ApiSettings {
   streamIdleTimeoutMs: number;
   thinking: ThinkingSettings;
   stripThinkTags: "never" | "auto" | "always";
-  /** Vision proxy model ID (e.g. "copilot:gpt-5.5"). Empty = disabled. */
-  visionModel: string;
-  /** Custom prompt for the vision proxy, e.g. "Describe this image in detail". */
-  visionPrompt: string;
+  /** Whether the vision proxy is enabled (opencodego.visionProxy boolean). */
+  visionProxy: boolean;
 }
 
 interface LanguageModelConfiguration {
@@ -709,6 +708,9 @@ export function activate(context: vscode.ExtensionContext) {
       updateWebviewContent();
       vscode.window.showInformationMessage(`Profile "${profile.label}" deleted.`);
     }),
+    vscode.commands.registerCommand("opencodego.configureVisionProxy", async () => {
+      await showVisionProxyPicker(context);
+    }),
   ];
 
   // Agent-host providers for the Copilot Agents window (opt-in via config).
@@ -729,10 +731,15 @@ export function activate(context: vscode.ExtensionContext) {
       if (event.affectsConfiguration("opencodego.showUsageStatusBar")) {
         resetUsageStatusBar();
       }
+      if (event.affectsConfiguration("opencodego.visionProxy")) {
+        goProvider.notifyModelInfoChanged();
+        zenProvider.notifyModelInfoChanged();
+      }
     }),
   );
 
   checkUtilityModelConfiguration(context);
+  migrateVisionProxySettings(context);
 
   void warmModelPickerMetadata();
 }
@@ -1295,6 +1302,11 @@ function rel(date: Date): string {
 class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel> {
   private readonly changeEmitter = new vscode.EventEmitter<void>();
   readonly onDidChangeLanguageModelChatInformation = this.changeEmitter.event;
+
+  /** Trigger a model information refresh (e.g. after visionModel setting changes). */
+  notifyModelInfoChanged(): void {
+    this.changeEmitter.fire();
+  }
   private readonly apiKeysByModelId = new Map<string, string>();
   /** Capped to prevent unbounded growth across long sessions. */
   private readonly reasoningContentByToolCallId = new Map<string, string>();
@@ -1809,16 +1821,23 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const promptTokens = estimateTokenCount(JSON.stringify(apiMessages));
     const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
     const hasImageInput = messagesHaveImages(apiMessages);
+    const actuallySupportsVision = metadata.supportsVision; // cached before capabilities override
 
-    // Vision proxy: when a non-vision model receives images, relay them
+    // Vision proxy: when a text-only model receives images, relay them
     // through a configured vision-capable Copilot model, then replace
     // the image parts with the text description.
-    if (hasImageInput && !metadata.supportsVision && settings.visionModel) {
+    const visionProxyModelId = settings.visionProxy
+      ? (this.context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "") || "")
+      : "";
+    if (hasImageInput && !actuallySupportsVision && visionProxyModelId) {
+      const visionProxyPrompt = this.context.globalState.get<string>(VISION_PROXY_PROMPT_KEY, "")
+        || DEFAULT_VISION_PROXY_PROMPT;
+      let imagesHandled = false;
       try {
         const description = await proxyVision(
           messages,
-          settings.visionModel,
-          settings.visionPrompt,
+          visionProxyModelId,
+          visionProxyPrompt,
         );
         if (description) {
           for (let i = 0; i < apiMessages.length; i++) {
@@ -1828,16 +1847,37 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
               const textParts = msg.content
                 .filter((p): p is OpenAiContentPart & { text: string } => p.type === "text" && typeof p.text === "string")
                 .map(p => p.text);
-              msg.content = [{ type: "text", text: `[Image described by ${settings.visionModel}]: ${description}` }];
+              msg.content = [{ type: "text", text: `[Image described by vision proxy]: ${description}` }];
               if (textParts.length > 0) {
                 msg.content.push({ type: "text", text: textParts.join("\n") });
               }
+              imagesHandled = true;
             }
           }
-          this.log(`[vision-proxy] Replaced images using ${settings.visionModel}`);
+          this.log(`[vision-proxy] Replaced images using vision proxy model`);
         }
       } catch (err) {
         this.log(`[vision-proxy] Error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // If the proxy didn't handle the images (error, empty response, or
+      // model not found), strip them anyway so the non-vision model
+      // doesn't receive image data it can't process (fixes 400 errors).
+      if (!imagesHandled) {
+        for (let i = 0; i < apiMessages.length; i++) {
+          const msg = apiMessages[i];
+          if (!Array.isArray(msg.content)) continue;
+          if (msg.content.some(p => p.type === "image_url")) {
+            const textParts = msg.content
+              .filter((p): p is OpenAiContentPart & { text: string } => p.type === "text" && typeof p.text === "string")
+              .map(p => p.text);
+            msg.content = [{ type: "text", text: "[Image unavailable — vision proxy unavailable]" }];
+            if (textParts.length > 0) {
+              msg.content.push({ type: "text", text: textParts.join("\n") });
+            }
+          }
+        }
+        this.log(`[vision-proxy] Stripped images (proxy unavailable), prevented 400`);
       }
     }
 
@@ -3173,8 +3213,7 @@ function getSettings(): ApiSettings {
       mimo: config.get<ThinkingSettings["mimo"]>("thinking.mimo", "off"),
     },
     stripThinkTags: config.get<ApiSettings["stripThinkTags"]>("stripThinkTags", "auto"),
-    visionModel: config.get("visionModel", ""),
-    visionPrompt: config.get("visionPrompt", ""),
+    visionProxy: config.get<boolean>("visionProxy", false),
   };
 }
 
@@ -3240,12 +3279,15 @@ function positiveOverride(value: number): number | undefined {
 }
 
 function modelCapabilities(metadata: ResolvedModelMetadata): CopilotCompatibleCapabilities {
-  // Mirrors the official shape used by `copilotChat`/`byok` providers:
-  // `imageInput` and `toolCalling` are the raw proposed-API fields VS Code
-  // maps to `vision` / `toolCalling` / `agentMode` internally, while
-  // `supportsImageToText` and `supportsToolCalling` are the runtime API
-  // booleans consumed by the `vscode.lm` callers in extensions.
-  const supportsVision = metadata.supportsVision;
+  // When a vision proxy is enabled AND a model is configured, report
+  // imageInput: true for ALL models so VS Code does not strip image
+  // parts from the request before they reach our provider. The vision
+  // proxy code in provideLanguageModelChatResponse intercepts images
+  // and forwards them to the configured vision model transparently.
+  const visionProxyEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("visionProxy", false)
+    && _extensionContext?.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "").length > 0;
+  const supportsVision = metadata.supportsVision || visionProxyEnabled;
+
   return {
     imageInput: supportsVision,
     toolCalling: true,
@@ -3317,48 +3359,251 @@ async function proxyVision(
   visionModelId: string,
   visionPrompt: string,
 ): Promise<string | undefined> {
-  const visionModels = await vscode.lm.selectChatModels({ id: visionModelId });
-  if (!visionModels || visionModels.length === 0) {
-    throw new Error(`Vision model "${visionModelId}" not found. Check your opencodego.visionModel setting.`);
-  }
-  const visionModel = visionModels[0];
+  // Find the vision model by trying several matching strategies:
+  // 1. Exact id match (full internal model id)
+  // 2. Vendor:id partial (e.g. "opencodego:mimo-v2.5")
+  // 3. Name or id substring (e.g. "mimo-v2.5" or "Mimo V2.5")
+  // Filter out agent-host variants — they use a different transport and
+  // don't have vision support. Prefer non-agent models.
+  const nonAgent = (models: readonly vscode.LanguageModelChat[]) =>
+    models.filter(m => !m.id.includes("-agent:"));
 
-  // Build a request with the images + prompt. The messages already contain
-  // LanguageModelDataPart for images — we pass them through as-is.
+  let visionModels = nonAgent(await vscode.lm.selectChatModels({ id: visionModelId }));
+  if (!visionModels || visionModels.length === 0) {
+    // Try matching by name substring across all providers
+    const allVisible = nonAgent(await vscode.lm.selectChatModels({}));
+    visionModels = allVisible.filter(
+      m => m.id.toLowerCase().includes(visionModelId.toLowerCase())
+        || m.name.toLowerCase().includes(visionModelId.toLowerCase())
+        || m.family.toLowerCase().includes(visionModelId.toLowerCase()),
+    );
+  }
+  if (!visionModels || visionModels.length === 0) {
+    throw new Error(
+      `Vision model "${visionModelId}" not found. ` +
+      `Run "OpenCode Go: Configure Vision Proxy" to see available models.`,
+    );
+  }
+
+  // All models that matched are candidates. `selectChatModels` returns
+  // `LanguageModelChat` which does not expose capabilities in the stable
+  // API, so we just use the first match. Most vision models handle image
+  // input gracefully — models without vision will report the error.
+  const model = visionModels[0];
+
+  // Build a request preserving images and text from the original messages
   const requestMessages: vscode.LanguageModelChatMessage[] = [];
   for (const msg of messages) {
-    let content: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
+    const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
     for (const part of msg.content) {
       if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
-        content.push(part);
+        parts.push(part);
       } else if (part instanceof vscode.LanguageModelTextPart) {
-        content.push(part);
+        parts.push(part);
       } else if (typeof part === "object" && part !== null && "value" in part) {
-        content.push(new vscode.LanguageModelTextPart(String((part as any).value)));
+        parts.push(new vscode.LanguageModelTextPart(String((part as any).value)));
       }
     }
-    if (content.length > 0) {
-      requestMessages.push(new vscode.LanguageModelChatMessage(msg.role === 1 ? vscode.LanguageModelChatMessageRole.Assistant : vscode.LanguageModelChatMessageRole.User, content));
+    if (parts.length > 0) {
+      requestMessages.push(new vscode.LanguageModelChatMessage(
+        msg.role === vscode.LanguageModelChatMessageRole.Assistant
+          ? vscode.LanguageModelChatMessageRole.Assistant
+          : vscode.LanguageModelChatMessageRole.User,
+        parts,
+      ));
     }
   }
 
-  // Add the vision prompt as a user message
+  // Append the vision prompt
   if (visionPrompt) {
     requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
   }
 
-  let fullDescription = "";
-  // VS Code's sendRequest requires a CancellationToken. We create a
-  // simple one that never cancels.
   const cancellationToken: vscode.CancellationToken = {
     isCancellationRequested: false,
     onCancellationRequested: () => ({ dispose: () => {} }),
   };
-  const response = await visionModel.sendRequest(requestMessages, {}, cancellationToken);
+  const response = await model.sendRequest(requestMessages, {}, cancellationToken);
+  let fullDescription = "";
   for await (const part of response.text) {
     fullDescription += part;
   }
   return fullDescription.length > 0 ? fullDescription : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Vision proxy — globalState storage keys & defaults
+// ---------------------------------------------------------------------------
+
+const VISION_PROXY_MODEL_ID_KEY = "opencodego.visionProxyModelId";
+const VISION_PROXY_PROMPT_KEY = "opencodego.visionProxyPrompt";
+const DEFAULT_VISION_PROXY_PROMPT =
+  "Describe this image in detail so a text-only model can understand what it shows. " +
+  "Include all visible text, layout, colors, objects, and context.";
+
+/**
+ * One-time migration from the old `opencodego.visionModel` string setting
+ * (pre-0.4.1) to the new `opencodego.visionProxy` boolean + globalState model
+ * ID storage. Runs on every activation but only acts when needed.
+ */
+function migrateVisionProxySettings(context: vscode.ExtensionContext): void {
+  const config = vscode.workspace.getConfiguration("opencodego");
+  const oldModel = config.get<string>("visionModel", "");
+  if (!oldModel) return; // nothing to migrate
+
+  // The new boolean setting
+  const alreadyEnabled = config.get<boolean>("visionProxy", false);
+
+  // If the globalState already has a model ID and the boolean is on,
+  // migration was already done — just clean up the old string setting.
+  const stored = context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "");
+  if (stored && alreadyEnabled) {
+    void config.update("visionModel", undefined, vscode.ConfigurationTarget.Global);
+    return;
+  }
+
+  // Migrate: store model ID in globalState, enable the boolean, clear old key.
+  void context.globalState.update(VISION_PROXY_MODEL_ID_KEY, oldModel);
+  // Also migrate the prompt if it was customized
+  const oldPrompt = config.get<string>("visionPrompt", "");
+  if (oldPrompt && oldPrompt !== DEFAULT_VISION_PROXY_PROMPT) {
+    void context.globalState.update(VISION_PROXY_PROMPT_KEY, oldPrompt);
+  }
+  void config.update("visionProxy", true, vscode.ConfigurationTarget.Global);
+  // Clear old settings
+  void config.update("visionModel", undefined, vscode.ConfigurationTarget.Global);
+  void config.update("visionPrompt", undefined, vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * QuickPick to configure vision proxy model and prompt.
+ * Clean list of model names (no ugly IDs), with "None" to disable
+ * and "Customize prompt..." to edit the description instruction.
+ * Saves to globalState; toggles the visionProxy boolean accordingly.
+ */
+async function showVisionProxyPicker(context: vscode.ExtensionContext): Promise<void> {
+  const config = vscode.workspace.getConfiguration("opencodego");
+  const currentModelId = context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "");
+  const currentPrompt = context.globalState.get<string>(VISION_PROXY_PROMPT_KEY, "")
+    || DEFAULT_VISION_PROXY_PROMPT;
+
+  // --- Build the set of vision-capable model IDs ---
+  const visionCapableIds = new Set<string>();
+  const snapshot = modelMetadataSnapshot;
+  if (snapshot) {
+    for (const vendor of [GO_VENDOR, ZEN_VENDOR] as const) {
+      const provider = snapshot.providers[vendor];
+      if (!provider) continue;
+      for (const [id, meta] of Object.entries(provider)) {
+        if (meta.supportsVision) visionCapableIds.add(`${vendor}:${id}`);
+      }
+    }
+  }
+  for (const family of VISION_CAPABLE_MODELS) {
+    visionCapableIds.add(`copilot:${family}`);
+  }
+
+  // --- Build QuickPick items from available models ---
+  const allModels = (await vscode.lm.selectChatModels({}))
+    .filter(m => !m.id.includes("-agent:"));
+
+  const modelItems = allModels
+    .map(m => {
+      const rawId = resolveRawModelId(m.id);
+      const vendor = resolveVendorFromId(m.id);
+      const lookupId = `${vendor}:${rawId}`;
+      const fromLookup = visionCapableIds.has(lookupId);
+      const fromName = [...visionCapableIds].some(id =>
+        m.id.includes(id.replace(/^(opencodego|opencodezen|copilot):/, "")));
+      const supportsVision = fromLookup || fromName;
+      return {
+        label: m.name,
+        description: supportsVision ? "$(eye)" : "",
+        detail: supportsVision
+          ? (m.id === currentModelId ? "currently configured" : "vision-capable")
+          : "",
+        picked: m.id === currentModelId,
+        _id: m.id,
+        _kind: "model" as const,
+        _supportsVision: supportsVision,
+      };
+    })
+    .filter(m => m._supportsVision);
+
+  if (modelItems.length === 0) {
+    vscode.window.showInformationMessage(
+      "No vision-capable models found. Make sure you have a Copilot Chat provider with vision models installed.",
+    );
+    return;
+  }
+
+  modelItems.sort((a, b) => {
+    if (a._id === currentModelId) return -1;
+    if (b._id === currentModelId) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  const items: Array<{
+    label: string;
+    description?: string;
+    detail?: string;
+    picked?: boolean;
+    _id?: string;
+    _kind: "none" | "prompt" | "model" | "separator";
+    _supportsVision?: boolean;
+    kind?: vscode.QuickPickItemKind;
+  }> = [
+    { label: "$(circle-slash) None (disable)", detail: currentModelId ? "" : "currently selected", picked: !currentModelId, _kind: "none" },
+    { label: "", kind: vscode.QuickPickItemKind.Separator, _kind: "separator" },
+    { label: "$(edit) Customize description prompt...", description: "$(info) Sets how the vision model describes images", _kind: "prompt" },
+    { label: "", kind: vscode.QuickPickItemKind.Separator, _kind: "separator" },
+    ...modelItems,
+  ];
+
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: "Pick a model, customize the prompt, or disable",
+    title: "OpenCode Go — Vision Proxy",
+    matchOnDescription: true,
+  });
+
+  if (!picked || !("_kind" in picked)) return;
+
+  // --- "Customize prompt..." ---
+  if (picked._kind === "prompt") {
+    const newPrompt = await vscode.window.showInputBox({
+      title: "Vision Proxy — Description Prompt",
+      prompt: "Prompt sent to the vision model to describe the image.",
+      value: currentPrompt,
+      placeHolder: DEFAULT_VISION_PROXY_PROMPT,
+      validateInput: (value: string) => value.trim() ? undefined : "Prompt cannot be empty.",
+    });
+    if (newPrompt === undefined) return; // cancelled
+    await context.globalState.update(VISION_PROXY_PROMPT_KEY, newPrompt.trim());
+    vscode.window.showInformationMessage("Vision proxy prompt updated.");
+    return;
+  }
+
+  // --- "None" ---
+  if (picked._kind === "none") {
+    await context.globalState.update(VISION_PROXY_MODEL_ID_KEY, "");
+    await config.update("visionProxy", false, vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage("Vision proxy disabled.");
+    return;
+  }
+
+  // --- Model selected ---
+  if (!picked._id) return;
+  await context.globalState.update(VISION_PROXY_MODEL_ID_KEY, picked._id);
+  await config.update("visionProxy", true, vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(`Vision proxy set to: ${picked.label}`);
+}
+
+/** Best-effort vendor resolution from a model ID. */
+function resolveVendorFromId(modelId: string): AllProviderVendor {
+  if (modelId.startsWith(`${AGENT_GO_VENDOR}:`)) return AGENT_GO_VENDOR;
+  if (modelId.startsWith(`${AGENT_ZEN_VENDOR}:`)) return AGENT_ZEN_VENDOR;
+  if (modelId.startsWith(`${ZEN_VENDOR}:`)) return ZEN_VENDOR;
+  return GO_VENDOR;
 }
 
 /**
