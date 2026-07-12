@@ -402,6 +402,10 @@ interface ApiSettings {
   streamIdleTimeoutMs: number;
   thinking: ThinkingSettings;
   stripThinkTags: "never" | "auto" | "always";
+  /** Vision proxy model ID (e.g. "copilot:gpt-5.5"). Empty = disabled. */
+  visionModel: string;
+  /** Custom prompt for the vision proxy, e.g. "Describe this image in detail". */
+  visionPrompt: string;
 }
 
 interface LanguageModelConfiguration {
@@ -1805,7 +1809,39 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const promptTokens = estimateTokenCount(JSON.stringify(apiMessages));
     const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
     const hasImageInput = messagesHaveImages(apiMessages);
-    const thinkingPayload = buildThinkingPayload(rawModelId, settings.thinking, hasImageInput);
+
+    // Vision proxy: when a non-vision model receives images, relay them
+    // through a configured vision-capable Copilot model, then replace
+    // the image parts with the text description.
+    if (hasImageInput && !metadata.supportsVision && settings.visionModel) {
+      try {
+        const description = await proxyVision(
+          messages,
+          settings.visionModel,
+          settings.visionPrompt,
+        );
+        if (description) {
+          for (let i = 0; i < apiMessages.length; i++) {
+            const msg = apiMessages[i];
+            if (!Array.isArray(msg.content)) continue;
+            if (msg.content.some(p => p.type === "image_url")) {
+              const textParts = msg.content
+                .filter((p): p is OpenAiContentPart & { text: string } => p.type === "text" && typeof p.text === "string")
+                .map(p => p.text);
+              msg.content = [{ type: "text", text: `[Image described by ${settings.visionModel}]: ${description}` }];
+              if (textParts.length > 0) {
+                msg.content.push({ type: "text", text: textParts.join("\n") });
+              }
+            }
+          }
+          this.log(`[vision-proxy] Replaced images using ${settings.visionModel}`);
+        }
+      } catch (err) {
+        this.log(`[vision-proxy] Error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    const thinkingPayload = buildThinkingPayload(rawModelId, settings.thinking, hasImageInput && metadata.supportsVision);
     const requestHeaders = buildOpenCodeRequestHeaders(
       messages,
       options,
@@ -3137,6 +3173,8 @@ function getSettings(): ApiSettings {
       mimo: config.get<ThinkingSettings["mimo"]>("thinking.mimo", "off"),
     },
     stripThinkTags: config.get<ApiSettings["stripThinkTags"]>("stripThinkTags", "auto"),
+    visionModel: config.get("visionModel", ""),
+    visionPrompt: config.get("visionPrompt", ""),
   };
 }
 
@@ -3267,6 +3305,60 @@ function isFreeModel(modelId: string, vendor: ProviderDefinition["vendor"]): boo
     FREE_ZEN_MODEL_IDS.has(modelId) ||
     modelId.endsWith("-free")
   );
+}
+
+/**
+ * Vision proxy: relay image messages through a vision-capable Copilot model
+ * and return the text description. This lets text-only models "see" images
+ * transparently (issue #74).
+ */
+async function proxyVision(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  visionModelId: string,
+  visionPrompt: string,
+): Promise<string | undefined> {
+  const visionModels = await vscode.lm.selectChatModels({ id: visionModelId });
+  if (!visionModels || visionModels.length === 0) {
+    throw new Error(`Vision model "${visionModelId}" not found. Check your opencodego.visionModel setting.`);
+  }
+  const visionModel = visionModels[0];
+
+  // Build a request with the images + prompt. The messages already contain
+  // LanguageModelDataPart for images — we pass them through as-is.
+  const requestMessages: vscode.LanguageModelChatMessage[] = [];
+  for (const msg of messages) {
+    let content: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
+    for (const part of msg.content) {
+      if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
+        content.push(part);
+      } else if (part instanceof vscode.LanguageModelTextPart) {
+        content.push(part);
+      } else if (typeof part === "object" && part !== null && "value" in part) {
+        content.push(new vscode.LanguageModelTextPart(String((part as any).value)));
+      }
+    }
+    if (content.length > 0) {
+      requestMessages.push(new vscode.LanguageModelChatMessage(msg.role === 1 ? vscode.LanguageModelChatMessageRole.Assistant : vscode.LanguageModelChatMessageRole.User, content));
+    }
+  }
+
+  // Add the vision prompt as a user message
+  if (visionPrompt) {
+    requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
+  }
+
+  let fullDescription = "";
+  // VS Code's sendRequest requires a CancellationToken. We create a
+  // simple one that never cancels.
+  const cancellationToken: vscode.CancellationToken = {
+    isCancellationRequested: false,
+    onCancellationRequested: () => ({ dispose: () => {} }),
+  };
+  const response = await visionModel.sendRequest(requestMessages, {}, cancellationToken);
+  for await (const part of response.text) {
+    fullDescription += part;
+  }
+  return fullDescription.length > 0 ? fullDescription : undefined;
 }
 
 /**

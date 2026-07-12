@@ -176,6 +176,16 @@
           "default": "auto",
           "markdownDescription": "How to handle `<think>...</think>` tags in model output. `auto` strips tags only for known reasoning models that inline thinking in the content field (minimax), accumulating the extracted reasoning content into the existing reasoning fallback. `always` strips for every model. `never` passes text through unchanged (use if a model legitimately uses `<think>` in its output)."
         },
+        "opencodego.visionModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Vision proxy model. When set, images pasted into chat are automatically sent to this model for description before being passed to text-only models. The value must be a model `id` from the VS Code model picker (e.g. `copilot:gpt-5.5`). Leave empty to disable vision proxy."
+        },
+        "opencodego.visionPrompt": {
+          "type": "string",
+          "default": "Describe this image in detail so a text-only model can understand what it shows. Include all visible text, layout, colors, objects, and context.",
+          "markdownDescription": "Prompt sent to the vision proxy model when an image is attached. The image is appended after this text."
+        },
         "opencodego.thinking.deepseek": {
           "type": "string",
           "enum": [
