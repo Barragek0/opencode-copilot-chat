@@ -2,11 +2,18 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
-## [Unreleased]
+## [0.4.0] — 2026-07-13
 
 ### Added
 
-- **`[Usage]` Per-profile Go usage tracking for multi-account setups (issue #63).** Users can now add multiple OpenCode Go entries in the Manage Language Models panel, each with its own API key. The extension automatically creates a "Profile 1", "Profile 2", etc. on the first request sent with each key. Profiles have isolated storage and the active profile auto-switches to the most recently used model. The SVG hover card and status bar show the active profile label. Click the status bar to open the QuickPick with profile switch options. Commands: `Rename Active Profile` and `Delete Active Profile`. In single-key mode the extension behaves exactly as before; the feature only activates when a second key is detected. No SQLite consultation in multi-key mode (opencode.db is shared per-machine and cannot be attributed to a specific key).
+- **`[Usage]` Per-profile Go usage tracking for multi-account setups.** Users with multiple OpenCode Go subscriptions (e.g. work + personal) can now add separate Go entries in the Manage Language Models panel. The extension auto-creates a named profile ("Profile 1", "Profile 2", etc.) on the first request with each key. Storage is namespaced per profile so usage data never mixes. Fixes [#63](https://github.com/ltmoerdani/opencode-copilot-chat/issues/63). PR [#75](https://github.com/ltmoerdani/opencode-copilot-chat/pull/75) by [@Wallacy](https://github.com/Wallacy).
+- **`[Usage]` Profile auto-switch and QuickPick.** The active profile follows the last used model. Click the status bar to open a QuickPick listing all profiles; the active one is checked, others are clickable switches. The SVG hover card and status bar show the active profile label (e.g. `Go: 5%·12%·8% [Profile 2]`).
+- **`[Usage]` Profile management commands.** `OpenCode Go: Rename Active Profile` and `OpenCode Go: Delete Profile` let users manage their profiles. Delete includes a confirmation dialog and cleans up all namespaced storage.
+- **`[Usage]` Legacy data migration.** Users upgrading from a single-account install get their existing usage data migrated into Profile 1 automatically on first multi-profile activation. Nothing is lost.
+
+### Fixed
+
+- **`[Usage]` 5-hour rolling usage now isolates per profile in multi-profile mode.** The shared `opencode.db` SQLite database has no API key column, so reading it in multi-account mode mixed quota from all accounts. The tracker now skips SQLite entirely when multiple profiles exist and falls back to extension-tracked entries (which are namespaced per profile). This trades billed-accuracy for correct per-profile isolation.
 
 
 ## [0.3.7] — 2026-07-09
