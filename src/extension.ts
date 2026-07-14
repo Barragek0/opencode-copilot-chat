@@ -1831,10 +1831,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         || DEFAULT_VISION_PROXY_PROMPT;
       let imagesHandled = false;
       try {
+        this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}`);
         const description = await proxyVision(
           messages,
           visionProxyModelId,
           visionProxyPrompt,
+          token,
         );
         if (description) {
           for (let i = 0; i < apiMessages.length; i++) {
@@ -3233,7 +3235,11 @@ function modelLimits(
   // Cap output so that prompt + output never exceeds the context window.
   // When promptTokens is known (from message normalization), use the actual
   // count; otherwise fall back to a conservative 80% reserve for the prompt.
-  const promptReserve = promptTokens ?? Math.floor(contextWindow * 0.8);
+  // The safety margin compensates for estimateTokenCount() underestimating
+  // by 0-2%, which on large prompts (~130K) can push the payload over the
+  // context window limit and cause a 400.
+  const TOKEN_ESTIMATE_SAFETY_MARGIN = 64;
+  const promptReserve = (promptTokens ?? Math.floor(contextWindow * 0.8)) + TOKEN_ESTIMATE_SAFETY_MARGIN;
   const safeOutputBudget = Math.max(1, contextWindow - promptReserve);
   const apiMaxOutputTokens = Math.min(maxOutputTokens, safeOutputBudget);
   // advertisedContextWindow = actual model context window (not inflated).
@@ -3351,6 +3357,7 @@ async function proxyVision(
   messages: readonly vscode.LanguageModelChatRequestMessage[],
   visionModelId: string,
   visionPrompt: string,
+  token: vscode.CancellationToken,
 ): Promise<string | undefined> {
   // Find the vision model by trying several matching strategies:
   // 1. Exact id match (full internal model id)
@@ -3412,11 +3419,7 @@ async function proxyVision(
     requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
   }
 
-  const cancellationToken: vscode.CancellationToken = {
-    isCancellationRequested: false,
-    onCancellationRequested: () => ({ dispose: () => {} }),
-  };
-  const response = await model.sendRequest(requestMessages, {}, cancellationToken);
+  const response = await model.sendRequest(requestMessages, {}, token);
   let fullDescription = "";
   for await (const part of response.text) {
     fullDescription += part;
