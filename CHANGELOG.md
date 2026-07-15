@@ -2,15 +2,15 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
-## [Unreleased]
+## [0.4.1] — 2026-07-15
 
 ### Added
 
-- **`[Vision]` Transparent vision proxy for text-only models (#74).** Run **OpenCode Go: Configure Vision Proxy** from the Command Palette to pick a vision-capable model. When a non-vision OpenCode model receives an image, the extension forwards it to the configured model, receives a text description, and feeds that to the original model — so text-only models "see" images with zero extra steps. The picker shows only vision-capable models (filtered by `models.dev` metadata), with a **None** option to disable and a **Customize prompt** entry to edit the description instruction. No settings to toggle — if a model is configured, the proxy is on. Implemented with `vscode.lm.selectChatModels` + `sendRequest`.
+- **`[Vision]` Transparent vision proxy for text-only models (#74).** Run **OpenCode Go: Configure Vision Proxy** from the Command Palette to pick a vision-capable model. When a non-vision OpenCode model receives an image, the extension forwards it to the configured model, receives a text description, and feeds that to the original model — so text-only models "see" images with zero extra steps. The picker shows only vision-capable models (filtered by `models.dev` metadata), with a **None** option to disable and a **Customize prompt** entry to edit the description instruction. No settings to toggle — if a model is configured, the proxy is on. Implemented with `vscode.lm.selectChatModels` + `sendRequest`. PR [#76](https://github.com/ltmoerdani/opencode-copilot-chat/pull/76) by [@Wallacy](https://github.com/Wallacy).
 
 ### Fixed
 
-- **`[Streaming]` Context overflow 400 when prompt + output approached the model's limit.** `estimateTokenCount` can underestimate by 0–2%, pushing payloads past the context window on large prompts. Added a 64-token safety margin to `promptReserve` in `modelLimits()`. Affects all models (reported with GLM-5.2).
+- **`[Streaming]` Context overflow 400 when prompt + output approached the model's limit (#68).** `estimateTokenCount` can underestimate by 0–2%, pushing payloads past the context window on large prompts. Added a 64-token safety margin (`TOKEN_ESTIMATE_SAFETY_MARGIN`) to `promptReserve` in `modelLimits()`. Affects all models (reported with GLM-5.2).
 - **`[Streaming]` Empty response warning no longer steals focus to the Output pane (#67).** Removed the stray `.show(true)` call on the empty-response diagnostic log.
 
 ## [0.4.0] — 2026-07-13

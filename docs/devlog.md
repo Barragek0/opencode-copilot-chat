@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `fix/thinking-part-byok-surfacing-22-71` | **Updated:** 2026-07-09 Asia/Jakarta | **Current Phase:** v0.3.7 — Thinking Part Surfacing ✅ Solved
+**Branch:** `main` | **Updated:** 2026-07-15 Asia/Jakarta | **Current Phase:** v0.4.1 — Vision Proxy + Context Overflow Fix + Output Popup Fix ✅ Merged
 
 ---
 
@@ -7,11 +7,45 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-07-09 |
-| **Worked On** | Implemented + verified fix for issues #22 + #71 on branch `fix/thinking-part-byok-surfacing-22-71`. Reasoning from OpenCode models now streamed live via `LanguageModelThinkingPart` across all 4 transports (chat-completions, Anthropic, responses, Google) and both streaming + non-stream paths. `chat.agent.thinkingStyle` now respected. Manual test passed (DeepSeek + Kimi). Version bumped to 0.3.7. CHANGELOG, issue doc #33 (✅ Solved), and devlog updated. |
-| **Stopped At** | v0.3.7 ready. Pending commit + push + reply to #22/#71. |
-| **Next Action** | → Commit, push branch, open PR. Draft reply to #22/#71 (after merge or before). |
-| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. |
+| **Last Session** | 2026-07-15 |
+| **Worked On** | Reviewed PR #76 (@Wallacy, vision proxy for text-only models + context overflow safety margin + output pane focus steal fix). Two review rounds: first round flagged 1 blocker (context overflow fix missing from code, only in CHANGELOG) + 2 formatting issues (README table collapsed, CHANGELOG `[0.3.7]` heading removed) + 2 nice-to-haves (dummy CancellationToken, quota not documented). Wallacy force-pushed `8a0d813` addressing all blockers. Re-verified: 64-token margin in `modelLimits()`, README rows split, heading restored, real `token` wired to `proxyVision`. Merged via merge commit `d2fcbe4` (NOT squash, preserved 4 commits). Post-merge: wrote feature doc `docs/features/11-20260715-vision-proxy.md`, bumped version to 0.4.1, updated CHANGELOG, updated this devlog. |
+| **Stopped At** | v0.4.1 docs + version bump complete. Pending `npm run compile` + `vsce package` + local VSIX install + commit. |
+| **Next Action** | → Compile, package VSIX, install locally for smoke test. Then commit docs + version bump. Push only after user approval. |
+| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor, logged to Output channel). |
+
+---
+
+## 🔬 PR #76 Review & Merge — Vision Proxy + Context Overflow + Output Popup — Session 2026-07-15 ✅ MERGED
+
+**Action:** Reviewed community PR #76 (@Wallacy, 4 commits). Vision proxy for text-only models (#74), 64-token context overflow safety margin (#68), output pane focus steal fix (#67). Two review rounds, then merged via merge commit.
+
+**What it does:**
+
+1. **Vision proxy for text-only models (#74).** When a non-vision OpenCode model receives an image, the extension forwards it to a configured vision-capable Copilot model (via `vscode.lm.selectChatModels` + `sendRequest`), gets a text description, and feeds it to the original model. Configured via **OpenCode Go: Configure Vision Proxy** command — QuickPick with None/Customize-prompt/vision-models, stored in `globalState`. Key fix: `actuallySupportsVision` cached before `modelCapabilities()` override to break circular dependency.
+
+2. **Context overflow 400 fix (#68).** `estimateTokenCount()` underestimates by 0–2%. Added `TOKEN_ESTIMATE_SAFETY_MARGIN = 64` to `promptReserve` in `modelLimits()`. Prevents payload pushing past context window on large prompts (~130K tokens).
+
+3. **Output pane focus steal fix (#67).** Removed stray `.show(true)` in `streamChatCompletions()` empty-response warning that popped Output panel over chat.
+
+**Review process:**
+
+- **Round 1 (pre-force-push):** Flagged 1 blocker (context overflow fix claim without code) + 2 formatting (README table collapsed into one line, CHANGELOG `[0.3.7]` heading removed) + 2 nice-to-haves (dummy CancellationToken, quota not documented). Drafted reply via `avoid-ai-writing` + `writing-framework-v4` skills, peer-to-peer tone.
+- **Wallacy response:** "I was squashing some commits and got few things mixed and lost. You can check again."
+- **Round 2 (post-force-push `8a0d813`):** Re-verified all 5 items. All blockers resolved. 64-token margin in `modelLimits()`, README rows split, `[0.3.7]` heading restored, real `token` wired to `proxyVision()`. `[vision-proxy]` log lines added for runtime visibility. Approved.
+- **Merge:** `gh pr merge 76 --merge` → merge commit `d2fcbe4`. Preserved all 4 commits (`69902bb`, `4a36009`, `a17f91e`, `8a0d813`). No squash.
+
+**Post-merge documentation:**
+
+- `docs/features/11-20260715-vision-proxy.md` — comprehensive feature doc (architecture, code locations, tests, review notes, limitations).
+- `CHANGELOG.md` — `[Unreleased]` → `[0.4.1] — 2026-07-15` with PR + contributor attribution.
+- `package.json` — version `0.4.0` → `0.4.1`.
+- This devlog entry.
+
+**Tests:** 107 total, 0 failing. 9 new in `visionProxy.test.ts` (proxy condition + circular-regression guard), 3 new in `metadata.test.ts` (`VISION_CAPABLE_MODELS` membership).
+
+**CI:** build (20) SUCCESS, GitGuardian pass, mergeStateStatus CLEAN.
+
+**Next:** Compile, package VSIX, install locally, commit docs.
 
 ---
 
