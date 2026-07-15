@@ -105,6 +105,10 @@
       {
         "command": "opencodego.deleteProfile",
         "title": "OpenCode Go: Delete Profile"
+      },
+      {
+        "command": "opencodego.configureVisionProxy",
+        "title": "OpenCode Go: Configure Vision Proxy"
       }
     ],
     "configuration": {

@@ -35,6 +35,7 @@
 | 🌍 **30+ frontier models** | DeepSeek V4, Kimi K2.6, GLM-5.1, Qwen3.7 Max, MiMo V2.5, MiniMax M2.7, Big Pickle, Nemotron — **all in one picker** |
 | 🤖 **Full Agent Mode** | Tool-calling (read files, edit, run terminal) works natively — not just chat. Models also appear in the **Agents window** (Copilot CLI session) |
 | 🧠 **Thinking controls** | Per-model reasoning effort (DeepSeek `max`, Qwen `thinking_budget`, MiniMax `on/off`, Mimo `low/med/high`) |
+| 🖼️ **Vision proxy** | Text-only models can "see" images via a configured vision model. Run **OpenCode Go: Configure Vision Proxy** from the Command Palette to set it up. |
 | 📊 **Live usage tracking** | Status bar shows Go subscription burn-rate across 5h / weekly / monthly tiers |
 | 🔌 **Dual providers** | OpenCode **Go** ($10/mo subscription) + OpenCode **Zen** (free + paid models) — run both at once, switch instantly |
 | 🎯 **Smart routing** | Each model family auto-routes to its native transport (`/responses`, `/messages`, `streamGenerateContent`, `/chat/completions`) |

@@ -2,6 +2,17 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **`[Vision]` Transparent vision proxy for text-only models (#74).** Run **OpenCode Go: Configure Vision Proxy** from the Command Palette to pick a vision-capable model. When a non-vision OpenCode model receives an image, the extension forwards it to the configured model, receives a text description, and feeds that to the original model — so text-only models "see" images with zero extra steps. The picker shows only vision-capable models (filtered by `models.dev` metadata), with a **None** option to disable and a **Customize prompt** entry to edit the description instruction. No settings to toggle — if a model is configured, the proxy is on. Implemented with `vscode.lm.selectChatModels` + `sendRequest`.
+
+### Fixed
+
+- **`[Streaming]` Context overflow 400 when prompt + output approached the model's limit.** `estimateTokenCount` can underestimate by 0–2%, pushing payloads past the context window on large prompts. Added a 64-token safety margin to `promptReserve` in `modelLimits()`. Affects all models (reported with GLM-5.2).
+- **`[Streaming]` Empty response warning no longer steals focus to the Output pane (#67).** Removed the stray `.show(true)` call on the empty-response diagnostic log.
+
 ## [0.4.0] — 2026-07-13
 
 ### Added
@@ -14,7 +25,6 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 ### Fixed
 
 - **`[Usage]` 5-hour rolling usage now isolates per profile in multi-profile mode.** The shared `opencode.db` SQLite database has no API key column, so reading it in multi-account mode mixed quota from all accounts. The tracker now skips SQLite entirely when multiple profiles exist and falls back to extension-tracked entries (which are namespaced per profile). This trades billed-accuracy for correct per-profile isolation.
-
 
 ## [0.3.7] — 2026-07-09
 

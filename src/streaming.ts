@@ -107,7 +107,8 @@ export async function streamChatCompletions(
     options.output?.appendLine(
       `[warn] empty response from model=${options.modelId} (no text, no tool calls, no reasoning). Try a different free model or enable opencodego.debugReasoning to inspect raw SSE.`,
     );
-    options.output?.show(true);
+    // Intentionally not calling .show(true) — the diagnostic log is
+    // available in the Output pane when the user opens it manually.
   }
 }
 
