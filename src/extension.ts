@@ -202,7 +202,111 @@ const KNOWN_UNAVAILABLE_MODEL_IDS = new Set([
 const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const OPEN_CODE_CLIENT = "vscode-copilot-chat";
-const OPEN_CODE_USER_AGENT = "opencode-copilot-chat/0.3.6 VSCode";
+/** Fallback only — overridden at runtime by {@link getUserAgent} from packageJSON. */
+const FALLBACK_USER_AGENT = "opencode-copilot-chat/0.4.1 VSCode";
+
+/**
+ * Hard ceiling for a single model-list fetch (connect + headers + body).
+ *
+ * Without this, undici's default `headersTimeout` (300s) can leave the picker
+ * stuck for up to 5 minutes on a hung TCP connection (issue #78).
+ */
+const MODEL_LIST_FETCH_TIMEOUT_MS = 15_000;
+/** Max retry attempts for transient network failures during model-list fetch. */
+const MODEL_LIST_FETCH_MAX_RETRIES = 3;
+/** Base delay for exponential backoff (500ms, 1s, 2s). */
+const MODEL_LIST_FETCH_RETRY_BASE_MS = 500;
+/** TTL for the last successful model-list snapshot cached in globalState. */
+const MODEL_LIST_CACHE_TTL_MS = 60 * 60 * 1000;
+/** globalState key suffix per vendor; full key = `${base}::<vendor>`. */
+const MODEL_LIST_CACHE_KEY_PREFIX = "opencode.modelListCache.v1";
+
+let cachedUserAgent: string | undefined;
+
+/**
+ * Build the User-Agent string from the extension's declared version.
+ *
+ * CONTRACT:
+ * - Reads `context.extension.packageJSON.version` once, caches the result.
+ * - Falls back to {@link FALLBACK_USER_AGENT} when version is unavailable
+ *   (e.g. tests that construct a stub context).
+ * - Avoids the drift that previously hardcoded a version literal here
+ *   (issue #78: header reported `0.3.6` while package.json was `0.4.1`).
+ */
+function getUserAgent(): string {
+  if (cachedUserAgent) return cachedUserAgent;
+  const version = vscode.extensions.getExtension("ltmoerdani.opencode-copilot-chat")?.packageJSON?.version;
+  cachedUserAgent = typeof version === "string" && version
+    ? `opencode-copilot-chat/${version} VSCode`
+    : FALLBACK_USER_AGENT;
+  return cachedUserAgent;
+}
+
+/**
+ * Classify a fetch error as transient (worth retrying) vs. permanent.
+ *
+ * RULES:
+ * - Network-layer errors (DNS, TCP reset, connect timeout, socket errors)
+ *   are transient — undici exposes the real code via `error.cause`.
+ * - HTTP 4xx (except 408/429) is permanent — retrying won't help.
+ * - HTTP 408/429/5xx is transient — gateway/rate-limit style failures.
+ *   These arrive via the "Model list request failed (NNN): ..." message
+ *   that `fetchModels()` throws on a non-2xx response.
+ * - AbortError from a CancellationToken is NEVER retried.
+ */
+function isTransientFetchError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  const cause = (error as { cause?: { code?: string; name?: string } } | undefined)?.cause;
+  const code = cause?.code ?? (error as { code?: string } | undefined)?.code;
+  const name = cause?.name ?? (error as { name?: string } | undefined)?.name;
+  // undici network error codes
+  if (code && /^E(AI_AGAIN|CONNRESET|CONNREFUSED|CONNABORTED|TIMEDOUT|HOSTUNREACH|NETUNREACH|PROTO|PIPE)$/.test(code)) {
+    return true;
+  }
+  if (name && /^UND_ERR_(CONNECT_TIMEOUT|SOCKET|REQUEST_TIMEOUT)$/.test(name)) {
+    return true;
+  }
+  // TypeError: fetch failed (the generic wrapper undici throws) — always retry;
+  // if the cause turns out to be non-transient, the inner check above handles it.
+  if (error instanceof TypeError && /fetch failed/i.test(error.message)) return true;
+  // Extract HTTP status from either an explicit `.status` field or the
+  // "Model list request failed (NNN): ..." message pattern.
+  const explicitStatus = (error as { status?: number } | undefined)?.status;
+  const msg = error instanceof Error ? error.message : String(error);
+  const msgMatch = msg.match(/\((\d{3})\)/);
+  const httpStatus = typeof explicitStatus === "number" ? explicitStatus : (msgMatch ? Number(msgMatch[1]) : undefined);
+  if (typeof httpStatus === "number") {
+    if (httpStatus === 408 || httpStatus === 429 || httpStatus >= 500) return true;
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Promise-based delay that rejects with AbortError if the token fires.
+ *
+ * Used to back off between model-list fetch retries without leaking
+ * CancellationToken subscriptions.
+ */
+function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
+  if (token?.isCancellationRequested) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    let sub: vscode.Disposable | undefined;
+    const timer = setTimeout(() => {
+      sub?.dispose();
+      resolve();
+    }, ms);
+    if (token) {
+      sub = token.onCancellationRequested(() => {
+        clearTimeout(timer);
+        sub?.dispose();
+        reject(new DOMException("Aborted", "AbortError"));
+      });
+    }
+  });
+}
 
 /** Create an agent-variant provider definition that inherits URLs, models, and filters from a base. */
 function providerVariant(
@@ -1326,6 +1430,18 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   private readonly recentTransportSummaries: RecentTransportSummary[] = [];
   private outputChannel: vscode.OutputChannel | undefined;
 
+  /**
+   * Cached snapshot of the most recent successful model-list fetch for this
+   * provider's base vendor. Persisted to globalState so it survives window
+   * reloads and can cover transient network failures at startup (issue #78).
+   */
+  private cachedModelList: { ids: string[]; fetchedAt: number } | undefined;
+
+  /** globalState key for {@link cachedModelList}, scoped to this provider's vendor. */
+  private get modelListCacheKey(): string {
+    return `${MODEL_LIST_CACHE_KEY_PREFIX}::${this.baseVendor}`;
+  }
+
   /** Resolves agent-host variants to their base vendor for metadata/routing. */
   private get baseVendor(): ProviderVendor {
     return resolveBaseVendor(this.definition.vendor);
@@ -1499,7 +1615,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
   private async refreshMetadataAndModels(): Promise<void> {
     await clearOpenCodeModelMetadataCache(this.context);
-    await this.fetchModels();
+    // Pass the stored API key so the gateway sees the authenticated
+    // (per-key) model list, not the anonymous default.
+    const apiKey = await this.context.secrets.get(SECRET_KEY);
+    await this.fetchModels(apiKey);
   }
 
   async manage(): Promise<void> {
@@ -1707,7 +1826,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       ensureProfileSync(apiKey);
     }
 
-    const models = await this.fetchModels(apiKey);
+    const models = await this.fetchModels(apiKey, token);
     if (models.length === 0) {
       return [];
     }
@@ -2083,42 +2202,156 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       : estimateChatMessageTokenCount(text);
   }
 
-  private async fetchModels(apiKey?: string): Promise<string[]> {
-    try {
-      const headers: Record<string, string> = {};
-      if (apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`;
-      }
-      const response = await fetch(this.definition.modelsUrl, { headers });
+  /**
+   * Fetch the live model list from the OpenCode gateway.
+   *
+   * CONTRACT:
+   * - Resilient to transient network failures (DNS, TCP reset, connect
+   *   timeout, 5xx, 429): retries up to {@link MODEL_LIST_FETCH_MAX_RETRIES}
+   *   times with exponential backoff. See {@link isTransientFetchError}.
+   * - Hard timeout of {@link MODEL_LIST_FETCH_TIMEOUT_MS} per attempt —
+   *   undici's default 300s `headersTimeout` is far too long for the picker
+   *   (issue #78: picker appeared stuck for minutes on hung TCP).
+   * - Sends `User-Agent` ({@link getUserAgent}) so strict gateways don't
+   *   silently drop the request.
+   * - On final failure, prefers the last successful snapshot (cached in
+   *   globalState, TTL {@link MODEL_LIST_CACHE_TTL_MS}) over the bundled
+   *   `fallbackModels`, so transient failures don't make the picker "flash
+   *   then disappear" when VS Code 1.129's agent host re-resolves frequently.
+   * - Respects the VS Code CancellationToken: bails early on abort, never
+   *   retries an aborted request.
+   */
+  private async fetchModels(
+    apiKey?: string,
+    token?: vscode.CancellationToken,
+  ): Promise<string[]> {
+    if (token?.isCancellationRequested) return this.fallbackModelList();
 
-      if (!response.ok) {
-        throw new Error(`Model list request failed (${response.status}): ${response.statusText}`);
-      }
-
-      const data = await response.json() as ModelListResponse;
-      this.replaceLiveModelMetadata(data.data);
-      const ids = data.data
-        ?.map((model) => model.id)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-        .filter((id) => this.definition.filterModel?.(id) ?? true);
-
-      return this.filterAvailableModels(ids?.length ? ids : this.definition.fallbackModels);
-    } catch (error) {
-      // CONTRACT: Model list fetch failures are non-fatal — we always fall
-      // back to the bundled `fallbackModels` snapshot baked into the
-      // extension. VS Code refreshes model info frequently (~every 300ms
-      // during UI activity), and OpenCode's shared gateway occasionally
-      // returns transient 400/503 responses that resolve on retry within
-      // seconds. Showing a modal warning on every transient failure spams
-      // the user (especially for AGENT_* variants they may not even use).
-      //
-      // Instead of showWarningMessage, log to the Output channel so the
-      // failure is still diagnosable without polluting the UI. The fallback
-      // model list keeps the picker fully functional.
-      const message = error instanceof Error ? error.message : String(error);
-      this.log(`[fetchModels] ${this.definition.displayName}: ${message}. Using bundled model list (${this.definition.fallbackModels.length} models).`);
-      return this.filterAvailableModels(this.definition.fallbackModels);
+    const headers: Record<string, string> = {
+      "User-Agent": getUserAgent(),
+    };
+    if (apiKey) {
+      headers["Authorization"] = `Bearer ${apiKey}`;
     }
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MODEL_LIST_FETCH_MAX_RETRIES; attempt++) {
+      if (token?.isCancellationRequested) {
+        return this.fallbackModelList();
+      }
+      try {
+        // Compose the per-request abort with the caller's cancellation token
+        // so either one tears down the in-flight fetch.
+        const timeoutSignal = AbortSignal.timeout(MODEL_LIST_FETCH_TIMEOUT_MS);
+        const signal = token
+          ? AbortSignal.any([timeoutSignal, this.signalFromToken(token)])
+          : timeoutSignal;
+
+        const response = await fetch(this.definition.modelsUrl, { headers, signal });
+        if (!response.ok) {
+          throw new Error(`Model list request failed (${response.status}): ${response.statusText}`);
+        }
+        const data = await response.json() as ModelListResponse;
+        this.replaceLiveModelMetadata(data.data);
+        const ids = data.data
+          ?.map((model) => model.id)
+          .filter((id): id is string => typeof id === "string" && id.length > 0)
+          .filter((id) => this.definition.filterModel?.(id) ?? true);
+
+        const resolved = this.filterAvailableModels(ids?.length ? ids : this.definition.fallbackModels);
+        const filtered = await resolved;
+        // Persist the successful snapshot for future fallback coverage.
+        this.cachedModelList = { ids: filtered, fetchedAt: Date.now() };
+        void this.context.globalState.update(this.modelListCacheKey, this.cachedModelList);
+        return filtered;
+      } catch (error) {
+        lastError = error;
+        // 1. If the caller's cancellation token fired, never retry — bail.
+        if (token?.isCancellationRequested) {
+          return this.fallbackModelList();
+        }
+        // 2. Classify the error. Timeout (AbortError without token cancel)
+        //    and transient network errors are retryable; HTTP 4xx is not.
+        const aborted = error instanceof DOMException && error.name === "AbortError";
+        const transient = aborted || isTransientFetchError(error);
+        // 3. On final attempt or non-transient error, fall through to
+        //    cache/bundled fallback below.
+        if (!transient || attempt === MODEL_LIST_FETCH_MAX_RETRIES) {
+          break;
+        }
+        const backoff = MODEL_LIST_FETCH_RETRY_BASE_MS * Math.pow(2, attempt);
+        this.log(`[fetchModels] ${this.definition.displayName}: transient error (attempt ${attempt + 1}/${MODEL_LIST_FETCH_MAX_RETRIES + 1}): ${this.errMsg(error)}. Retrying in ${backoff}ms.`);
+        try {
+          await sleep(backoff, token);
+        } catch {
+          // Cancellation during backoff — bail to fallback.
+          return this.fallbackModelList();
+        }
+      }
+    }
+
+    // Final failure: prefer cached snapshot (still fresh), then bundled list.
+    const cached = this.loadCachedModelList();
+    if (cached) {
+      this.log(`[fetchModels] ${this.definition.displayName}: ${this.errMsg(lastError)}. Using cached model list (${cached.ids.length} models, fetched ${new Date(cached.fetchedAt).toISOString()}).`);
+      return this.filterAvailableModels(cached.ids);
+    }
+    this.log(`[fetchModels] ${this.definition.displayName}: ${this.errMsg(lastError)}. Using bundled model list (${this.definition.fallbackModels.length} models).`);
+    return this.filterAvailableModels(this.definition.fallbackModels);
+  }
+
+  /** Bundle the cancellation semantics of a VS Code token into an AbortSignal. */
+  private signalFromToken(token: vscode.CancellationToken): AbortSignal {
+    const controller = new AbortController();
+    if (token.isCancellationRequested) {
+      controller.abort();
+    } else {
+      const sub = token.onCancellationRequested(() => {
+        controller.abort();
+        sub.dispose();
+      });
+    }
+    return controller.signal;
+  }
+
+  private errMsg(error: unknown): string {
+    if (error instanceof Error) {
+      const cause = (error as { cause?: { code?: string; name?: string; message?: string } }).cause;
+      return cause?.code ? `${error.message} [${cause.code}]` : error.message;
+    }
+    return String(error);
+  }
+
+  /**
+   * Resolve the model list to use when the fetch path is short-circuited
+   * (cancellation, early abort). Prefers a fresh cached snapshot over bundled.
+   */
+  private fallbackModelList(): Promise<string[]> {
+    const cached = this.loadCachedModelList();
+    if (cached) {
+      return this.filterAvailableModels(cached.ids);
+    }
+    return this.filterAvailableModels(this.definition.fallbackModels);
+  }
+
+  /**
+   * Read the last successful fetch from in-memory cache or globalState.
+   * Returns undefined when absent or past {@link MODEL_LIST_CACHE_TTL_MS}.
+   */
+  private loadCachedModelList(): { ids: string[]; fetchedAt: number } | undefined {
+    if (this.cachedModelList) {
+      const fresh = Date.now() - this.cachedModelList.fetchedAt < MODEL_LIST_CACHE_TTL_MS;
+      if (fresh) return this.cachedModelList;
+    }
+    const stored = this.context.globalState.get<{ ids: string[]; fetchedAt: number }>(this.modelListCacheKey);
+    if (stored && Array.isArray(stored.ids) && typeof stored.fetchedAt === "number") {
+      const fresh = Date.now() - stored.fetchedAt < MODEL_LIST_CACHE_TTL_MS;
+      if (fresh) {
+        this.cachedModelList = stored;
+        return stored;
+      }
+    }
+    return undefined;
   }
 
   private async filterAvailableModels(modelIds: string[]): Promise<string[]> {
@@ -2815,7 +3048,7 @@ function buildOpenCodeRequestHeaders(
     "x-opencode-session": sessionId,
     "x-opencode-request": requestId,
     "x-opencode-client": OPEN_CODE_CLIENT,
-    "User-Agent": OPEN_CODE_USER_AGENT,
+    "User-Agent": getUserAgent(),
   };
 }
 
