@@ -2,6 +2,17 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **`[Vision]` Multimodal tool results — MCP screenshot forwarding (#77).** Images returned inside a `LanguageModelToolResultPart` (e.g. screenshots from `chrome-devtools-mcp`, `playwright-mcp`) are now forwarded to vision-capable models. Previously these images were silently dropped by the serialization layer and the model would report "I cannot see the image". Images are encoded as OpenAI-style `image_url` content parts and translated into the native multimodal shape for each transport: chat-completions (native array content), Anthropic messages (`tool_result.content: AnthropicContentBlock[]`), Google Gemini (`functionResponse.response.parts: [{inlineData}]`). Oversized images (>1 MB raw bytes) are replaced with an actionable placeholder note so a single full-page MCP screenshot can't push the request payload past the upstream limit. The Responses API cannot carry images in tool output and degrades to a placeholder note on that transport only.
+
+### Fixed
+
+- **`[Logging]` Model registration log spam during UI refresh.** VS Code refreshes model info on roughly a 300 ms cadence during chat UI activity; each call previously produced one log line per registered model (22+ lines per call). `provideLanguageModelChatInformation` now emits a single summary line per invocation (`Models registered: count=N provider=… first=… last=…`). Output channel is dramatically cleaner during testing.
+- **`[Logging]` Transient model-list fetch failures no longer pop a modal warning.** OpenCode's shared gateway occasionally returns transient 400/503 responses that resolve on retry within seconds, and the previous behavior called `showWarningMessage` on every failure — including from auto-registered provider variants the user may not actively use (e.g. `OpenCode Zen (Agents)`). Failures now log to the Output channel only; the bundled `fallbackModels` snapshot keeps the picker functional.
+
 ## [0.4.1] — 2026-07-15
 
 ### Added
