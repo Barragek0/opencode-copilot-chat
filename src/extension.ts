@@ -437,6 +437,16 @@ const MESSAGE_NAME_TOKEN_OVERHEAD = 1;
 const TOOL_CALL_TOKEN_OVERHEAD = 10;
 const TOOL_RESULT_TOKEN_OVERHEAD = 6;
 const IMAGE_TOKEN_ESTIMATE = 1024;
+/**
+ * Hard upper limit (in bytes of raw image data) for a single image embedded
+ * in a tool result. MCP screenshots from chrome-devtools-mcp / playwright-mcp
+ * are typically 50–300 KB; anything above 1 MB is almost always an oversized
+ * raw capture that bloats the request payload (each image becomes a base64
+ * data URI ≈ 1.33× its byte size) and triggers upstream 400 "Upstream request
+ * failed" rejections from OpenCode Go. Larger images are replaced with a
+ * placeholder text part so the model still knows an image was returned.
+ */
+const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
 
 type CopilotCompatibleCapabilities = vscode.LanguageModelChatCapabilities & {
   supportsToolCalling: boolean;
@@ -511,7 +521,11 @@ interface AnthropicToolUseBlock {
 interface AnthropicToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
-  content: string;
+  // Anthropic tool_result.content may be either a plain string or a list of
+  // content blocks (text + image) per the Messages API spec. We support the
+  // array form so MCP tool results that include images (e.g. screenshots) are
+  // forwarded to vision-capable Anthropic models instead of being dropped.
+  content: string | AnthropicContentBlock[];
   cache_control?: AnthropicCacheControl;
 }
 
@@ -1701,7 +1715,15 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const settings = getSettings();
     const metadataSnapshot = await this.getMetadataSnapshot();
 
-    return models.flatMap((modelId) => {
+    // CONTRACT: VS Code calls provideLanguageModelChatInformation frequently
+    // (every ~300ms during UI refresh). Per-model logging produces thousands
+    // of log lines per minute and obscures real signal. We accumulate a
+    // single summary line per invocation instead of one line per model.
+    let registeredCount = 0;
+    let firstModelId = "";
+    let lastModelId = "";
+
+    const results = models.flatMap((modelId) => {
       const metadata = this.resolveModelMetadata(modelId, metadataSnapshot);
       const routing = resolveModelRouting(modelId, this.definition);
       const effectiveModelId = toEffectiveModelId(modelId, this.definition.vendor);
@@ -1764,17 +1786,33 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           targetChatSessionType: "copilotcli"
         };
 
-        this.log(`Model registered (agents): id=${agentHostInfo.id} targetChatSessionType=copilotcli`);
+        registeredCount += 1;
+        if (!firstModelId) firstModelId = agentHostInfo.id;
+        lastModelId = agentHostInfo.id;
         return [agentHostInfo];
       }
 
       // General variant — no targetChatSessionType → visible in Chat view
       const info: OpenCodeModel = { ...sharedFields, id: fpEffectiveModelId };
 
-      this.log(`Model registered: id=${info.id} family=${info.family} metadataSource=${metadata.source} endpointKind=${routing.endpointKind} endpointUrl=${routing.endpointUrl} configurationSchema=${configurationSchema ? JSON.stringify(configurationSchema) : "none"}`);
-
+      registeredCount += 1;
+      if (!firstModelId) firstModelId = info.id;
+      lastModelId = info.id;
       return [info];
     });
+
+    // Single summary log line per invocation — includes count + first/last
+    // model ID so we can still debug registration issues without flooding
+    // the Output channel when VS Code refreshes model info frequently.
+    if (registeredCount > 0) {
+      this.log(
+        `Models registered: count=${registeredCount} provider=${this.definition.vendor}`
+        + ` first=${firstModelId} last=${lastModelId}`
+        + (this.definition.isAgentVariant ? " (agents)" : "")
+      );
+    }
+
+    return results;
   }
 
   async provideLanguageModelChatResponse(
@@ -2066,8 +2104,19 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
       return this.filterAvailableModels(ids?.length ? ids : this.definition.fallbackModels);
     } catch (error) {
+      // CONTRACT: Model list fetch failures are non-fatal — we always fall
+      // back to the bundled `fallbackModels` snapshot baked into the
+      // extension. VS Code refreshes model info frequently (~every 300ms
+      // during UI activity), and OpenCode's shared gateway occasionally
+      // returns transient 400/503 responses that resolve on retry within
+      // seconds. Showing a modal warning on every transient failure spams
+      // the user (especially for AGENT_* variants they may not even use).
+      //
+      // Instead of showWarningMessage, log to the Output channel so the
+      // failure is still diagnosable without polluting the UI. The fallback
+      // model list keeps the picker fully functional.
       const message = error instanceof Error ? error.message : String(error);
-      vscode.window.showWarningMessage(`Could not fetch ${this.definition.displayName} model list. Using bundled model list. ${message}`);
+      this.log(`[fetchModels] ${this.definition.displayName}: ${message}. Using bundled model list (${this.definition.fallbackModels.length} models).`);
       return this.filterAvailableModels(this.definition.fallbackModels);
     }
   }
@@ -2278,7 +2327,7 @@ function buildAnthropicMessages(messages: ApiMessage[]): AnthropicRequestMessage
         content: [{
           type: "tool_result",
           tool_use_id: message.tool_call_id,
-          content: joinedTextContent(message.content, "\n"),
+          content: anthropicToolResultContent(message.content, nextCacheControl),
           ...nextCacheControl(),
         }],
       });
@@ -2325,6 +2374,32 @@ function anthropicUserBlocks(
   }
 
   return blocks;
+}
+
+// RULES: Anthropic tool_result.content accepts either a plain string or a
+// list of content blocks. We use the string form when the message has no
+// images (the common case, smaller payload), and fall back to the array form
+// (text + image blocks) only when an image_url part is present. This keeps
+// text-only tool results byte-for-byte identical to the previous behavior
+// while enabling vision-capable Anthropic models to consume MCP screenshots.
+function anthropicToolResultContent(
+  content: ApiMessage["content"],
+  nextCacheControl: () => { cache_control?: AnthropicCacheControl },
+): string | AnthropicContentBlock[] {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const hasImage = content.some((part) => part.type === "image_url" && part.image_url?.url);
+  if (!hasImage) {
+    return joinedTextContent(content, "\n");
+  }
+
+  return anthropicUserBlocks(content, nextCacheControl);
 }
 
 function anthropicAssistantBlocks(
@@ -2446,12 +2521,18 @@ function responsesInputItemsFromMessage(message: ApiMessage): Array<Record<strin
   }
 
   if (message.role === "tool") {
+    // The Responses API's function_call_output.output field expects a string.
+    // Tool results that carry images (e.g. MCP screenshots) cannot be
+    // represented natively here, so we degrade to the joined text payload.
+    // Vision-capable OpenAI/Anthropic/Google transports handle images in tool
+    // results natively via their respective request builders.
+    const output = typeof message.content === "string"
+      ? message.content
+      : responsesToolOutput(message.content);
     return [{
       type: "function_call_output",
       call_id: message.tool_call_id ?? `tool-${Date.now()}`,
-      output: typeof message.content === "string"
-        ? message.content
-        : JSON.stringify(message.content ?? ""),
+      output,
     }];
   }
 
@@ -2482,6 +2563,28 @@ function responsesUserContent(content: ApiMessage["content"]): Array<Record<stri
 
 function responsesAssistantText(content: ApiMessage["content"]): string {
   return joinedTextContent(content);
+}
+
+// RULES: Responses API function_call_output.output is a plain string and does
+// not support inline image content blocks. To preserve tool result context
+// for vision-capable models that would otherwise lose the image entirely, we
+// keep any text parts joined with newlines and append a short note when an
+// image was present. The note is intentionally brief (not a data URI) so it
+// doesn't bloat the payload; the model is told the image was omitted.
+function responsesToolOutput(content: ApiMessage["content"]): string {
+  if (!Array.isArray(content)) {
+    return JSON.stringify(content ?? "");
+  }
+
+  const text = joinedTextContent(content, "\n");
+  const hasImage = content.some((part) => part.type === "image_url" && part.image_url?.url);
+  if (!hasImage) {
+    return text || "";
+  }
+
+  return [text, "[Image attachment omitted — Responses API does not support images in tool output]"]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function joinedTextContent(
@@ -2571,14 +2674,11 @@ function googleContentsFromMessages(messages: ApiMessage[]): Array<Record<string
 
     if (message.role === "tool" && message.tool_call_id) {
       const name = toolNamesById.get(message.tool_call_id) ?? "tool";
-      const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? "");
+      const response = googleFunctionResponseContent(message.content, name);
       contents.push({
         role: "user",
         parts: [{
-          functionResponse: {
-            name,
-            response: { name, content },
-          },
+          functionResponse: response,
         }],
       });
     }
@@ -2619,6 +2719,46 @@ function dataUrlToInlineData(url: string): { mimeType: string; data: string } | 
     mimeType: match[1],
     data: match[2],
   };
+}
+
+// RULES: Gemini's functionResponse.response is a flexible object. The plain
+// form is `{ name, content }` where content is a JSON string (text-only tool
+// results). When the tool result carries an image (e.g. MCP screenshot), we
+// extend it with `parts` containing both the text and an inlineData block so
+// vision-capable Gemini models can see the image. The `content` field is kept
+// for backwards compatibility with providers that ignore the `parts` field.
+function googleFunctionResponseContent(
+  content: ApiMessage["content"],
+  name: string,
+): { name: string; content: string; parts?: Array<Record<string, unknown>> } {
+  if (typeof content === "string") {
+    return { name, content };
+  }
+
+  if (!Array.isArray(content)) {
+    return { name, content: JSON.stringify(content ?? "") };
+  }
+
+  const text = joinedTextContent(content, "\n");
+  const hasImage = content.some((part) => part.type === "image_url" && part.image_url?.url);
+  if (!hasImage) {
+    return { name, content: text };
+  }
+
+  const parts: Array<Record<string, unknown>> = [];
+  if (text) {
+    parts.push({ text });
+  }
+  for (const part of content) {
+    if (part.type === "image_url" && part.image_url?.url) {
+      const inlineData = dataUrlToInlineData(part.image_url.url);
+      if (inlineData) {
+        parts.push({ inlineData });
+      }
+    }
+  }
+
+  return { name, content: text, parts };
 }
 
 function parseToolInput(value: string): object {
@@ -2861,10 +3001,63 @@ function convertMessage(
     }
 
     if (part instanceof vscode.LanguageModelToolResultPart) {
+      // CONTRACT: A LanguageModelToolResultPart.content is unknown[] and may
+      // contain nested LanguageModelDataPart instances with image MIME types.
+      // This happens when MCP tools (e.g. chrome-devtools-mcp screenshots)
+      // return images. Previously we only ran partToText() which silently
+      // dropped image DataParts (returned "" via the catch-all fallback),
+      // so vision-capable models saw an empty tool result. We now serialize
+      // nested images into OpenAiContentPart image_url parts and emit a
+      // multimodal array on the tool message when any image is present.
+      //
+      // SIZE GUARD: Images larger than MAX_TOOL_RESULT_IMAGE_BYTES are
+      // replaced with a placeholder text part. This prevents a single
+      // oversized MCP screenshot from producing multi-MB payloads that
+      // trigger upstream 400 errors when the conversation history grows.
+      // Fallback for any non-text, non-image DataPart stays as plain text.
+      const toolTextParts: string[] = [];
+      const toolImageParts: OpenAiContentPart[] = [];
+      for (const resultPart of part.content) {
+        if (resultPart instanceof vscode.LanguageModelDataPart
+          && resultPart.mimeType.startsWith("image/")
+          && !isInternalDataPart(resultPart)) {
+          if (resultPart.data.byteLength > MAX_TOOL_RESULT_IMAGE_BYTES) {
+            toolTextParts.push(
+              `[Image attachment omitted: ${resultPart.data.byteLength} bytes exceeds the ${MAX_TOOL_RESULT_IMAGE_BYTES}-byte limit for tool results. Ask the tool to produce a smaller screenshot or save it to a file.]`
+            );
+            continue;
+          }
+          const base64 = dataPartToBase64(resultPart.data);
+          toolImageParts.push({
+            type: "image_url",
+            image_url: { url: `data:${resultPart.mimeType};base64,${base64}` },
+          });
+          continue;
+        }
+
+        const text = partToText(resultPart);
+        if (text) {
+          toolTextParts.push(text);
+        }
+      }
+
+      let toolContent: string | OpenAiContentPart[];
+      if (toolImageParts.length > 0) {
+        const multimodal: OpenAiContentPart[] = [];
+        const joinedText = toolTextParts.join("\n");
+        if (joinedText) {
+          multimodal.push({ type: "text", text: joinedText });
+        }
+        multimodal.push(...toolImageParts);
+        toolContent = multimodal;
+      } else {
+        toolContent = toolTextParts.join("\n");
+      }
+
       toolResults.push({
         role: "tool",
         tool_call_id: part.callId,
-        content: part.content.map(partToText).filter(Boolean).join("\n")
+        content: toolContent,
       });
       continue;
     }

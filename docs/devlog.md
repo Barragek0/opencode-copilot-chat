@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `main` | **Updated:** 2026-07-15 Asia/Jakarta | **Current Phase:** v0.4.1 — Vision Proxy + Context Overflow Fix + Output Popup Fix ✅ Merged
+**Branch:** `fix/issue-77-mcp-image-tool-result` | **Updated:** 2026-07-20 Asia/Jakarta | **Current Phase:** Issue #77 — MCP Tool Result Image Forwarding ✅ Fixed, pending PR
 
 ---
 
@@ -7,11 +7,24 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-07-15 |
-| **Worked On** | Reviewed PR #76 (@Wallacy, vision proxy for text-only models + context overflow safety margin + output pane focus steal fix). Two review rounds: first round flagged 1 blocker (context overflow fix missing from code, only in CHANGELOG) + 2 formatting issues (README table collapsed, CHANGELOG `[0.3.7]` heading removed) + 2 nice-to-haves (dummy CancellationToken, quota not documented). Wallacy force-pushed `8a0d813` addressing all blockers. Re-verified: 64-token margin in `modelLimits()`, README rows split, heading restored, real `token` wired to `proxyVision`. Merged via merge commit `d2fcbe4` (NOT squash, preserved 4 commits). Post-merge: wrote feature doc `docs/features/11-20260715-vision-proxy.md`, bumped version to 0.4.1, updated CHANGELOG, updated this devlog. |
-| **Stopped At** | v0.4.1 docs + version bump complete. Pending `npm run compile` + `vsce package` + local VSIX install + commit. |
-| **Next Action** | → Compile, package VSIX, install locally for smoke test. Then commit docs + version bump. Push only after user approval. |
-| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor, logged to Output channel). |
+| **Last Session** | 2026-07-20 |
+| **Worked On** | Investigated issue #77 (MCP tool result images dropped — vision-capable models couldn't see screenshots from `chrome-devtools-mcp`). Root cause: `convertMessage()` serialized `LanguageModelToolResultPart.content` via `partToText()` which silently dropped nested image `LanguageModelDataPart` (catch-all returned `""`). Pasted image attachments worked because they hit the separate top-level image handler. Fix: rewrote the tool-result branch to walk `part.content` and emit multimodal `OpenAiContentPart[]` when an image is present; updated all 4 transports (chat-completions native, Anthropic `tool_result.content: AnthropicContentBlock[]`, Google `functionResponse.parts: [{inlineData}]`, Responses API degraded to placeholder note). Two follow-up bugs uncovered during manual testing: (a) 4.6 MB payload → upstream 400 because MCP screenshot loops accumulate full-page PNGs; fixed with `MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000` size guard; (b) model registration log spam (22 lines × ~3 calls/sec) + transient model-list fetch failures popping modal warnings — both replaced with Output-channel logs. Wrote `docs/issues/34-*` + `docs/features/12-*` + updated CHANGELOG `[Unreleased]`. All tests pass (107/107), compile clean. |
+| **Stopped At** | Ready to commit on `fix/issue-77-mcp-image-tool-result` and open PR. User will push + open PR after reviewing. |
+| **Next Action** | → User reviews commit → push → open PR `fix/issue-77-mcp-image-tool-result` → merge with merge commit (NEVER squash) → closes #77 automatically via `Fixes #77` in PR body. |
+| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor). (6) `estimateTokenCount` under-counts base64 payloads — no history-level image trimming yet (tracked in issue doc #34 limitations). |
+
+---
+
+## 🔬 Issue #77 — MCP Tool Result Image Forwarding — Session 2026-07-20 ✅ FIXED
+
+**Action:** Triaged issue #77 (reported by @yinhx3). Deep-dived VS Code Chat API to confirm `LanguageModelToolResultPart.content: unknown[]` may contain nested image `LanguageModelDataPart` (that's how MCP screenshot tools deliver images). Confirmed Kimi K2.7 is vision-capable via `VISION_CAPABLE_MODELS`. Designed and implemented a 4-transport fix with per-image size guard. Two pre-existing log-noise bugs fixed in the same session because they made manual testing very hard to follow.
+
+**Branch:** `fix/issue-77-mcp-image-tool-result` (created from `main` @ `55fb6ad`)
+
+**Compile:** `./node_modules/.bin/tsc -p ./` exit 0
+**Tests:** 107/107 pass, 0 regression (vision proxy, metadata, thinking, retry, usage, goUsageTracker, usageProfile)
+
+**Manual verification:** Chrome DevTools MCP + OpenCode Go model — model successfully read and described the screenshot.
 
 ---
 
