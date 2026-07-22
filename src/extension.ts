@@ -683,7 +683,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodego.manage", () => goProvider.manage()),
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
+    vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
     vscode.commands.registerCommand("opencodezen.diagnostics", () => zenProvider.showDiagnostics()),
+    vscode.commands.registerCommand("opencodezen.manage", () => zenProvider.manage()),
+    vscode.commands.registerCommand("opencodezen.refreshModels", () => zenProvider.refreshModels()),
     vscode.commands.registerCommand("opencodego.modelPickerDiagnostics", () => showModelPickerDiagnostics()),
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => showUsageWebview(context)),
@@ -1621,6 +1624,31 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     await this.fetchModels(apiKey);
   }
 
+  /**
+   * Public entry point for the `OpenCode <Vendor>: Refresh Models` commands.
+   *
+   * CONTRACT:
+   * - Skips the Manage Provider QuickPick and goes straight to a fetch.
+   * - Reuses {@link refreshMetadataAndModels}, fires the change emitter so
+   *   VS Code re-resolves the picker, and surfaces an informational toast.
+   * - On missing API key, falls back to {@link setApiKey} (same as Manage).
+   *
+   * Background: this was added after issue #78 revealed that "Refresh Models"
+   * was only reachable as a sub-item inside `OpenCode Go: Manage Provider`
+   * (and Zen had no manual refresh path at all). The top-level command matches
+   * what users naturally type in the Command Palette.
+   */
+  async refreshModels(): Promise<void> {
+    const apiKey = await this.context.secrets.get(SECRET_KEY);
+    if (!apiKey) {
+      await this.setApiKey();
+      return;
+    }
+    await this.refreshMetadataAndModels();
+    this.changeEmitter.fire();
+    vscode.window.showInformationMessage(`${this.definition.displayName} models refreshed.`);
+  }
+
   async manage(): Promise<void> {
     const apiKey = await this.context.secrets.get(SECRET_KEY);
 
@@ -1667,9 +1695,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       return;
     }
 
-    await this.refreshMetadataAndModels();
-    this.changeEmitter.fire();
-    vscode.window.showInformationMessage(`${this.definition.displayName} models refreshed.`);
+    await this.refreshModels();
   }
 
   async testConnection(): Promise<void> {

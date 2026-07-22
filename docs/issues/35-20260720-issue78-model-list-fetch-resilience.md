@@ -218,6 +218,36 @@ function isTransientFetchError(error: unknown): boolean {
 
 ---
 
+## 9b. Drive-by: Top-level Refresh Models commands (parity fix)
+
+After the initial fix landed, the issue reporter (`@leiyu1980`) replied that they could not find `OpenCode Go: Refresh Models` in the Command Palette. Investigation revealed this was a UX gap, not a bug:
+
+### What was wrong
+
+- `Refresh Models` existed only as an **action inside the `OpenCode Go: Manage Provider` QuickPick** (`src/extension.ts` `manage()`). It was never registered as a top-level command.
+- **Zen had no `Manage Provider` command at all** — only `OpenCode Zen: Diagnostics`. So a Zen user (which is the reporter's case: "Zen models flash briefly before disappearing") had zero manual refresh path via the palette.
+- The README commands table only listed `Manage Provider` for Go, reinforcing the asymmetry.
+
+The maintainer's first reply had told the reporter to "run `OpenCode Go: Refresh Models` from the Command Palette", which was wrong. The command didn't exist at that name.
+
+### What changed
+
+Three new top-level commands are registered in `activate()` and declared in `package.json` `contributes.commands`:
+
+| Command | Behavior |
+|---|---|
+| `OpenCode Go: Refresh Models` | Skips the Manage Provider QuickPick. Goes straight to a fresh model-list fetch + `changeEmitter.fire()` so VS Code re-resolves the picker. Falls back to `setApiKey()` if no key is stored. |
+| `OpenCode Zen: Manage Provider` | Parity with Go. Opens the same QuickPick (Set / Clear / Test / Refresh). |
+| `OpenCode Zen: Refresh Models` | Same as the Go refresh command, scoped to Zen. |
+
+Implementation: a new public `refreshModels()` method on `OpenCodeProvider` wraps the private `refreshMetadataAndModels()` + `changeEmitter.fire()` + toast. `manage()`'s "Refresh Models" action now delegates to this method (single source of truth). No change to existing `opencodego.manage` behavior — backward compatible.
+
+### Why this belongs in the same PR
+
+The reporter explicitly expected these commands to exist when verifying the #78 fix. Shipping them together means one release closes the loop: the cache/retry fix keeps the picker populated automatically, and the new commands give users an explicit "force refresh" escape hatch for the cases where the auto behavior isn't enough.
+
+---
+
 ## 10. References
 
 - GitHub issue: [#78](https://github.com/ltmoerdani/opencode-copilot-chat/issues/78)

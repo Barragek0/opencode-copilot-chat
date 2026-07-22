@@ -71,12 +71,24 @@
         "title": "OpenCode Go: Set API Key"
       },
       {
+        "command": "opencodego.refreshModels",
+        "title": "OpenCode Go: Refresh Models"
+      },
+      {
         "command": "opencodego.diagnostics",
         "title": "OpenCode Go: Diagnostics"
       },
       {
         "command": "opencodezen.diagnostics",
         "title": "OpenCode Zen: Diagnostics"
+      },
+      {
+        "command": "opencodezen.manage",
+        "title": "OpenCode Zen: Manage Provider"
+      },
+      {
+        "command": "opencodezen.refreshModels",
+        "title": "OpenCode Zen: Refresh Models"
       },
       {
         "command": "opencodego.modelPickerDiagnostics",

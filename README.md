@@ -355,7 +355,10 @@ The easiest way to manage your key is **Settings → Language Models** (gear ⚙
 |---|---|
 | `OpenCode Go: Manage Provider` | Manage legacy API key, refresh models, test connection |
 | `OpenCode Go: Set API Key` | Store/update legacy OpenCode Go API key |
+| `OpenCode Go: Refresh Models` | Force a fresh model-list fetch (bypasses the Manage menu) |
 | `OpenCode Go: Diagnostics` | Report of Go models + request history |
+| `OpenCode Zen: Manage Provider` | Manage Zen API key, refresh models, test connection |
+| `OpenCode Zen: Refresh Models` | Force a fresh Zen model-list fetch (bypasses the Manage menu) |
 | `OpenCode Zen: Diagnostics` | Report of Zen models + request history |
 | `OpenCode: Model Picker Diagnostics` | All registered models (Go + Zen + Copilot) side-by-side |
 | `OpenCode: Set Thinking Effort…` | Per-family thinking mode picker |
