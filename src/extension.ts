@@ -2253,8 +2253,14 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   ): Promise<string[]> {
     if (token?.isCancellationRequested) return this.fallbackModelList();
 
+    // Explicit Accept + User-Agent make this look like a legitimate API call
+    // rather than an anonymous scanner. Some corporate firewalls / SSL
+    // inspection proxies (Zscaler, Netskope, Fortinet) drop bare GETs that
+    // lack these headers even when the host is allow-listed. Issue #78
+    // reporter sits behind a VPN + corporate firewall on Windows 11.
     const headers: Record<string, string> = {
       "User-Agent": getUserAgent(),
+      "Accept": "application/json",
     };
     if (apiKey) {
       headers["Authorization"] = `Bearer ${apiKey}`;

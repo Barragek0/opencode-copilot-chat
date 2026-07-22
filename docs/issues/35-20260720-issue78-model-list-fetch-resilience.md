@@ -125,13 +125,14 @@ Gaps:
 
 ## 5. Solution
 
-Five coordinated changes in `src/extension.ts`:
+Six coordinated changes in `src/extension.ts`:
 
 1. **Per-attempt timeout** — `AbortSignal.timeout(MODEL_LIST_FETCH_TIMEOUT_MS = 15_000)`.
 2. **Exponential retry** — up to `MODEL_LIST_FETCH_MAX_RETRIES = 3` attempts with `500ms * 2^attempt` backoff (500 ms, 1 s, 2 s). Only transient errors are retried (`isTransientFetchError()` classifies by `error.cause.code`, `error.cause.name`, HTTP status 408/429/5xx, and the `TypeError: fetch failed` wrapper).
 3. **`User-Agent` propagation** — `getUserAgent()` reads `context.extension.packageJSON.version` once, caches the result, and falls back to `FALLBACK_USER_AGENT` if unavailable. No more drift.
 4. **`CancellationToken` threading** — `fetchModels(apiKey, token?)` composes the caller's token with the timeout signal via `AbortSignal.any([...])`. Cancellation short-circuits to a fallback and never retries.
 5. **1-hour cached snapshot** — every successful fetch persists `{ ids, fetchedAt }` to `globalState` under `opencode.modelListCache.v1::<vendor>`. On final failure, `loadCachedModelList()` returns the cached list if fresher than `MODEL_LIST_CACHE_TTL_MS = 1h`; only then does it fall back to bundled.
+6. **`Accept: application/json` header** — added after the reporter's reply revealed that POST `/chat/completions` (with `Content-Type: application/json`) was passing through their VPN + corporate firewall on Windows 11, while the bare GET `/models` (no `Content-Type`, no `Accept`) was being dropped. SSL-inspecting proxies (Zscaler, Netskope, Fortinet) commonly treat anonymous GETs as scanner traffic. The explicit `Accept` header makes the request look like a legitimate API call.
 
 ---
 
