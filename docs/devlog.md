@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `fix/issue-77-mcp-image-tool-result` | **Updated:** 2026-07-20 Asia/Jakarta | **Current Phase:** Issue #77 — MCP Tool Result Image Forwarding ✅ Fixed, pending PR
+**Branch:** `fix/issue-78-model-list-fetch-resilience` | **Updated:** 2026-07-23 Asia/Jakarta | **Current Phase:** Issue #78 — Model List Fetch Resilience ✅ Fixed, PR open pending merge
 
 ---
 
@@ -7,11 +7,38 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-07-20 |
-| **Worked On** | Investigated issue #77 (MCP tool result images dropped — vision-capable models couldn't see screenshots from `chrome-devtools-mcp`). Root cause: `convertMessage()` serialized `LanguageModelToolResultPart.content` via `partToText()` which silently dropped nested image `LanguageModelDataPart` (catch-all returned `""`). Pasted image attachments worked because they hit the separate top-level image handler. Fix: rewrote the tool-result branch to walk `part.content` and emit multimodal `OpenAiContentPart[]` when an image is present; updated all 4 transports (chat-completions native, Anthropic `tool_result.content: AnthropicContentBlock[]`, Google `functionResponse.parts: [{inlineData}]`, Responses API degraded to placeholder note). Two follow-up bugs uncovered during manual testing: (a) 4.6 MB payload → upstream 400 because MCP screenshot loops accumulate full-page PNGs; fixed with `MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000` size guard; (b) model registration log spam (22 lines × ~3 calls/sec) + transient model-list fetch failures popping modal warnings — both replaced with Output-channel logs. Wrote `docs/issues/34-*` + `docs/features/12-*` + updated CHANGELOG `[Unreleased]`. All tests pass (107/107), compile clean. |
-| **Stopped At** | Ready to commit on `fix/issue-77-mcp-image-tool-result` and open PR. User will push + open PR after reviewing. |
-| **Next Action** | → User reviews commit → push → open PR `fix/issue-77-mcp-image-tool-result` → merge with merge commit (NEVER squash) → closes #77 automatically via `Fixes #77` in PR body. |
-| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor). (6) `estimateTokenCount` under-counts base64 payloads — no history-level image trimming yet (tracked in issue doc #34 limitations). |
+| **Last Session** | 2026-07-23 |
+| **Worked On** | Triaged issue #78 (reported by `@leiyu1980`, Windows 11 + VPN + corporate firewall, VS Code 1.129.0). Initial symptom looked like the closed #51 picker crash, but investigation (with web research into Node undici defaults + `nodejs/undici#5450` socket-reuse race + VS Code 1.129 agent host concurrency) confirmed it was a **transient network failure that `fetchModels()` never tolerated**. Built a 6-part resilience fix: (1) `AbortSignal.timeout(15_000)` per attempt, (2) up to 3 retries with exponential backoff (500ms/1s/2s) gated by `isTransientFetchError()` classifier, (3) `User-Agent` read from `packageJSON.version` at runtime (killed the recurring version drift), (4) `CancellationToken` composed via `AbortSignal.any([...])`, (5) 1-hour cached snapshot in `globalState` so failure falls back to last-known-good list instead of bundled, (6) `Accept: application/json` header after reporter's reply revealed their VPN/firewall passed POST `/chat/completions` but dropped bare GET `/models`. **Drive-by UX gap:** the `Refresh Models` command only existed as a sub-item inside `OpenCode Go: Manage Provider` and Zen had no Manage Provider at all — added 3 top-level commands for parity. Research stored in `/memories/repo/issue78-*.md`. Wrote `docs/issues/35-20260720-issue78-model-list-fetch-resilience.md` + updated CHANGELOG + README + bumped version `0.4.1 → 0.4.2`. Build clean: `opencode-copilot-chat-0.4.2.vsix` (1.06 MB, 115 files). |
+| **Stopped At** | Ready to push `fix/issue-78-model-list-fetch-resilience` (3 commits: `8fcde64` resilience, `a04939c` commands, `ccfcb75` Accept header + version bump) and open PR. User will merge with merge commit (NEVER squash). |
+| **Next Action** | → Push branch → open PR `Fixes #78` → user reviews & merges → closes #78 automatically → draft reply to `@leiyu1980` via `avoid-ai-writing` + `writing-framework-v4` skills (peer-to-peer tone, acknowledge wrong instruction in prior reply about Refresh command name). |
+| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor). (6) `estimateTokenCount` under-counts base64 payloads (tracked in issue doc #34). (7) `bundledModelMetadataSnapshot` could use a refresh — model list drift since 0.3.5. (8) Manual test of retry/cache path in Test C-D not run yet (network throttle + Network Link Conditioner). |
+
+---
+
+## 🔬 Issue #78 — Model List Fetch Resilience — Session 2026-07-23 ✅ FIXED
+
+**Action:** Triaged issue #78 (reported by `@leiyu1980`). Initial misdiagnosis: looked like a regression of the closed #51 picker crash (TypeScript schema change on VS Code 1.126, fixed by PR #53). Web research into Node undici defaults (`headersTimeout=300s`, no connect timeout), `nodejs/undici#5450` (socket-reuse race under concurrent load, expected behavior per maintainers, recommend `interceptors.retry`), and VS Code 1.129 release notes (new agent host raises concurrent `provideLanguageModelChatInformation` calls) confirmed the real root cause: `fetchModels()` was built for the happy path only.
+
+**Branch:** `fix/issue-78-model-list-fetch-resilience` (created from `main` @ `742f899`)
+
+**Compile:** `npm run compile` exit 0 (run after every change)
+**Build:** `vsce package` produces `opencode-copilot-chat-0.4.2.vsix` (1.06 MB, 115 files)
+**Errors:** `get_errors` clean on all modified files
+
+**Commits (3, NEVER squash on merge):**
+
+1. `8fcde64` — `fix(resilience): make model-list fetch tolerant of transient network failures`. Core 5-part fix: timeout, retry, User-Agent runtime, CancellationToken threading, 1-hour cache. Contains `Fixes #78` in message.
+2. `a04939c` — `feat(commands): add top-level Refresh Models commands + Zen Manage Provider`. Drive-by UX parity fix uncovered when reporter couldn't find `OpenCode Go: Refresh Models` in palette (it only existed inside `Manage Provider` QuickPick; Zen had no Manage Provider at all).
+3. `ccfcb75` — `fix(resilience): send Accept header for corporate firewall compatibility (#78)`. Added after reporter's reply revealed signature mismatch (POST worked, GET failed on same host). Bumps `0.4.1 → 0.4.2`, promotes `[Unreleased]` to `[0.4.2] — 2026-07-23`.
+
+**Manual verification:** Test A (command visibility) PASS — all 3 new commands appear in palette. Tests B-F pending user.
+
+**What's NOT covered (honest caveats):**
+
+- VPN/firewall **hard block** to `opencode.ai` → user must set VS Code `http.proxy`.
+- Gateway outage longer than ~3.5s retry budget → degrades to cache (1h) then bundled.
+- undici socket-reuse race itself → upstream behavior, we tolerate it via retry but did not install a global custom dispatcher (`interceptors.retry` + `interceptors.dns` would affect every `fetch` in extension, deemed overkill for MVP).
+- `FALLBACK_USER_AGENT` in test harnesses that stub `vscode.extensions.getExtension` → must bump manually when major version changes.
 
 ---
 
