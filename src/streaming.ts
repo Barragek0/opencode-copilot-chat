@@ -108,6 +108,11 @@ export async function streamChatCompletions(
   options.output?.appendLine(
     `[stream-summary model=${options.modelId}] textChars=${extractor.emittedText} toolCalls=${extractor.emittedTools} reasoningChars=${extractor.reasoningChars}`,
   );
+  if (extractor.reasoningLoopSuppressed) {
+    options.output?.appendLine(
+      `[warn] model=${options.modelId} reasoning loop detected — output suppressed after ~${extractor.reasoningAsContentEmittedChars} chars. Try setting thinking to "Off" or use a different model.`,
+    );
+  }
   if (extractor.emittedText === 0 && extractor.emittedTools === 0) {
     options.output?.appendLine(
       `[warn] empty response from model=${options.modelId} (no text, no tool calls, no reasoning). Try a different free model or enable opencodego.debugReasoning to inspect raw SSE.`,
@@ -860,6 +865,23 @@ class OpenAiResponseExtractor {
    */
   private consecutiveRepeatCount = 0;
   private lastReasoningAnchor = "";
+  /**
+   * Track total reasoning chars emitted as visible text via the Go gateway
+   * workaround (#37635). When this exceeds REASONING_AS_CONTENT_MAX_CHARS
+   * without any `content` field appearing, the model is likely stuck in a
+   * reasoning loop. Further reasoning emissions are suppressed.
+   */
+  private reasoningAsContentChars = 0;
+  private _reasoningLoopSuppressed = false;
+  private reasoningLoopWarningEmitted = false;
+  private static readonly REASONING_AS_CONTENT_MAX_CHARS = 2000;
+  /**
+   * Suffix-based chunk-level repetition guard. When N consecutive reasoning
+   * fragments share the same 40-char suffix, the model is in a word-level
+   * loop and further output is suppressed.
+   */
+  private readonly reasoningFragmentSuffixes: string[] = [];
+  private static readonly REASONING_LOOP_SUFFIX_MATCHES = 6;
 
   constructor(
     private readonly onReasoningContent?: (
@@ -905,6 +927,16 @@ class OpenAiResponseExtractor {
 
   get reasoningChars(): number {
     return this.totalReasoningChars;
+  }
+
+  /** Whether the Go gateway reasoning loop suppression was triggered. */
+  get reasoningLoopSuppressed(): boolean {
+    return this._reasoningLoopSuppressed;
+  }
+
+  /** Total reasoning chars emitted as visible text via Go gateway workaround. */
+  get reasoningAsContentEmittedChars(): number {
+    return this.reasoningAsContentChars;
   }
 
   /**
@@ -954,11 +986,13 @@ class OpenAiResponseExtractor {
       if (reasoning) {
         // Workaround for opencode-go gateway bug (#37635): when
         // treatReasoningAsContent is true and delta.content is empty,
-        // the model's response was placed in reasoni ng_content by the
+        // the model's response was placed in reasoning_content by the
         // gateway. Emit as visible text instead of thinking.
         if (this.treatReasoningAsContent && !visible && text.length === 0) {
-          this.emittedTextLength += reasoning.length;
-          parts.push(new vscode.LanguageModelTextPart(reasoning));
+          if (!this.shouldSuppressReasoningEmit(reasoning)) {
+            this.emittedTextLength += reasoning.length;
+            parts.push(new vscode.LanguageModelTextPart(reasoning));
+          }
         } else {
           this.handleReasoning(reasoning);
         }
@@ -982,8 +1016,10 @@ class OpenAiResponseExtractor {
         // Same workaround for message block (Go gateway may include both
         // delta and message in the same chunk).
         if (this.treatReasoningAsContent && !visible && text.length === 0) {
-          this.emittedTextLength += reasoning.length;
-          parts.push(new vscode.LanguageModelTextPart(reasoning));
+          if (!this.shouldSuppressReasoningEmit(reasoning)) {
+            this.emittedTextLength += reasoning.length;
+            parts.push(new vscode.LanguageModelTextPart(reasoning));
+          }
         } else {
           this.handleReasoning(reasoning);
         }
@@ -1011,10 +1047,75 @@ class OpenAiResponseExtractor {
     return this.thinkFilter.process(text);
   }
 
+  /**
+   * Check whether the current reasoning chunk should be suppressed due to a
+   * detected loop.
+   *
+   * Two independent guards:
+   * 1. **Char budget** — if total reasoning-as-content exceeds 2000 chars
+   *    without a single `content` field, the model is probably stuck.
+   * 2. **Suffix repetition** — if the last 40-char suffix of a reasoning
+   *    fragment matches the previous fragment's suffix for 6+ consecutive
+   *    chunks, the model is in a word-level repetition loop.
+   *
+   * When either guard triggers, `reasoningLoopSuppressed` is set and a
+   * one-time warning is emitted as a visible text part.
+   *
+   * @returns `true` if the chunk should be suppressed (not emitted).
+   */
+  private shouldSuppressReasoningEmit(chunk: string): boolean {
+    if (this._reasoningLoopSuppressed) {
+      return true;
+    }
+
+    // --- Guard 1: total char budget ---
+    this.reasoningAsContentChars += chunk.length;
+    if (this.reasoningAsContentChars > OpenAiResponseExtractor.REASONING_AS_CONTENT_MAX_CHARS) {
+      this._reasoningLoopSuppressed = true;
+    }
+
+    // --- Guard 2: suffix repetition ---
+    if (!this._reasoningLoopSuppressed && chunk.length >= 10) {
+      const suffix = chunk.slice(-40);
+      // Compare with the most recently stored suffix
+      const lastSuffix = this.reasoningFragmentSuffixes.at(-1);
+      if (lastSuffix !== undefined && suffix === lastSuffix) {
+        this.reasoningFragmentSuffixes.push(suffix);
+        if (this.reasoningFragmentSuffixes.length >= OpenAiResponseExtractor.REASONING_LOOP_SUFFIX_MATCHES) {
+          this._reasoningLoopSuppressed = true;
+        }
+      } else {
+        // Reset: suffix changed (model made progress)
+        this.reasoningFragmentSuffixes.length = 0;
+        this.reasoningFragmentSuffixes.push(suffix);
+      }
+    }
+
+    if (this._reasoningLoopSuppressed && !this.reasoningLoopWarningEmitted) {
+      this.reasoningLoopWarningEmitted = true;
+      // Don't actually suppress here — the caller handles that via return value.
+      // The warning will be emitted as a text part in flushReasoningFallback.
+    }
+
+    return this._reasoningLoopSuppressed;
+  }
+
   flushReasoningFallback(
     progress: vscode.Progress<vscode.LanguageModelResponsePart2>,
     localRequestId?: string,
   ): void {
+    // Emit a visible warning if the reasoning loop was suppressed
+    if (this._reasoningLoopSuppressed && !this.reasoningLoopWarningEmitted) {
+      this.reasoningLoopWarningEmitted = true;
+      const warning = "[MiMo seems stuck in a reasoning loop — output suppressed]";
+      reportProgressPart(
+        localRequestId,
+        progress,
+        new vscode.LanguageModelTextPart(warning),
+      );
+      this.emittedTextLength += warning.length;
+    }
+
     // Flush any remaining text in the think filter
     if (this.thinkFilter) {
       const { visible, thinking } = this.thinkFilter.finish();

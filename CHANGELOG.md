@@ -16,6 +16,7 @@ _No unreleased changes yet._
 ### Fixed
 
 - **`[Streaming]` Go gateway `reasoning_content` vs `content` mismatch workaround (#36, #37635).** The opencode-go gateway places ALL streaming response text inside `reasoning_content` instead of `content` (issue anomalyco/opencode#37635, confirmed 2026-07-23). The `OpenAiResponseExtractor` now accepts a `treatReasoningAsContent` flag — active only for Go gateway requests (URL path `/zen/go/`). When the flag is on and `delta.content` is empty but `reasoning_content` exists, the content is emitted as visible `LanguageModelTextPart` instead of being swallowed as a thinking part. Zen gateway unaffected. Fixes the symptom where MiMo 2.5's response appeared as "thinking looping" in the Copilot Chat UI.
+- **`[Streaming]` Reasoning loop detection — auto-suppress stuck MiMo output (#36).** Even with the `treatReasoningAsContent` workaround, MiMo can generate identical reasoning fragments indefinitely (the model-level loop). The extractor now has two guards: (1) if total reasoning-as-content exceeds 2000 chars without a `content` field appearing, output is suppressed; (2) if the same 40-char suffix repeats across 6+ consecutive reasoning chunks, output is suppressed. A visible warning `[MiMo seems stuck in a reasoning loop — output suppressed]` is emitted instead of the looping text. The `budget_tokens` cap then stops the stream silently.
 
 ### Added
 

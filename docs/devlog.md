@@ -7,10 +7,11 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-07-23 (Session 2) |
-| **Worked On** | MiMo 2.5 infinite thinking loop (#36). User reported MiMo 2.5's reasoning enters an infinite loop — same thinking content repeated 30+ times, user blocked until 10-min total timeout. Initial fix added `budget_tokens` cap per effort level (low=8K, medium=16K, high=32K). User questioned why looping happens even with cap — deeper investigation revealed **two distinct root causes**: (1) opencode-go gateway bug #37635 — ALL streaming response text goes into `reasoning_content` instead of `content`, causing extension to emit everything as thinking parts, (2) MiMo model itself sometimes fails to converge. Web research confirmed #37635 (5 days old, affects ALL Go gateway models: deepseek, kimi, glm, mimo, minimax, qwen). Built a `treatReasoningAsContent` workaround in `OpenAiResponseExtractor` — when URL is `/zen/go/` and `content` is empty but `reasoning_content` exists, emit as visible text. Zen gateway unaffected. Created `docs/issues/36-20260723-mimo-thinking-infinite-loop.md` with full analysis + upstream issue references. Updated CHANGELOG [Unreleased]. Branch: `fix/mimo-thinking-budget`. |
-| **Stopped At** | Ready to push `fix/mimo-thinking-budget` (1 commit: `52af4b3` fix + workaround + docs). User asked to update docs, CHANGELOG, and devlog before pushing. |
-| **Next Action** | → Push branch → user decides whether to merge via merge commit or keep separate from #78 branch. |
+| **Last Session** | 2026-07-23 (Session 3) |
+| **Worked On** | Iteration 3 of MiMo thinking fix (#36). After 0.4.2 VSIX build + install, user tested MiMo 2.5 and reported "masih parah" (still bad). The `budget_tokens` + `treatReasoningAsContent` fixes only changed WHERE the text appears and capped token count, but the MODEL-LEVEL loop still happened until budget ran out. Added **reasoning loop detection** in `OpenAiResponseExtractor`: two guards — (1) char budget (2000 reasoning-as-content chars triggers suppression), (2) suffix repetition guard (same 40-char suffix on 6+ consecutive chunks). When triggered, further reasoning is suppressed and a visible warning `[MiMo seems stuck in a reasoning loop — output suppressed]` is emitted. Rebuilt + reinstalled VSIX. |
+| **Stopped At** | Ready to push `fix/mimo-thinking-budget` (2 commits: `52af4b3` + `4a7c380` docs, need 3rd commit for loop detection). |
+| **Next Action** | → Commit loop detection changes → push branch. |
+| **Open Issues** | (1)-(9) same as before. Update (10): log spam from agent-host provider still high (#36 debugging showed it). |
 | **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor). (6) `estimateTokenCount` under-counts base64 payloads (tracked in issue doc #34). (7) `bundledModelMetadataSnapshot` could use a refresh — model list drift since 0.3.5. (8) #37635 upstream — still open, assigned to MrMushrooooom. (9) #78 branch not yet pushed — split focus between #78 and #36. |
 
 ---
