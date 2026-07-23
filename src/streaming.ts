@@ -82,12 +82,17 @@ export async function streamChatCompletions(
   options: StreamRequestOptions,
 ): Promise<void> {
   const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId);
+  // Workaround for opencode-go gateway bug (#37635): the Go gateway places
+  // ALL streaming response text inside reasoning_content instead of content.
+  // Detect via URL path (opencode.ai/zen/go/ vs opencode.ai/zen/).
+  const isGoGateway = options.url.includes("/zen/go/");
   const extractor = new OpenAiResponseExtractor(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),
     thinkFilter,
     options.progress,
     options.requestHeaders["x-opencode-request"],
+    /* treatReasoningAsContent */ isGoGateway,
   );
 
   await streamOpenCodeResponse({
@@ -850,6 +855,12 @@ class OpenAiResponseExtractor {
    */
   private totalReasoningChars = 0;
 
+  /**
+   * Reasoning repeat-detection state.
+   */
+  private consecutiveRepeatCount = 0;
+  private lastReasoningAnchor = "";
+
   constructor(
     private readonly onReasoningContent?: (
       toolCallIds: string[],
@@ -865,6 +876,23 @@ class OpenAiResponseExtractor {
      */
     private readonly progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
     private readonly localRequestId?: string,
+    /**
+     * Workaround for opencode-go gateway bug (#37635).
+     *
+     * The Go gateway places ALL streaming response text inside
+     * `reasoning_content` instead of `content` for every chunk.  When this
+     * flag is `true` and `extractTextFromDelta(delta)` returns empty but
+     * `extractReasoningFromDelta(delta)` returns non-empty content, the
+     * reasoning is emitted as visible text (LanguageModelTextPart) instead
+     * of as a thinking part, preventing the response from being swallowed
+     * into the thinking panel.
+     *
+     * CONTRACT:
+     * - Only active for Go-gateway requests (URL includes `/zen/go/`).
+     * - Reasoning surfacing via LanguageModelThinkingPart is suppressed
+     *   while this flag is set — the text IS the response, not CoT.
+     */
+    private readonly treatReasoningAsContent: boolean = false,
   ) {}
 
   get emittedText(): number {
@@ -924,7 +952,16 @@ class OpenAiResponseExtractor {
       }
       const reasoning = extractReasoningFromDelta(delta);
       if (reasoning) {
-        this.handleReasoning(reasoning);
+        // Workaround for opencode-go gateway bug (#37635): when
+        // treatReasoningAsContent is true and delta.content is empty,
+        // the model's response was placed in reasoni ng_content by the
+        // gateway. Emit as visible text instead of thinking.
+        if (this.treatReasoningAsContent && !visible && text.length === 0) {
+          this.emittedTextLength += reasoning.length;
+          parts.push(new vscode.LanguageModelTextPart(reasoning));
+        } else {
+          this.handleReasoning(reasoning);
+        }
       }
       this.collectOpenAiToolCalls(delta.tool_calls);
     }
@@ -942,7 +979,14 @@ class OpenAiResponseExtractor {
       }
       const reasoning = extractReasoningFromDelta(message);
       if (reasoning) {
-        this.handleReasoning(reasoning);
+        // Same workaround for message block (Go gateway may include both
+        // delta and message in the same chunk).
+        if (this.treatReasoningAsContent && !visible && text.length === 0) {
+          this.emittedTextLength += reasoning.length;
+          parts.push(new vscode.LanguageModelTextPart(reasoning));
+        } else {
+          this.handleReasoning(reasoning);
+        }
       }
       this.collectOpenAiToolCalls(message.tool_calls);
     }

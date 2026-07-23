@@ -126,8 +126,61 @@ If the user encounters a thinking loop before this fix is deployed:
 
 ---
 
+## Root Cause Deep Dive — Go Gateway Bug (#37635)
+
+### Discovery
+
+On 2026-07-23, riset internet menemukan issue **anomalyco/opencode#37635** (5 hari lalu):
+
+> **"opencode-go gateway returns `reasoning_content` instead of `content` in streaming responses"**
+
+Reporter melakukan direct API test:
+
+```
+POST https://opencode.ai/zen/go/v1/chat/completions
+{"model":"grok-4.5","messages":[...],"stream":true}
+```
+
+Hasilnya — **semua chunk streaming** dari Go gateway menggunakan `reasoning_content`, bukan `content`:
+
+```
+data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"The"}}]}
+data: {"choices":[{"delta":{"reasoning_content":" user"}]}
+data: {"choices":[{"delta":{"reasoning_content":" asks"}]}
+... (18 chunk reasoning_content) ...
+data: {"choices":[{"delta":{"content":"2"}}]}
+data: {"choices":[{"finish_reason":"stop","delta":{}}]}
+```
+
+**Affected models:** ALL opencode-go models — mimo-v2.5, mimo-v2.5-pro, deepseek-v4-pro, kimi-k3, glm-5.1, dll.
+
+**Hanya Go gateway (`/zen/go/`) yang kena.** Zen gateway (`/zen/v1/`) tidak terpengaruh.
+
+Non-streaming endpoint juga OK — bug hanya di streaming.
+
+### Hubungan dengan thinking loop
+
+Kombinasi dua bug menghasilkan gejala "thinking looping":
+
+| # | Bug | Akibat |
+|---|-----|--------|
+| 1 | **#37635** — Go gateway streaming pakai `reasoning_content` untuk semua output | Extension kita emit SEMUA output sebagai `LanguageModelThinkingPart` (thinking panel) |
+| 2 | **Model looping** — MiMo 2.5 kadang gagal converge dan generate teks yang sama berulang | Token thinking membengkak tanpa batas |
+
+Tanpa `budget_tokens`: model looping sampai 10 menit (total timeout).
+Dengan `budget_tokens` + workaround: looping terdeteksi dan dihentikan lebih awal.
+
+### Related issues
+
+| Issue | Status | Relevance |
+|-------|--------|-----------|
+| [#37635](https://github.com/anomalyco/opencode/issues/37635) — Go gateway `reasoning_content` vs `content` | 🟡 Open (MrMushrooooom) | Root cause — gateway bug, server-side fix needed |
+| [#35209](https://github.com/anomalyco/opencode/issues/35209) — Models enter extended thinking on simple prompts | 🟡 Open (StarpTech) | Related: thinking options not gated by model capabilities |
+| [#36354](https://github.com/anomalyco/opencode/issues/36354) — MiMo / DeepSeek tool-call "Internal server error" | 🟡 Open (jlongster) | Related: reasoning_content handling broken for tool calls |
+
 ## Notes
 
 - The `budget_tokens` values are conservative starting points. They can be tuned based on real-world usage feedback.
 - A future enhancement could expose `mimoBudget` as a user-configurable setting (similar to `qwenBudget`) via the thinking picker.
 - A stream-level reasoning guard (abort if `totalReasoningChars` exceeds threshold) was considered but deferred — the `budget_tokens` approach is preferable as it prevents token generation at the model level rather than after the fact.
+- The `treatReasoningAsContent` workaround applies to ALL Go gateway models, not just MiMo. It can be removed once upstream #37635 is fixed.
