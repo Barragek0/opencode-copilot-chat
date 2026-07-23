@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `fix/issue-78-model-list-fetch-resilience` | **Updated:** 2026-07-23 Asia/Jakarta | **Current Phase:** Issue #78 — Model List Fetch Resilience ✅ Fixed, PR open pending merge
+**Branch:** `fix/mimo-thinking-budget` | **Updated:** 2026-07-23 Asia/Jakarta | **Current Phase:** Issue #36 — ✅ Fixed, ready to push
 
 ---
 
@@ -7,11 +7,67 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-07-23 |
-| **Worked On** | Triaged issue #78 (reported by `@leiyu1980`, Windows 11 + VPN + corporate firewall, VS Code 1.129.0). Initial symptom looked like the closed #51 picker crash, but investigation (with web research into Node undici defaults + `nodejs/undici#5450` socket-reuse race + VS Code 1.129 agent host concurrency) confirmed it was a **transient network failure that `fetchModels()` never tolerated**. Built a 6-part resilience fix: (1) `AbortSignal.timeout(15_000)` per attempt, (2) up to 3 retries with exponential backoff (500ms/1s/2s) gated by `isTransientFetchError()` classifier, (3) `User-Agent` read from `packageJSON.version` at runtime (killed the recurring version drift), (4) `CancellationToken` composed via `AbortSignal.any([...])`, (5) 1-hour cached snapshot in `globalState` so failure falls back to last-known-good list instead of bundled, (6) `Accept: application/json` header after reporter's reply revealed their VPN/firewall passed POST `/chat/completions` but dropped bare GET `/models`. **Drive-by UX gap:** the `Refresh Models` command only existed as a sub-item inside `OpenCode Go: Manage Provider` and Zen had no Manage Provider at all — added 3 top-level commands for parity. Research stored in `/memories/repo/issue78-*.md`. Wrote `docs/issues/35-20260720-issue78-model-list-fetch-resilience.md` + updated CHANGELOG + README + bumped version `0.4.1 → 0.4.2`. Build clean: `opencode-copilot-chat-0.4.2.vsix` (1.06 MB, 115 files). |
-| **Stopped At** | Ready to push `fix/issue-78-model-list-fetch-resilience` (3 commits: `8fcde64` resilience, `a04939c` commands, `ccfcb75` Accept header + version bump) and open PR. User will merge with merge commit (NEVER squash). |
-| **Next Action** | → Push branch → open PR `Fixes #78` → user reviews & merges → closes #78 automatically → draft reply to `@leiyu1980` via `avoid-ai-writing` + `writing-framework-v4` skills (peer-to-peer tone, acknowledge wrong instruction in prior reply about Refresh command name). |
-| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor). (6) `estimateTokenCount` under-counts base64 payloads (tracked in issue doc #34). (7) `bundledModelMetadataSnapshot` could use a refresh — model list drift since 0.3.5. (8) Manual test of retry/cache path in Test C-D not run yet (network throttle + Network Link Conditioner). |
+| **Last Session** | 2026-07-23 (Session 4 — stabilization) |
+| **Worked On** | Final stabilization of #36 fix. After iteration 3 (suffix-repetition detection), user reported: (a) `treatReasoningAsContent` was leaking thinking to visible text, (b) `contentAfterReasoning` guard was suppressing ALL models, (c) thinking/reasoning was being "cut off" and stopping without warning. Through 4 additional iterations: (1) removed `treatReasoningAsContent` to fix leak → thinking went back to thinking panel ✅, (2) reverted `contentAfterReasoning` and `shouldSuppressTextEmit` which were false-positiving on DeepSeek/GLM/Kimi (they legitimately use `reasoning_content` then `content`), (3) re-added `treatReasoningAsContent` with correct condition: only when Go gateway + NO `reasoning_effort` in body. Key insight from web research: upstream issue #37635 is confirmed (gateway bug) and PR #37558 merged `reasoning_content` parsing — but the gateway bug itself persists. |
+| **Stopped At** | All fixes verified working. Documentation updated. Ready to push. |
+| **Next Action** | → Commit all changes → push `fix/mimo-thinking-budget` branch → open PR. |
+| **Open Issues** | (1)-(9) same as before. (10) Log spam from agent-host provider still high (#36 debugging showed it). (11) Upstream #37635 still open, workaround can be removed when fixed server-side. |
+
+---
+
+## 🔬 Issue #36 — MiMo 2.5 Thinking Loop — Stabilization (Session 4)
+
+**Commits on branch `fix/mimo-thinking-budget`:**
+
+| # | Commit | Description |
+|---|--------|-------------|
+| 1 | `52af4b3` | `budget_tokens` payload + `retry.ts` handler + initial issue doc |
+| 2 | `4a7c380` | CHANGELOG + devlog + issue doc update |
+| 3 | `db71214` | Suffix-repetition loop detection + `flushReasoningFallback` warning |
+| 4 | *(pending)* | Final stabilization: `treatReasoningAsContent` conditional logic + revert regressions |
+
+**Fixes applied in stabilization:**
+
+1. **`treatReasoningAsContent` leak** — Thinking content was appearing as visible text in chat because the workaround was applied unconditionally for all Go gateway models. Fixed by adding condition: `treatReasoningAsContent` only activates when `reasoning_effort` is NOT in the request body. When thinking IS on (reasoning_effort present), `reasoning_content` is genuine CoT → stays in thinking panel.
+
+2. **Regressive suppression guards** — `contentAfterReasoning` and `shouldSuppressTextEmit` were suppressing output for ALL reasoning models (DeepSeek, GLM, Kimi). These models legitimately produce `reasoning_content` first then `content` — this is normal behavior, not degradation. Both guards fully removed. Only suffix-repetition detection remains active.
+
+3. **Surgical condition:** `isGoGateway && !hasReasoningEffort` — exact filter that protects MiMo thinking-OFF from gateway bug while leaving all other models untouched.
+
+---
+
+## 🔬 Issue #36 — MiMo 2.5 Thinking Loop — Session 2026-07-23 ✅ FIXED
+
+**Action:** User reported MiMo 2.5 (and 2.5-Pro) thinking loops without end — same reasoning content repeated 30+ times, user blocked until 10-min total timeout. Initial investigation coded `budget_tokens` cap (low=8K, medium=16K, high=32K) in `buildThinkingPayload()`. User rightly questioned: "why does it loop even with a cap?"
+
+**Branch:** `fix/mimo-thinking-budget` (created from `fix/issue-78-model-list-fetch-resilience`)
+
+**Compile:** `npm run compile` exit 0 (verified every change)
+
+**Root cause — two distinct problems found:**
+
+| # | Problem | Layer | Fix |
+|---|---------|-------|-----|
+| 1 | **Go gateway bug #37635** — opencode-go places ALL streaming text in `reasoning_content` instead of `content`. All Go models affected (mimo, deepseek, kimi, glm, etc.). Confirmed via direct API test by issue reporter. | Gateway (upstream) | `treatReasoningAsContent` workaround: detect `/zen/go/` URL path, emit reasoning as visible text |
+| 2 | **MiMo model not converging** — model's chain-of-thought enters self-referential loop generating same text repeatedly. | Model level | `budget_tokens` caps damage; upstream fix needed from model provider |
+
+**Web research findings:**
+
+- `anomalyco/opencode#37635` (5 days old, assigned MrMushrooooom): "opencode-go gateway returns reasoning_content instead of content in streaming responses" — confirmed ALL opencode-go models. Non-streaming OK. Zen gateway OK.
+- `anomalyco/opencode#35209` (3 weeks, assigned StarpTech): "models go into extended thinking on simple prompts" — related: thinking options not gated by model capabilities.
+- `anomalyco/opencode#36354` (2 weeks, assigned jlongster): "MiMo / DeepSeek tool-call Internal server error" — reasoning_content handling broken for tool calls.
+
+**Changes made (1 commit `52af4b3`):**
+
+1. `src/thinking.ts` — `buildThinkingPayload()` MiMo branch: add `budget_tokens` per effort level with retry.ts handler map.
+2. `src/retry.ts` — Add HTTP 400 handler for `budget_tokens` rejection (graceful degradation).
+3. `src/streaming.ts` — `OpenAiResponseExtractor`: add `treatReasoningAsContent` parameter + constructor + logic. `streamChatCompletions`: detect Go gateway via URL path `/zen/go/`.
+4. `docs/issues/36-20260723-mimo-thinking-infinite-loop.md` — Full issue documentation.
+5. `CHANGELOG.md` — Added to [Unreleased] section.
+
+**Workaround trade-off:** Go models lose legitimate thinking surfacing (CoT appears as visible text), but they were already broken — gateway mixes CoT + answer in `reasoning_content`. Zen models unaffected. Fix reversible when upstream #37635 is resolved.
+
+**Manual verification:** Not run (requires Go API key + MiMo model). Workaround is deterministic — URL check, no runtime deps on model behavior.
 
 ---
 

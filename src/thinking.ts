@@ -443,10 +443,28 @@ export function buildThinkingPayload(modelId: string, thinking: ThinkingSettings
   if (/^mimo-/i.test(modelId)) {
     // Mimo models use OpenAI-compatible chat-completions with reasoning_content.
     // Supported efforts: low, medium, high (per OpenCode upstream defaults).
+    //
+    // budget_tokens caps the reasoning token count to prevent infinite thinking
+    // loops observed in mimo-v2.5 / mimo-v2.5-pro (issue #36, 2026-07-23).
+    // Effort → token budget mapping (conservative caps; tuned for practical tasks):
+    //   low    →  8 192  (~2× a typical short CoT)
+    //   medium → 16 384  (~4× a typical medium CoT)
+    //   high   → 32 768  (~8× a deeper reasoning chain)
+    // If the OpenCode gateway rejects budget_tokens (HTTP 400 "extra inputs"),
+    // retry.ts drops the field and retries with reasoning_effort alone.
     if (thinking.mimo === "off") {
       return {};
     }
-    return { reasoning_effort: thinking.mimo };
+    const mimoBudgetMap: Record<string, number> = {
+      low: 8192,
+      medium: 16384,
+      high: 32768,
+    };
+    const mimoBudget = mimoBudgetMap[thinking.mimo];
+    return {
+      reasoning_effort: thinking.mimo,
+      ...(mimoBudget !== undefined ? { budget_tokens: mimoBudget } : {}),
+    };
   }
 
   if (/^minimax-/i.test(modelId)) {

@@ -134,6 +134,16 @@ const RECOVERABLE_ERROR_PATTERNS: Array<{
     },
     describe: () => "removed thinking_budget (not accepted by this model)",
   },
+  // budget_tokens — used by Mimo thinking payload to cap reasoning tokens
+  {
+    pattern: /extra inputs are not permitted.*budget_tokens/i,
+    patch: (body) => {
+      const next = { ...body };
+      delete next.budget_tokens;
+      return next;
+    },
+    describe: () => "removed budget_tokens (not accepted by this model)",
+  },
 
   // --- Generic extra inputs ---
   // "Extra inputs are not permitted, field: '<field>'"
