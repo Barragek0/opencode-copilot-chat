@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `fix/mimo-thinking-budget` | **Updated:** 2026-07-23 Asia/Jakarta | **Current Phase:** Issue #36 — MiMo 2.5 Thinking Loop ✅ Fixed, needs push
+**Branch:** `fix/mimo-thinking-budget` | **Updated:** 2026-07-23 Asia/Jakarta | **Current Phase:** Issue #36 — ✅ Fixed, ready to push
 
 ---
 
@@ -7,12 +7,32 @@
 
 | Field | Value |
 |-------|-------|
-| **Last Session** | 2026-07-23 (Session 3) |
-| **Worked On** | Iteration 3 of MiMo thinking fix (#36). After 0.4.2 VSIX build + install, user tested MiMo 2.5 and reported "masih parah" (still bad). The `budget_tokens` + `treatReasoningAsContent` fixes only changed WHERE the text appears and capped token count, but the MODEL-LEVEL loop still happened until budget ran out. Added **reasoning loop detection** in `OpenAiResponseExtractor`: two guards — (1) char budget (2000 reasoning-as-content chars triggers suppression), (2) suffix repetition guard (same 40-char suffix on 6+ consecutive chunks). When triggered, further reasoning is suppressed and a visible warning `[MiMo seems stuck in a reasoning loop — output suppressed]` is emitted. Rebuilt + reinstalled VSIX. |
-| **Stopped At** | Ready to push `fix/mimo-thinking-budget` (2 commits: `52af4b3` + `4a7c380` docs, need 3rd commit for loop detection). |
-| **Next Action** | → Commit loop detection changes → push branch. |
-| **Open Issues** | (1)-(9) same as before. Update (10): log spam from agent-host provider still high (#36 debugging showed it). |
-| **Open Issues** | (1) VS Code API gap: thread ID → session cost. (2) Qwen image quota. (3) `qwen3.6-plus-free` tool-call loop. (4) #57/#58 agent model visibility. (5) Vision proxy quota not documented in README (minor). (6) `estimateTokenCount` under-counts base64 payloads (tracked in issue doc #34). (7) `bundledModelMetadataSnapshot` could use a refresh — model list drift since 0.3.5. (8) #37635 upstream — still open, assigned to MrMushrooooom. (9) #78 branch not yet pushed — split focus between #78 and #36. |
+| **Last Session** | 2026-07-23 (Session 4 — stabilization) |
+| **Worked On** | Final stabilization of #36 fix. After iteration 3 (suffix-repetition detection), user reported: (a) `treatReasoningAsContent` was leaking thinking to visible text, (b) `contentAfterReasoning` guard was suppressing ALL models, (c) thinking/reasoning was being "cut off" and stopping without warning. Through 4 additional iterations: (1) removed `treatReasoningAsContent` to fix leak → thinking went back to thinking panel ✅, (2) reverted `contentAfterReasoning` and `shouldSuppressTextEmit` which were false-positiving on DeepSeek/GLM/Kimi (they legitimately use `reasoning_content` then `content`), (3) re-added `treatReasoningAsContent` with correct condition: only when Go gateway + NO `reasoning_effort` in body. Key insight from web research: upstream issue #37635 is confirmed (gateway bug) and PR #37558 merged `reasoning_content` parsing — but the gateway bug itself persists. |
+| **Stopped At** | All fixes verified working. Documentation updated. Ready to push. |
+| **Next Action** | → Commit all changes → push `fix/mimo-thinking-budget` branch → open PR. |
+| **Open Issues** | (1)-(9) same as before. (10) Log spam from agent-host provider still high (#36 debugging showed it). (11) Upstream #37635 still open, workaround can be removed when fixed server-side. |
+
+---
+
+## 🔬 Issue #36 — MiMo 2.5 Thinking Loop — Stabilization (Session 4)
+
+**Commits on branch `fix/mimo-thinking-budget`:**
+
+| # | Commit | Description |
+|---|--------|-------------|
+| 1 | `52af4b3` | `budget_tokens` payload + `retry.ts` handler + initial issue doc |
+| 2 | `4a7c380` | CHANGELOG + devlog + issue doc update |
+| 3 | `db71214` | Suffix-repetition loop detection + `flushReasoningFallback` warning |
+| 4 | *(pending)* | Final stabilization: `treatReasoningAsContent` conditional logic + revert regressions |
+
+**Fixes applied in stabilization:**
+
+1. **`treatReasoningAsContent` leak** — Thinking content was appearing as visible text in chat because the workaround was applied unconditionally for all Go gateway models. Fixed by adding condition: `treatReasoningAsContent` only activates when `reasoning_effort` is NOT in the request body. When thinking IS on (reasoning_effort present), `reasoning_content` is genuine CoT → stays in thinking panel.
+
+2. **Regressive suppression guards** — `contentAfterReasoning` and `shouldSuppressTextEmit` were suppressing output for ALL reasoning models (DeepSeek, GLM, Kimi). These models legitimately produce `reasoning_content` first then `content` — this is normal behavior, not degradation. Both guards fully removed. Only suffix-repetition detection remains active.
+
+3. **Surgical condition:** `isGoGateway && !hasReasoningEffort` — exact filter that protects MiMo thinking-OFF from gateway bug while leaving all other models untouched.
 
 ---
 

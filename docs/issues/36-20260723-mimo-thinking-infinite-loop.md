@@ -1,76 +1,71 @@
-**Status:** ✅ Solved
+**Status:** ✅ Solved (with upstream workaround)
 
-# MiMo 2.5 — Thinking Loops Endlessly (No Token Budget Cap)
+# MiMo 2.5 — Thinking Loops + Go Gateway Reasoning Leak (#36)
 
-**Topic:** thinking / mimo / streaming / budget  
+**Topic:** thinking / mimo / streaming / gateway / workaround  
 **Reported:** 2026-07-23  
-**Tags:** #thinking #mimo #streaming #budget #bug
+**Tags:** #thinking #mimo #streaming #gateway #workaround #bug
 
 ---
 
 ## Problem
 
-When MiMo 2.5 (or MiMo 2.5 Pro) is used with `Thinking Effort` set to any value other than `Off`, the model's `reasoning_content` stream can enter an infinite loop — repeating the same chain-of-thought fragment indefinitely without converging to a final answer.
+Two distinct but related issues affect MiMo 2.5 on the opencode-go gateway:
 
-### Observed symptom
+### Problem A — Thinking loop (model level)
 
-The thinking panel (collapsed by default in Copilot Chat) accumulates thousands of tokens that are variations of the same incomplete thought, e.g.:
+MiMo 2.5's reasoning can enter an infinite loop — repeating the same chain-of-thought fragment indefinitely without converging. The stream is actively generating tokens, so `DEFAULT_STREAM_IDLE_TIMEOUT_MS` (2 min) does not fire. User blocked for up to 10 minutes.
 
-```
-Now fix the Penutup body. Now fix the Penutup body. Now fix the Penutup body.
-[…repeated 30+ times]
-```
+### Problem B — All response text in `reasoning_content` (gateway bug)
 
-or:
+The opencode-go gateway wraps ALL streaming response text inside `reasoning_content` instead of `content` (issue [#37635](https://github.com/anomalyco/opencode/issues/37635)). This means:
 
-```
-Actually, I think the user just wants…
-Wait, I'm looking at the previous messages…
-Actually, I think the user just wants…
-[…repeated indefinitely]
-```
-
-### Impact
-
-- The stream is **actively generating tokens** (not idle), so `DEFAULT_STREAM_IDLE_TIMEOUT_MS` (2 min) does **not** fire.
-- The total timeout (`DEFAULT_REQUEST_TIMEOUT_MS`, 10 min) eventually fires, but the user is blocked for up to 10 minutes with no response.
-- Cost impact: MiMo Go pricing charges for all thinking tokens generated.
+- When MiMo thinking is OFF: the model's actual response (answer text) appears in `reasoning_content` → gets emitted as a thinking part → user sees nothing or truncated response
+- When MiMo thinking is ON: CoT goes to thinking panel (correct), but answer also goes to `reasoning_content` → leaked to thinking panel or visible text depending on chunk order
 
 ---
 
 ## Root Cause
 
-### Why it loops
+### Problem A — No token budget
 
-MiMo models use the `@ai-sdk/openai-compatible` transport routed through `chat-completions`. The extension sent only:
-
-```json
-{ "reasoning_effort": "low" | "medium" | "high" }
-```
-
-Unlike Qwen (which has `thinking_budget` / `enable_thinking: false`) or Anthropic models (which have `budgetTokens`), `reasoning_effort` for `@ai-sdk/openai-compatible` models in the OpenCode transform does NOT include a `budget_tokens` cap:
+MiMo uses `@ai-sdk/openai-compatible`. OpenCode's transform only sends `reasoningEffort` — no budget cap:
 
 ```typescript
-// OpenCode transform.ts — openai-compatible variants()
+// OpenCode transform.ts
 return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map(effort => [effort, { reasoningEffort: effort }]))
-
-// reasoningBudget() for @ai-sdk/openai-compatible → returns undefined (no budget support)
+// reasoningBudget() for @ai-sdk/openai-compatible → returns undefined
 ```
 
-Without a token budget, MiMo can generate reasoning tokens beyond any reasonable limit before converging (or failing to converge).
+### Problem B — Gateway bug (#37635)
 
-### Codebase location
+Confirmed via direct API test on the Go gateway:
 
-- `src/thinking.ts` → `buildThinkingPayload()` MiMo branch
-- `src/retry.ts` → no handler for `budget_tokens` rejection
+```
+POST https://opencode.ai/zen/go/v1/chat/completions
+→ All streaming chunks use `reasoning_content` for ALL output
+→ Final chunk has `content: "answer"` (only answer, not CoT)
+→ Non-streaming endpoint returns `content` correctly (only streaming affected)
+```
+
+**Affected:** ALL opencode-go models (deepseek, kimi, glm, mimo, minimax, qwen, grok).  
+**Not affected:** Zen gateway (`/zen/v1/`).
+
+Related upstream issues:
+
+| Issue | Status | Relevance |
+|-------|--------|-----------|
+| [#37635](https://github.com/anomalyco/opencode/issues/37635) | 🟡 Open (MrMushrooooom) | Gateway bug — server-side fix needed |
+| [#35209](https://github.com/anomalyco/opencode/issues/35209) | 🟡 Open (StarpTech) | Extended thinking on simple prompts |
+| [#36354](https://github.com/anomalyco/opencode/issues/36354) | 🟡 Open (jlongster) | MiMo / DeepSeek tool-call errors |
 
 ---
 
 ## Fix (v0.4.2)
 
-### `src/thinking.ts` — Add `budget_tokens` to MiMo payload
+### Fix 1 — `budget_tokens` in thinking payload (`src/thinking.ts`)
 
-Added a `budget_tokens` field alongside `reasoning_effort` to cap reasoning token generation per effort level:
+Added a `budget_tokens` field alongside `reasoning_effort` to cap reasoning token generation:
 
 | Effort | `reasoning_effort` | `budget_tokens` |
 |--------|-------------------|-----------------|
@@ -78,109 +73,73 @@ Added a `budget_tokens` field alongside `reasoning_effort` to cap reasoning toke
 | medium | `"medium"`         | 16 384          |
 | high   | `"high"`           | 32 768          |
 
-```typescript
-// before
-return { reasoning_effort: thinking.mimo };
+If the gateway rejects `budget_tokens` (HTTP 400), `retry.ts` handler removes it and retries with only `reasoning_effort`.
 
-// after
-const mimoBudgetMap = { low: 8192, medium: 16384, high: 32768 };
-const mimoBudget = mimoBudgetMap[thinking.mimo];
-return {
-  reasoning_effort: thinking.mimo,
-  ...(mimoBudget !== undefined ? { budget_tokens: mimoBudget } : {}),
-};
+### Fix 2 — Suffix-repetition loop detection (`src/streaming.ts`)
+
+Added `shouldSuppressThinkingEmit()` in `OpenAiResponseExtractor.handleReasoning()`. When the same 40-char suffix repeats across 6+ consecutive reasoning chunks, the model is stuck in a word-level loop. Further thinking parts are suppressed and a visible warning `[Reasoning loop detected — thinking output suppressed]` is emitted.
+
+### Fix 3 — Go gateway `reasoning_content` workaround (`src/streaming.ts`)
+
+Added `treatReasoningAsContent` parameter to `OpenAiResponseExtractor`. In `extractStreamParts`, when this flag is on AND `delta.content` is empty AND `reasoning_content` exists, the reasoning is emitted as visible `LanguageModelTextPart` instead of a thinking part.
+
+**Critical condition:** The workaround only activates when ALL three conditions are true:
+
+1. Request URL includes `/zen/go/` (Go gateway)
+2. `reasoning_effort` is NOT in the request body (MiMo thinking is OFF)
+3. `delta.content` is empty
+
+When `reasoning_effort` IS present (MiMo thinking ON), `reasoning_content` is genuine CoT and should stay in the thinking panel — the workaround is NOT applied.
+
+---
+
+## Why surgical conditions matter
+
+Without the condition check, the workaround would break all models:
+
+| Model | Go gateway? | reasoning_effort in body? | Workaround active? | Result |
+|-------|------------|--------------------------|--------------------|----|
+| MiMo thinking OFF | ✅ | ❌ | ✅ | `reasoning_content` → visible text (fix) |
+| MiMo thinking ON | ✅ | ✅ | ❌ | `reasoning_content` → thinking panel (correct) |
+| DeepSeek (any) | ✅ | ✅ | ❌ | `reasoning_content` → thinking panel (correct) |
+| GLM, Kimi, Qwen | ✅ | varies | varies | Same logic applies |
+| Any model on Zen | ❌ | n/a | ❌ | Untouched |
+
+---
+
+## Debug logging
+
+The extension logs diagnostic info to the "OpenCode" output channel:
+
 ```
-
-### `src/retry.ts` — Add `budget_tokens` rejection handler
-
-If the OpenCode gateway or MiMo's API returns `HTTP 400 "extra inputs are not permitted, field: 'budget_tokens'"`, the retry logic now removes `budget_tokens` and retries with only `reasoning_effort`:
-
-```typescript
-{
-  pattern: /extra inputs are not permitted.*budget_tokens/i,
-  patch: (body) => { delete next.budget_tokens; return next; },
-  describe: () => "removed budget_tokens (not accepted by this model)",
-}
+[go-gw] model=mimo-v2.5 hasReasoningEffort=false treatReasoningAsContent=true
+[go-gw] model=deepseek-v4-pro hasReasoningEffort=true treatReasoningAsContent=false
+[mimo] reasoning loop: suffix repeated 6x. Suppressing thinking parts.
 ```
 
 ---
 
 ## Fallback behavior
 
-If `budget_tokens` is not supported by the upstream (gateway or MiMo API):
+If `budget_tokens` is not supported:
 
-1. Gateway returns `HTTP 400` with `"extra inputs are not permitted, field: 'budget_tokens'"`
-2. `analyzeHttp400ForRetry()` matches the new pattern (or the existing generic pattern)
-3. Extension retries with `{ reasoning_effort: "low"|"medium"|"high" }` only (previous behavior)
-
-The fix is fully backward-compatible and gracefully degrades.
+1. Gateway returns `HTTP 400` → `retry.ts` removes `budget_tokens`
+2. Retries with `{ reasoning_effort: "low"|"medium"|"high" }` only
+3. Loop detection (suffix repetition) still applies as backup
 
 ---
 
-## Workaround (if loop still occurs)
+## Workaround lifecycle
 
-If the user encounters a thinking loop before this fix is deployed:
-1. Click the **Stop** button in Copilot Chat to cancel the request
-2. Switch `Thinking Effort` to **Off** for MiMo in the model picker
-3. Re-send the query
+This workaround can be removed once upstream [#37635](https://github.com/anomalyco/opencode/issues/37635) is fixed server-side. The condition check (`isGoGateway && !hasReasoningEffort`) makes it zero-risk for other providers.
 
 ---
 
-## Root Cause Deep Dive — Go Gateway Bug (#37635)
+## Files changed
 
-### Discovery
-
-On 2026-07-23, riset internet menemukan issue **anomalyco/opencode#37635** (5 hari lalu):
-
-> **"opencode-go gateway returns `reasoning_content` instead of `content` in streaming responses"**
-
-Reporter melakukan direct API test:
-
-```
-POST https://opencode.ai/zen/go/v1/chat/completions
-{"model":"grok-4.5","messages":[...],"stream":true}
-```
-
-Hasilnya — **semua chunk streaming** dari Go gateway menggunakan `reasoning_content`, bukan `content`:
-
-```
-data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"The"}}]}
-data: {"choices":[{"delta":{"reasoning_content":" user"}]}
-data: {"choices":[{"delta":{"reasoning_content":" asks"}]}
-... (18 chunk reasoning_content) ...
-data: {"choices":[{"delta":{"content":"2"}}]}
-data: {"choices":[{"finish_reason":"stop","delta":{}}]}
-```
-
-**Affected models:** ALL opencode-go models — mimo-v2.5, mimo-v2.5-pro, deepseek-v4-pro, kimi-k3, glm-5.1, dll.
-
-**Hanya Go gateway (`/zen/go/`) yang kena.** Zen gateway (`/zen/v1/`) tidak terpengaruh.
-
-Non-streaming endpoint juga OK — bug hanya di streaming.
-
-### Hubungan dengan thinking loop
-
-Kombinasi dua bug menghasilkan gejala "thinking looping":
-
-| # | Bug | Akibat |
-|---|-----|--------|
-| 1 | **#37635** — Go gateway streaming pakai `reasoning_content` untuk semua output | Extension kita emit SEMUA output sebagai `LanguageModelThinkingPart` (thinking panel) |
-| 2 | **Model looping** — MiMo 2.5 kadang gagal converge dan generate teks yang sama berulang | Token thinking membengkak tanpa batas |
-
-Tanpa `budget_tokens`: model looping sampai 10 menit (total timeout).
-Dengan `budget_tokens` + workaround: looping terdeteksi dan dihentikan lebih awal.
-
-### Related issues
-
-| Issue | Status | Relevance |
-|-------|--------|-----------|
-| [#37635](https://github.com/anomalyco/opencode/issues/37635) — Go gateway `reasoning_content` vs `content` | 🟡 Open (MrMushrooooom) | Root cause — gateway bug, server-side fix needed |
-| [#35209](https://github.com/anomalyco/opencode/issues/35209) — Models enter extended thinking on simple prompts | 🟡 Open (StarpTech) | Related: thinking options not gated by model capabilities |
-| [#36354](https://github.com/anomalyco/opencode/issues/36354) — MiMo / DeepSeek tool-call "Internal server error" | 🟡 Open (jlongster) | Related: reasoning_content handling broken for tool calls |
-
-## Notes
-
-- The `budget_tokens` values are conservative starting points. They can be tuned based on real-world usage feedback.
-- A future enhancement could expose `mimoBudget` as a user-configurable setting (similar to `qwenBudget`) via the thinking picker.
-- A stream-level reasoning guard (abort if `totalReasoningChars` exceeds threshold) was considered but deferred — the `budget_tokens` approach is preferable as it prevents token generation at the model level rather than after the fact.
-- The `treatReasoningAsContent` workaround applies to ALL Go gateway models, not just MiMo. It can be removed once upstream #37635 is fixed.
+| File | Change |
+|------|--------|
+| `src/thinking.ts` | `buildThinkingPayload()` — `budget_tokens` per MiMo effort level |
+| `src/retry.ts` | `analyzeHttp400ForRetry()` — handler for `budget_tokens` rejection |
+| `src/streaming.ts` | `OpenAiResponseExtractor` — `treatReasoningAsContent` constructor param, `shouldSuppressThinkingEmit()`, suffix-repetition detection |
+| `src/streaming.ts` | `streamChatCompletions()` — Go gateway detection via URL + body check |
