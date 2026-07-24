@@ -536,6 +536,12 @@ interface ModelRoutingFields {
 // Copilot surfaces combine input/output metadata differently across views.
 // Reserve a modest UI output budget, while requests still use the real model max.
 const UI_OUTPUT_TOKEN_RESERVE = 8192;
+/**
+ * Minimum output budget (in tokens) to prevent safeOutputBudget from collapsing
+ * to 1 when estimateTokenCount overestimates the prompt size. Ensures the model
+ * can still generate a meaningful response even with conservative estimation.
+ */
+const MIN_OUTPUT_BUDGET = 4096;
 const MESSAGE_TOKEN_OVERHEAD = 4;
 const MESSAGE_NAME_TOKEN_OVERHEAD = 1;
 const TOOL_CALL_TOKEN_OVERHEAD = 10;
@@ -3698,7 +3704,7 @@ function modelLimits(
   // context window limit and cause a 400.
   const TOKEN_ESTIMATE_SAFETY_MARGIN = 64;
   const promptReserve = (promptTokens ?? Math.floor(contextWindow * 0.8)) + TOKEN_ESTIMATE_SAFETY_MARGIN;
-  const safeOutputBudget = Math.max(1, contextWindow - promptReserve);
+  const safeOutputBudget = Math.max(MIN_OUTPUT_BUDGET, contextWindow - promptReserve);
   const apiMaxOutputTokens = Math.min(maxOutputTokens, safeOutputBudget);
   // advertisedContextWindow = actual model context window (not inflated).
   // Adding apiMaxOutputTokens here inflates the value above the real limit,
@@ -3727,11 +3733,24 @@ function estimateTokenCount(value: string): number {
     return 0;
   }
 
+  // Standard heuristic: 1 token ≈ 4 characters (OpenAI rule of thumb).
+  // For CJK text, each character is roughly 1-2 tokens, so we add the
+  // CJK character count as an additional buffer.
+  //
+  // NOTE: We intentionally do NOT use a word-count-based heuristic here.
+  // JSON-serialized messages contain many structural characters ({, }, ", :, ,)
+  // that inflate word counts by 3-5×, causing safeOutputBudget to collapse to 1
+  // (see issue #83). The charEstimate-based approach naturally overestimates
+  // for JSON (higher char/token ratio), which is the safe direction — we prefer
+  // a conservative output budget over context overflow 400 errors.
   const cjkCharacters = normalized.match(/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/gu)?.length ?? 0;
-  const words = normalized.match(/[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/gu)?.length ?? 0;
   const charEstimate = Math.ceil(normalized.length / 4);
 
-  return Math.max(1, Math.ceil(Math.max(words * 1.15, charEstimate, cjkCharacters)));
+  // Add 10% buffer for code-heavy text where char/token ratio is lower
+  // (more tokens per character, e.g. identifiers, operators).
+  const codeBuffer = Math.ceil(charEstimate * 0.1);
+
+  return Math.max(1, Math.ceil(charEstimate + codeBuffer + cjkCharacters));
 }
 
 function positiveOverride(value: number): number | undefined {
