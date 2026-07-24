@@ -2,9 +2,11 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
-## [Unreleased]
+## [0.4.3] — 2026-07-24
 
-_No unreleased changes yet._
+### Fixed
+
+- **`[Streaming]` `estimateTokenCount` overestimation caused `max_tokens: 1` on large conversations (#83).** The word-count-based heuristic (`words * 1.15`) in `estimateTokenCount()` dramatically overestimates token counts for JSON-serialized chat messages (3-5× actual), because every structural character (`{`, `}`, `"`, `:`, `,`) is counted as a separate "word". For conversations approaching the context window limit (~754K tokens), this inflated `safeOutputBudget` to 1, sending `max_tokens: 1` to the API — models generated exactly 1 token then stopped with `finishReason: length`. Replaced with a charEstimate-based heuristic using OpenAI's standard "1 token ≈ 4 characters" rule, plus a 10% buffer for code-heavy text and CJK character accounting. Added `MIN_OUTPUT_BUDGET = 4096` as a safety net to prevent budget collapse under any estimation scenario.
 
 ## [0.4.2] — 2026-07-23
 
