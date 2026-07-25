@@ -559,6 +559,35 @@ const IMAGE_TOKEN_ESTIMATE = 1024;
 const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
 
 /**
+ * Maximum number of image attachments (top-level + tool-result combined) to
+ * keep in conversation history before older ones are replaced with a
+ * placeholder text note.
+ *
+ * Rationale (evidence-based, issue #38 follow-up):
+ *   - Doc `docs/issues/34-20260720-mcp-tool-result-image-dropped.md` line 264+
+ *     documents a 4.6 MB payload causing `400 Upstream request failed` on
+ *     `mimo-v2.5` after 8 MCP screenshots accumulated in history (~1-2 MB each
+ *     → base64 ~1.33× → 4.6 MB total JSON body).
+ *   - VS Code Copilot Chat is *supposed* to trim conversation history based on
+ *     `advertisedMaxInputTokens`, but our local estimator under-counts base64
+ *     image data (`IMAGE_TOKEN_ESTIMATE = 1024` per image, vs the realistic
+ *     ~80K tokens/MB). This means VS Code never sees the true payload weight
+ *     and forwards a multi-MB request that the OpenCode Go gateway rejects.
+ *   - Keeping the most recent 2 images preserves the immediate agentic context
+ *     (the model needs to compare current vs. previous screenshot in most MCP
+ *     workflows) while bounding the cumulative payload to a safe ceiling.
+ *   - OpenAI and Anthropic vision models auto-resize each image to a patch
+ *     budget (1568-2576 px) upstream, so old screenshots lose most of their
+ *     pixel value once a newer one arrives — the model rarely benefits from
+ *     keeping more than 2 in flight.
+ *
+ * Older images are replaced with a short placeholder text note so the model
+ * still knows a screenshot existed at that point in the conversation (useful
+ * for understanding agent-loop context) without incurring the payload cost.
+ */
+const MAX_HISTORY_IMAGES_KEPT = 2;
+
+/**
  * Hard upper limit (in bytes of raw image data) for a single top-level image
  * attachment pasted or dropped into the chat by the user. Top-level images
  * (screenshots, photos) are typically larger than MCP tool-result screenshots,
@@ -2091,6 +2120,23 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       }
     }
 
+    // Trim old images from conversation history to bound cumulative payload
+    // weight. MCP screenshot loops (chrome-devtools-mcp, playwright-mcp) can
+    // accumulate multi-MB base64 data URIs in history and trigger upstream
+    // `400 Upstream request failed` rejections from OpenCode Go (issue #38
+    // follow-up, documented in docs/issues/34 line 264+). Only the most recent
+    // MAX_HISTORY_IMAGES_KEPT images are kept; older ones are replaced with a
+    // short placeholder text note so the model retains conversation structure
+    // without incurring the payload cost.
+    //
+    // Applied AFTER vision proxy so proxy-replaced text descriptions (already
+    // small) are preserved, and applied BEFORE promptTokens estimation so the
+    // output budget reflects the trimmed payload.
+    const trimmedCount = trimOldImagesFromHistoryInPlace(apiMessages);
+    if (trimmedCount > 0) {
+      this.log(`[history-trim] Replaced ${trimmedCount} old image(s) with placeholder text to bound payload (kept most recent ${MAX_HISTORY_IMAGES_KEPT}).`);
+    }
+
     const thinkingPayload = buildThinkingPayload(rawModelId, settings.thinking, hasImageInput && metadata.supportsVision);
     const requestHeaders = buildOpenCodeRequestHeaders(
       messages,
@@ -3589,6 +3635,88 @@ function messagesHaveImages(messages: readonly ApiMessage[]): boolean {
     Array.isArray(message.content)
     && message.content.some((part) => part.type === "image_url")
   );
+}
+
+/**
+ * Replace image content parts in older messages with a placeholder text note
+ * in place, keeping only the most recent `MAX_HISTORY_IMAGES_KEPT` images in
+ * the conversation. This bounds the cumulative payload weight when MCP
+ * screenshot loops (chrome-devtools-mcp, playwright-mcp) accumulate base64
+ * data URIs in history and trigger upstream `400 Upstream request failed`
+ * rejections from OpenCode Go.
+ *
+ * CONTRACT:
+ *   - Iterates messages from newest to oldest, counting `image_url` parts.
+ *   - Once `MAX_HISTORY_IMAGES_KEPT` images have been seen, every subsequent
+ *     (older) image part is replaced in place with a placeholder text note.
+ *   - Non-image content parts (text, tool_calls, tool_call_id) are preserved
+ *     unchanged — the conversation structure stays intact.
+ *   - The placeholder replaces the image part in the same message's content
+ *     array; the array shape is preserved so downstream transport builders
+ *     still see a valid multimodal structure.
+ *   - Mutates the input array's message `content` fields in place (safe: the
+ *     caller `provideLanguageModelChatResponse` does not reuse the original
+ *     array after this point).
+ *
+ * INVARIANTS:
+ *   - Total `image_url` parts remaining in the array after the call ≤
+ *     `MAX_HISTORY_IMAGES_KEPT`.
+ *   - Every original image position is either preserved or replaced with a
+ *     placeholder text part — no message is silently dropped.
+ *
+ * @param messages ApiMessage[] from convertMessage() — must be in chronological
+ *                 order (oldest first, newest last), as produced by
+ *                 `messages.flatMap(convertMessage)`. Mutated in place.
+ * @returns Number of image parts that were replaced with a placeholder (for
+ *          diagnostic logging). Returns 0 when no trimming was needed.
+ */
+function trimOldImagesFromHistoryInPlace(messages: ApiMessage[]): number {
+  // Count total images to decide whether trimming is needed. Cheap pass that
+  // skips allocation and mutation for the common case (short conversations,
+  // 0-2 images).
+  let totalImages = 0;
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const part of msg.content) {
+      if (part.type === "image_url") totalImages++;
+    }
+  }
+  if (totalImages <= MAX_HISTORY_IMAGES_KEPT) {
+    return 0;
+  }
+
+  // Walk newest -> oldest, allowing the first MAX_HISTORY_IMAGES_KEPT images
+  // to pass through and replacing every older image with a placeholder note.
+  let imagesKept = 0;
+  let replacedCount = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!Array.isArray(msg.content)) continue;
+    const hasImage = msg.content.some((p) => p.type === "image_url");
+    if (!hasImage) continue;
+    // Build a new content array, replacing image parts once the budget is spent.
+    // We rebuild the array rather than splice-in-place because the original
+    // parts array may be shared with the caller's view.
+    const newContent: OpenAiContentPart[] = [];
+    for (const part of msg.content) {
+      if (part.type === "image_url") {
+        if (imagesKept < MAX_HISTORY_IMAGES_KEPT) {
+          newContent.push(part);
+          imagesKept++;
+        } else {
+          newContent.push({
+            type: "text",
+            text: "[Earlier screenshot omitted from history to keep request payload under gateway limit. The latest screenshots above are preserved.]",
+          });
+          replacedCount++;
+        }
+      } else {
+        newContent.push(part);
+      }
+    }
+    msg.content = newContent;
+  }
+  return replacedCount;
 }
 
 function hasMessagePayload(message: ApiMessage): boolean {
