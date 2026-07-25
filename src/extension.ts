@@ -3383,13 +3383,37 @@ function convertMessage(
 
       let toolContent: string | OpenAiContentPart[];
       if (toolImageParts.length > 0) {
-        const multimodal: OpenAiContentPart[] = [];
-        const joinedText = toolTextParts.join("\n");
-        if (joinedText) {
-          multimodal.push({ type: "text", text: joinedText });
+        // PROVIDER QUIRK: Xiaomi MiMo (and GLM-5.2) reject list-type tool
+        // message content with HTTP 400 "text is not set" (upstream issue
+        // anomalyco/opencode#32613). MiMo accepts multimodal content in
+        // user/assistant messages but strictly requires `role: "tool"`
+        // messages to have a plain string content. The OpenCode Go gateway
+        // passes list-type content through unchanged, so we must flatten it
+        // client-side for MiMo.
+        //
+        // For MiMo: emit a plain string — join text parts, and replace each
+        // image with a short placeholder note (the model cannot see tool
+        // images on MiMo upstream anyway, so we lose nothing and gain a
+        // working request). For other providers: keep the multimodal array
+        // (Kimi, GLM-5.1, MiniMax, Qwen all accept list-type tool content).
+        const isMimoModel = rawModelId !== undefined && /^mimo-/i.test(rawModelId);
+        if (isMimoModel) {
+          const flattened: string[] = [...toolTextParts];
+          for (let i = 0; i < toolImageParts.length; i++) {
+            flattened.push(
+              `[Tool returned an image attachment, but the MiMo upstream provider does not accept images in tool messages. Image ${i + 1} of ${toolImageParts.length} was dropped to keep the request valid.]`
+            );
+          }
+          toolContent = flattened.join("\n");
+        } else {
+          const multimodal: OpenAiContentPart[] = [];
+          const joinedText = toolTextParts.join("\n");
+          if (joinedText) {
+            multimodal.push({ type: "text", text: joinedText });
+          }
+          multimodal.push(...toolImageParts);
+          toolContent = multimodal;
         }
-        multimodal.push(...toolImageParts);
-        toolContent = multimodal;
       } else {
         toolContent = toolTextParts.join("\n");
       }
