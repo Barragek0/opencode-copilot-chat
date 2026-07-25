@@ -558,6 +558,28 @@ const IMAGE_TOKEN_ESTIMATE = 1024;
  */
 const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
 
+/**
+ * Hard upper limit (in bytes of raw image data) for a single top-level image
+ * attachment pasted or dropped into the chat by the user. Top-level images
+ * (screenshots, photos) are typically larger than MCP tool-result screenshots,
+ * so this threshold is intentionally more liberal than the tool-result guard.
+ *
+ * Rationale (evidence-based):
+ *   - Anthropic API hard limit: 10 MB per image base64 (5 MB on Bedrock/Vertex).
+ *   - OpenAI API: 512 MB total payload, but upstream models auto-resize to a
+ *     patch budget (1568–2576 px long-edge) so anything larger is wasted.
+ *   - OpenCode Go gateway: limit not published, but verified to reject a
+ *     3.18 MB payload with HTTP 400 "Upstream request failed" (issue #38).
+ *   - 2 MB raw → ~2.7 MB base64, comfortably under observed rejection point
+ *     while allowing typical user screenshots/photos without false positives.
+ *
+ * Larger images are replaced with a placeholder text part so the model still
+ * knows an image was attached and the user gets an actionable hint to resize.
+ * Vision-capable models auto-downsample upstream anyway, so there is no value
+ * in forwarding multi-MB raw image data.
+ */
+const MAX_TOP_LEVEL_IMAGE_BYTES = 2_000_000;
+
 type CopilotCompatibleCapabilities = vscode.LanguageModelChatCapabilities & {
   supportsToolCalling: boolean;
   supportsImageToText: boolean;
@@ -3334,6 +3356,22 @@ function convertMessage(
     }
 
     if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
+      // SIZE GUARD: Top-level images larger than MAX_TOP_LEVEL_IMAGE_BYTES are
+      // replaced with a placeholder text part. This prevents a single oversized
+      // pasted image (e.g. 4K screenshot, high-res phone photo) from producing
+      // a multi-MB base64 payload that triggers upstream 400 "Upstream request
+      // failed" rejections from OpenCode Go. Vision-capable models auto-resize
+      // upstream to a patch budget anyway, so there is no fidelity loss in
+      // practice — the model would have downscaled it regardless. The user
+      // gets an actionable hint so they can resize and re-attach.
+      if (part.data.byteLength > MAX_TOP_LEVEL_IMAGE_BYTES) {
+        textParts.push(
+          `[Image attachment omitted: ${part.data.byteLength} bytes exceeds the `
+          + `${MAX_TOP_LEVEL_IMAGE_BYTES}-byte limit for top-level attachments. `
+          + `Resize or compress the image to under ${Math.floor(MAX_TOP_LEVEL_IMAGE_BYTES / 1_000_000)} MB and re-attach it.]`
+        );
+        continue;
+      }
       const base64 = dataPartToBase64(part.data);
       imageParts.push({
         type: "image_url",

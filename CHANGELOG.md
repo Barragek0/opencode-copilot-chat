@@ -2,6 +2,12 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **`[Vision]` Top-level image attachment size guard — prevent `400 Upstream request failed` on oversized pasted images (#38).** Pasting or dragging a large image (4K screenshot, high-res phone photo) into Copilot Chat with a vision-capable OpenCode model (e.g. `mimo-v2.5`) produced a multi-MB base64 payload that the OpenCode Go gateway rejected with HTTP 400. The top-level image handler in `convertMessage()` had **no size guard**, unlike MCP tool-result images which were already capped at 1 MB by `MAX_TOOL_RESULT_IMAGE_BYTES` (PR #79). New constant `MAX_TOP_LEVEL_IMAGE_BYTES = 2_000_000` (2 MB raw, intentionally more liberal than the 1 MB tool-result cap because user screenshots/photos are typically larger than pre-compressed MCP screenshots). Images exceeding the limit are replaced with an actionable placeholder text part — the model still knows an image was attached, and the user gets the actual byte count, the limit, and a hint to resize/compress. Threshold rationale (evidence-based): Anthropic publishes a 5–10 MB per-image limit, OpenCode Go was verified to reject 3.18 MB, and upstream vision models auto-resize to a 1568–2576 px patch budget anyway — so there is no fidelity benefit to forwarding multi-MB raw images. See `docs/issues/38-20260725-top-level-image-size-guard.md`.
+
 ## [0.4.3] — 2026-07-24
 
 ### Fixed
