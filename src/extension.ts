@@ -2032,9 +2032,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       throw new Error(`${this.definition.displayName} API key is required. Use the ${this.definition.displayName} gear icon in Language Models to configure it, then reload the window.`);
     }
 
-    const apiMessages = normalizeMessages(messages.flatMap((message) => convertMessage(message, this.reasoningContentByToolCallId)));
-    const baseSettings = getSettings();
     const rawModelId = model.rawModelId ?? resolveRawModelId(model.id);
+    const apiMessages = normalizeMessages(messages.flatMap((message) => convertMessage(message, this.reasoningContentByToolCallId, rawModelId)));
+    const baseSettings = getSettings();
     // Apply per-request Thinking selection (from Copilot Chat submenu) on top
     // of the workspace default. The override only affects the current model
     // family; other families remain at their global defaults.
@@ -3318,7 +3318,8 @@ function anthropicToolChoice(mode: vscode.LanguageModelChatToolMode): { type: "a
 
 function convertMessage(
   message: vscode.LanguageModelChatRequestMessage,
-  reasoningContentByToolCallId: ReadonlyMap<string, string>
+  reasoningContentByToolCallId: ReadonlyMap<string, string>,
+  rawModelId?: string,
 ): ApiMessage[] {
   const role = message.role === vscode.LanguageModelChatMessageRole.Assistant ? "assistant" : "user";
   const textParts: string[] = [];
@@ -3451,10 +3452,27 @@ function convertMessage(
   }
 
   if (role === "assistant" && toolCalls.length) {
+    // CONTRACT: reasoning_content injection into tool_call assistant messages
+    // is gated by model family. MiMo upstream (Xiaomi) uses a strict Pydantic-
+    // style validator that rejects assistant tool_call messages carrying a
+    // `reasoning_content` field with HTTP 400 `Upstream request failed`, once
+    // the conversation history contains tool_calls with reasoning echo. This
+    // mirrors the DeepSeek V4 issue (#36354 upstream) and was verified in this
+    // extension's logs (issue #38, 2026-07-25): MiMo succeeds until the first
+    // tool_call turn with reasoning_content, then every subsequent turn 400s.
+    //
+    // For MiMo we omit reasoning_content in the echoed assistant tool_call
+    // history. The current live response still surfaces reasoning_content to
+    // the user via the thinking panel — only the *history echo* is dropped.
+    // Other families (DeepSeek, Kimi, GLM, Qwen, MiniMax) tolerate the echo
+    // and keep it for cross-turn reasoning continuity.
+    const shouldOmitReasoningEcho = rawModelId !== undefined && /^mimo-/i.test(rawModelId);
     return [{
       role,
       content: typeof content === "string" ? content || null : content,
-      reasoning_content: reasoningForToolCalls(toolCalls, reasoningContentByToolCallId),
+      reasoning_content: shouldOmitReasoningEcho
+        ? undefined
+        : reasoningForToolCalls(toolCalls, reasoningContentByToolCallId),
       tool_calls: toolCalls
     }];
   }
