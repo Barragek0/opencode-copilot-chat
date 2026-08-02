@@ -1,7 +1,7 @@
-# Issue #41 — gpt-5.6-luna model registration + routing investigation
+# Issue #41 — gpt-5.6-luna: routing, tool calling, and reasoning fix
 
 **Date:** 2026-08-03
-**Status:** ⚠️ Partial — model registered, tool calling unresolved
+**Status:** ✅ Resolved
 **Related:** [#93](https://github.com/ltmoerdani/opencode-copilot-chat/issues/93)
 
 ## Problem
@@ -77,8 +77,9 @@ Added `"gpt-5.6-luna"` to the Go provider's `fallbackModels` array so the model 
 
 - ✅ Model registered in picker and metadata
 - ✅ Model appears in fallback list (resilient to fetch failures)
-- ✅ Simple chat (no tools) works — textChars=238
+- ✅ Simple chat (no tools) works
 - ✅ **FIXED:** Agent mode tool calls — gateway sends tool calls but finish_reason=null, now flushed correctly
+- ✅ **FIXED:** Reasoning/thinking — Responses API route + nested reasoning payload format
 - ✅ Diagnostic logging added for future debugging
 
 ## Diagnostic Output
