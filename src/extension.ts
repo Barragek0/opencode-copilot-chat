@@ -1193,7 +1193,7 @@ function updateWebviewContent(): void {
         }
         .container {
           width: 100%;
-          max-width: 480px;
+          max-width: 560px;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -1231,7 +1231,7 @@ function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>, sessionC
   (md as any).supportedCommands = commands;
 
   md.appendMarkdown(
-    `<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="330">`,
+    `<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="420">`,
   );
   md.appendMarkdown(
     "\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)",
@@ -1359,8 +1359,8 @@ function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: n
   const hasSession = sc && sc.cost > 0;
   // Session label is longer ("Session (est):") so widen the card and shift
   // the cost column right when session data is present.
-  const cx = hasSession ? 105 : 60; // cost value column
-  const width = hasSession ? 345 : 330;
+  const cx = hasSession ? 120 : 80; // cost value column
+  const width = hasSession ? 440 : 420;
   const height = s.hasData ? (hasSession ? 310 : 286) : 78;
   const bg = "#1e1e1e";
   const fg = "#d4d4d4";
@@ -1405,9 +1405,9 @@ function buildUsageTooltipSvg(s: _UsageSummary, sc?: { cost: number; requests: n
     y: number,
   ): string => [
     text(label, 14, y, 14, 700),
-    text(`Resets in ${rel(p.resetsAt)}`, 306, y, 12, 400, muted, "end"),
-    bar(p.percent, 14, y + 12, 256),
-    text(`${p.percent.toFixed(1)}%`, 306, y + 19, 14, 700, fg, "end"),
+    text(`Resets in ${rel(p.resetsAt)}`, 410, y, 12, 400, muted, "end"),
+    bar(p.percent, 14, y + 12, 340),
+    text(`${p.percent.toFixed(1)}%`, 410, y + 19, 14, 700, fg, "end"),
     text(`${usd(p.spent)} / ${usd(p.limit)} used`, 14, y + 34, 13, 400, fg),
   ].join("");
 
@@ -1425,28 +1425,28 @@ ${text(svgTitle, 14, 26, 16, 700)}
 ${period("Session (5h rolling)", s.session, 54)}
 ${period("Weekly", s.weekly, 116)}
 ${period("Monthly", s.monthly, 178)}
-<line x1="14" y1="224" x2="316" y2="224" stroke="${line}" stroke-width="1"/>
+<line x1="14" y1="224" x2="416" y2="224" stroke="${line}" stroke-width="1"/>
 ${hasSession ? [
     text("Session (est):", 14, 250, 13, 400, muted),
     text(`$${sc!.cost.toFixed(4)}`, cx, 250, 13, 700),
-    text("Requests:", 138, 250, 13, 400, muted),
-    text(String(sc!.requests), 202, 250, 13, 700),
-    text("Tokens:", 236, 250, 13, 400, muted),
-    text(tokens(sc!.promptTokens + sc!.completionTokens), 296, 250, 13, 700),
+    text("Requests:", 200, 250, 13, 400, muted),
+    text(String(sc!.requests), 280, 250, 13, 700),
+    text("Tokens:", 320, 250, 13, 400, muted),
+    text(tokens(sc!.promptTokens + sc!.completionTokens), 400, 250, 13, 700),
   ].join("") : ""}
 ${text("Today:", 14, hasSession ? 274 : 256, 13, 400, muted)}
 ${text(usd(s.today.cost), cx, hasSession ? 274 : 256, 13, 700)}
-${text("Requests:", 138, hasSession ? 274 : 256, 13, 400, muted)}
-${text(String(s.today.requests), 202, hasSession ? 274 : 256, 13, 700)}
-${text("Tokens:", 236, hasSession ? 274 : 256, 13, 400, muted)}
-${text(tokens(s.today.tokens), 296, hasSession ? 274 : 256, 13, 700)}
+${text("Requests:", 200, hasSession ? 274 : 256, 13, 400, muted)}
+${text(String(s.today.requests), 280, hasSession ? 274 : 256, 13, 700)}
+${text("Tokens:", 320, hasSession ? 274 : 256, 13, 400, muted)}
+${text(tokens(s.today.tokens), 400, hasSession ? 274 : 256, 13, 700)}
 ${s.yesterday.requests > 0 ? [
     text("Yesterday:", 14, hasSession ? 298 : 278, 13, 400, muted),
     text(usd(s.yesterday.cost), cx, hasSession ? 298 : 278, 13, 700),
-    text("Requests:", 138, hasSession ? 298 : 278, 13, 400, muted),
-    text(String(s.yesterday.requests), 202, hasSession ? 298 : 278, 13, 700),
-    text("Tokens:", 236, hasSession ? 298 : 278, 13, 400, muted),
-    text(tokens(s.yesterday.tokens), 296, hasSession ? 298 : 278, 13, 700),
+    text("Requests:", 200, hasSession ? 298 : 278, 13, 400, muted),
+    text(String(s.yesterday.requests), 280, hasSession ? 298 : 278, 13, 700),
+    text("Tokens:", 320, hasSession ? 298 : 278, 13, 400, muted),
+    text(tokens(s.yesterday.tokens), 400, hasSession ? 298 : 278, 13, 700),
   ].join("") : ""}
 </svg>`;
 }
