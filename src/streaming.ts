@@ -567,6 +567,10 @@ async function streamOpenCodeResponse(
     let buffer = "";
     let totalBytes = 0;
     let totalEvents = 0;
+    // Diagnostic: collect raw SSE data when response is empty to identify
+    // format mismatches between gateway output and our extractor (issue #93).
+    const rawSseData: unknown[] = [];
+    let extractedPartCount = 0;
     resetStreamIdleTimeout();
 
     while (!options.token.isCancellationRequested) {
@@ -598,8 +602,12 @@ async function streamOpenCodeResponse(
         for (const part of parseServerSentEvent(
           event,
           options.extractStreamParts,
-          (data) => updateRequestUsageSummary(usageSummary, data),
+          (data) => {
+            updateRequestUsageSummary(usageSummary, data);
+            rawSseData.push(data);
+          },
         )) {
+          extractedPartCount += 1;
           reportProgressPart(localRequestId, options.progress, part);
         }
       }
@@ -612,8 +620,12 @@ async function streamOpenCodeResponse(
       for (const part of parseServerSentEvent(
         buffer,
         options.extractStreamParts,
-        (data) => updateRequestUsageSummary(usageSummary, data),
+        (data) => {
+          updateRequestUsageSummary(usageSummary, data);
+          rawSseData.push(data);
+        },
       )) {
+        extractedPartCount += 1;
         reportProgressPart(localRequestId, options.progress, part);
       }
     }
@@ -623,6 +635,27 @@ async function streamOpenCodeResponse(
         `[sse-stats] totalBytes=${totalBytes} totalEvents=${totalEvents} bufferTailLen=${buffer.length}`,
       );
     }
+
+    // Diagnostic: when the gateway reported completion tokens but our
+    // extractor found nothing, dump raw SSE data to identify format mismatches.
+    // This helps diagnose issues like #93 where the model generates tokens
+    // but the response content is in an unrecognized format.
+    if (
+      usageSummary.completionTokens
+      && usageSummary.completionTokens > 0
+      && extractedPartCount === 0
+      && rawSseData.length > 0
+    ) {
+      options.output?.appendLine(
+        `[diag-empty-response] model=${options.modelId} completionTokens=${usageSummary.completionTokens} totalEvents=${totalEvents} rawSseDataCount=${rawSseData.length}`,
+      );
+      for (let i = 0; i < rawSseData.length; i++) {
+        options.output?.appendLine(
+          `[diag-sse-event-${i}] ${truncateForLog(JSON.stringify(rawSseData[i]))}`,
+        );
+      }
+    }
+
     emitSummary(totalBytes, totalEvents, { rateLimitSummary });
   } catch (error) {
     if (abortReason === "cancelled") {
@@ -1080,7 +1113,16 @@ class OpenAiResponseExtractor {
       this.collectOpenAiToolCalls(message.tool_calls);
     }
 
-    if (first.finish_reason === "tool_calls") {
+    // Flush accumulated tool calls.
+    // Some gateways (e.g. OpenCode Go for gpt-5.6-luna) omit finish_reason
+    // on the final chunk even when tool calls were streamed.  When
+    // finish_reason is null/undefined but we have pending tool calls, they
+    // are real and must be flushed — otherwise they silently disappear
+    // (issue #93).
+    if (
+      first.finish_reason === "tool_calls"
+      || (first.finish_reason == null && this.pendingToolCalls.size > 0)
+    ) {
       const toolParts = this.flushToolCalls();
       this.emittedToolCallsCount += toolParts.length;
       parts.push(...toolParts);

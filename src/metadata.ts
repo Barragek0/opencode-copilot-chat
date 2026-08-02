@@ -174,6 +174,7 @@ const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelL
     "qwen3.7-max": { contextWindow: 1000000, maxOutputTokens: 65536 },
     "qwen3.6-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "qwen3.5-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
+    "gpt-5.6-luna": { contextWindow: 1050000, maxOutputTokens: 128000 },
     "hy3-preview": { contextWindow: 256000, maxOutputTokens: 64000 },
     "ring-2.6-1t": { contextWindow: 262000, maxOutputTokens: 66000 },
   },
@@ -281,6 +282,7 @@ export const VISION_CAPABLE_MODELS = new Set([
   "qwen3.6-plus",
   "qwen3.6-plus-free",
   "qwen3.5-plus",
+  "gpt-5.6-luna",
 ]);
 
 export function isFreshModelMetadata(
