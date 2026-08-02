@@ -14,6 +14,7 @@ const defaultSettings: ThinkingSettings = {
   glm: "off",
   kimi: "off",
   minimax: "off",
+  openai: "off",
   qwen: "off",
   qwenBudget: "auto",
   mimo: "off",

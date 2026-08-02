@@ -21,7 +21,10 @@ export function resolveModelRouting(
   // Resolve agent-host variants to their base vendor for routing decisions.
   const baseVendor = resolveBaseVendor(provider.vendor);
 
-  if (baseVendor === ZEN_VENDOR && /^gpt-/i.test(modelId)) {
+  // GPT models use the Responses API (not chat-completions).
+  // OpenCode Go docs require gpt-5.6-luna on /v1/responses.
+  // OpenAI reasoning models (GPT-5.x) only support reasoning via Responses API.
+  if (/^gpt-/i.test(modelId)) {
     return {
       endpointKind: "responses",
       endpointUrl: provider.responsesUrl ?? provider.chatCompletionsUrl,

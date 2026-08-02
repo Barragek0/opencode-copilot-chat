@@ -336,6 +336,7 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
     modelsUrl: "https://opencode.ai/zen/go/v1/models",
     chatCompletionsUrl: "https://opencode.ai/zen/go/v1/chat/completions",
     messagesUrl: "https://opencode.ai/zen/go/v1/messages",
+    responsesUrl: "https://opencode.ai/zen/go/v1/responses",
     testModelId: "deepseek-v4-flash",
     fallbackModels: [
       "deepseek-v4-pro",
@@ -354,6 +355,7 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
       "qwen3.7-max",
       "qwen3.6-plus",
       "qwen3.5-plus",
+      "gpt-5.6-luna",
     ]
   };
   const zen: ProviderDefinition = {
@@ -1012,6 +1014,7 @@ async function showThinkingEffortPicker(): Promise<void> {
     { label: "Kimi (kimi-k2.*)", key: "kimi", options: ["on", "off"] },
     { label: "Mimo (mimo-v2.*)", key: "mimo", options: ["off", "low", "medium", "high"] },
     { label: "MiniMax (minimax-m*)", key: "minimax", options: ["off", "on"] },
+    { label: "OpenAI GPT (gpt-*)", key: "openai", options: ["off", "low", "medium", "high", "xhigh"] },
     { label: "Qwen (qwen3.*)", key: "qwen", options: ["auto", "on", "off"] },
     { label: "Qwen Thinking Budget", key: "qwenBudget", options: ["auto", "4096", "16384", "32768", "81920"] }
   ];
@@ -2820,6 +2823,7 @@ function buildResponsesRequestBody(
 ): Record<string, unknown> {
   const input = messages.flatMap((message) => responsesInputItemsFromMessage(message));
   const tools = mapResponsesTools(options.tools);
+  const thinkingPayload = buildThinkingPayload(modelId, settings.thinking, messagesHaveImages(messages));
 
   return {
     model: modelId,
@@ -2828,6 +2832,7 @@ function buildResponsesRequestBody(
     // Only send temperature if the model supports it (not deprecated)
     ...(metadata.temperature !== false ? { temperature: settings.temperature } : {}),
     stream: true,
+    ...thinkingPayload,
     ...(tools.length ? { tools, tool_choice: toolChoice(options.toolMode) } : {}),
     text: { verbosity: modelId === "gpt-5-codex" ? "medium" : "low" },
   };
@@ -3879,6 +3884,7 @@ function getSettings(): ApiSettings {
       glm: config.get<ThinkingSettings["glm"]>("thinking.glm", "off"),
       kimi: config.get<ThinkingSettings["kimi"]>("thinking.kimi", "off"),
       minimax: config.get<ThinkingSettings["minimax"]>("thinking.minimax", "off"),
+      openai: config.get<ThinkingSettings["openai"]>("thinking.openai", "off"),
       qwen: config.get<ThinkingSettings["qwen"]>("thinking.qwen", "off"),
       qwenBudget: config.get<ThinkingSettings["qwenBudget"]>("thinking.qwenBudget", "auto"),
       mimo: config.get<ThinkingSettings["mimo"]>("thinking.mimo", "off"),

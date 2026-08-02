@@ -21,13 +21,14 @@ export interface ThinkingSettings {
   glm: "off" | "high" | "max";
   kimi: "on" | "off";
   minimax: "off" | "on";
+  openai: "off" | "low" | "medium" | "high" | "xhigh";
   qwen: "auto" | "on" | "off";
   qwenBudget: "auto" | "4096" | "16384" | "32768" | "81920";
   mimo: "off" | "low" | "medium" | "high";
 }
 
 /** Detected thinking family for a raw model id. */
-export type ThinkingFamily = "deepseek" | "glm" | "kimi" | "minimax" | "qwen" | "mimo" | null;
+export type ThinkingFamily = "deepseek" | "glm" | "kimi" | "minimax" | "openai" | "qwen" | "mimo" | null;
 
 /**
  * Detect which Thinking family a raw model id belongs to. Used both to render
@@ -38,8 +39,7 @@ export function thinkingFamily(modelId: string): ThinkingFamily {
   if (/^deepseek-/i.test(modelId)) return "deepseek";
   if (/^glm-/i.test(modelId)) return "glm";
   if (/^kimi-/i.test(modelId)) return "kimi";
-  if (/^minimax-/i.test(modelId)) return "minimax";
-  if (/^qwen3(?:\.|-)/i.test(modelId)) return "qwen";
+  if (/^minimax-/i.test(modelId)) return "minimax";  if (/^gpt-/i.test(modelId)) return "openai";  if (/^qwen3(?:\.|-)/i.test(modelId)) return "qwen";
   if (/^mimo-/i.test(modelId)) return "mimo";
   return null;
 }
@@ -211,6 +211,28 @@ export function buildFamilyThinkingSchema(
     };
   }
 
+  if (family === "openai") {
+    return {
+      properties: {
+        reasoningEffort: {
+          type: "string",
+          title: "Thinking Effort",
+          enum: ["off", "low", "medium", "high", "xhigh"],
+          enumItemLabels: ["Off", "Low", "Medium", "High", "XHigh"],
+          enumDescriptions: [
+            "Fastest responses",
+            "Faster responses with less reasoning",
+            "Balanced reasoning and speed",
+            "Greater reasoning depth",
+            "Maximum reasoning depth"
+          ],
+          default: "off",
+          group: "navigation"
+        }
+      }
+    };
+  }
+
   if (family === "kimi") {
     return {
       properties: {
@@ -359,6 +381,14 @@ export function applyRequestThinkingOverride(
       next.minimax = reasoningEffort as ThinkingSettings["minimax"];
     }
   }
+  if (family === "openai") {
+    if (typeof reasoningEffort === "string") {
+      const valid = ["off", "low", "medium", "high", "xhigh"];
+      if (valid.includes(reasoningEffort)) {
+        next.openai = reasoningEffort as ThinkingSettings["openai"];
+      }
+    }
+  }
   if (family === "qwen") {
     if (typeof thinkingMode === "string" && (thinkingMode === "auto" || thinkingMode === "on" || thinkingMode === "off")) {
       next.qwen = thinkingMode;
@@ -397,6 +427,17 @@ export function buildThinkingPayload(modelId: string, thinking: ThinkingSettings
       return {};
     }
     return { reasoning_effort: thinking.deepseek };
+  }
+
+  // OpenAI GPT 5.x models via Responses API: reasoning is a nested object.
+  // Supported values: "none", "minimal", "low", "medium", "high", "xhigh", "max".
+  // The OpenCode gateway forwards reasoning.effort to the OpenAI Responses API.
+  // Note: VS Code Copilot UI maps "max" → we map to "xhigh" for OpenAI.
+  if (/^gpt-/i.test(modelId)) {
+    if (thinking.openai === "off") {
+      return {};
+    }
+    return { reasoning: { effort: thinking.openai } };
   }
 
   if (/^glm-/i.test(modelId)) {
