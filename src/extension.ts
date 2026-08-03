@@ -1870,20 +1870,30 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     // 1. Try BYOK configuration first (VS Code may supply the API key directly).
     let apiKey = getConfiguredApiKey(opts);
 
-    // 2. Fall back to secret storage when VS Code provided a configuration
-    //    object but it did not contain a usable API key.
+    // 2. Fall back to the extension's own secret storage when BYOK did not
+    //    provide a usable key. This supports users who stored their key via
+    //    the extension's `Set API Key` command instead of VS Code's native
+    //    Manage Models / BYOK flow.
     //
-    //    The `options.configuration` truthy check is the key discriminator:
+    //    CONTRACT: Per vscode.proposed.chatProvider.d.ts, `options.configuration`
+    //    is only present when the provider declared a `configurationSchema` in
+    //    package.json AND the user has configured a BYOK group. When the user
+    //    stored the key via the extension command only, VS Code passes
+    //    `configuration=undefined` — this is NOT a "still resolving" state
+    //    that will be retried with a BYOK key, it means no BYOK group exists.
+    //    Therefore we must consult secret storage unconditionally.
     //
-    //    • configuration=undefined → VS Code is still resolving; return []
-    //      and let it call again with the real BYOK key.
-    //    • configuration={apiKey:"sk-..."} → BYOK key resolved above (step 1).
-    //    • configuration={} → VS Code 1.126+ sent an empty configuration for
-    //      non-BYOK providers; fall back to secret storage.
-    //    • Agent variants never receive BYOK keys (no configuration schema),
-    //      so they always need the secrets fallback regardless of whether
-    //      options.configuration is present.
-    if (!apiKey && (this.definition.isAgentVariant || options.configuration)) {
+    //    This mirrors the reference implementation in Copilot's own
+    //    `AbstractLanguageModelChatProvider.provideLanguageModelChatInformation`,
+    //    which always falls back to its own storage when `configuration.apiKey`
+    //    is absent (see microsoft/vscode `extensions/copilot/src/extension/byok/
+    //    vscode-node/abstractLanguageModelChatProvider.ts`).
+    //
+    //    See issue #86: non-agent `opencodezen` returned 0 models when the key
+    //    was set via the extension command, because the previous guard
+    //    `isAgentVariant || options.configuration` skipped the fallback for
+    //    non-agent providers with `configuration=undefined`.
+    if (!apiKey) {
       apiKey = await this.context.secrets.get(SECRET_KEY);
     }
 
