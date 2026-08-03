@@ -2,6 +2,9 @@
 .vscode/**
 .vscode-test/**
 node_modules/**
+!node_modules/@silvia-odwyer/
+!node_modules/@silvia-odwyer/photon-node/
+!node_modules/@silvia-odwyer/photon-node/**
 src/**
 *.vsix
 tsconfig.json

@@ -167,6 +167,11 @@
           "default": true,
           "description": "Show the latest OpenCode prompt/output/cache usage summary in the VS Code status bar after each response."
         },
+        "opencodego.showProviderPrefix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the OpenCode Go or OpenCode Zen provider prefix in model names."
+        },
         "opencodego.freeOnly": {
           "type": "boolean",
           "default": true,
@@ -331,5 +336,8 @@
     "@types/vscode": "^1.125.0",
     "@vscode/vsce": "^3.9.2",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@silvia-odwyer/photon-node": "^0.3.4"
   }
 }

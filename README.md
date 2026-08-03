@@ -326,6 +326,7 @@ To manage agent API keys separately or see agent vendors in the Manage panel, en
 | `opencodego.requestTimeoutSeconds` | `600` | Total request timeout |
 | `opencodego.streamIdleTimeoutSeconds` | `120` | Cancel if stream goes idle |
 | `opencodego.showUsageStatusBar` | `true` | Show usage summary in status bar |
+| `opencodego.showProviderPrefix` | `true` | Include `OpenCode Go` / `OpenCode Zen` in model names |
 | `opencodego.freeOnly` | `true` | Zen: free models only. `false` = include paid |
 | `opencodego.agentsWindow` | `true` | Expose agent-host model variants (`targetChatSessionType`) for the Agents window |
 | `opencodego.showAgentModelsInManagePanel` | `false` | Show agent vendors in Manage Language Models panel |

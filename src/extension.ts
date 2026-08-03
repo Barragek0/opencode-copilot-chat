@@ -8,7 +8,7 @@ import {
   MODELS_DEV_API_URL,
   bundledModelMetadataSnapshot,
   fallbackModelMetadata,
-  getContextSizeOptions,
+  getContextSizeOptionsForModel,
   hasExplicitModelLimits,
   isFreshModelMetadata,
   normalizeLiveModelMetadata,
@@ -46,6 +46,8 @@ import {
 } from "./streaming";
 import { GO_VENDOR, ZEN_VENDOR, AGENT_GO_VENDOR, AGENT_ZEN_VENDOR, resolveBaseVendor, type AllProviderVendor, type ProviderVendor } from "./providerTypes";
 import { isInternalDataPart } from "./chatParts";
+import { normalizeImageDataUrl } from "./imageNormalizer";
+import { providerModelDisplayName } from "./modelNames";
 
 import {
   formatCacheHitRatio,
@@ -735,6 +737,7 @@ export function activate(context: vscode.ExtensionContext) {
   ensureGoUsageStatusBar(context);
   const goProvider = new OpenCodeProvider(context, PROVIDERS[GO_VENDOR]);
   const zenProvider = new OpenCodeProvider(context, PROVIDERS[ZEN_VENDOR]);
+  const modelInfoProviders: OpenCodeProvider[] = [goProvider, zenProvider];
 
   const subscriptions: vscode.Disposable[] = [
     vscode.lm.registerLanguageModelChatProvider(GO_VENDOR, goProvider),
@@ -900,6 +903,7 @@ export function activate(context: vscode.ExtensionContext) {
   if (enableAgents) {
     const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
     const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
+    modelInfoProviders.push(agentGoProvider, agentZenProvider);
     subscriptions.push(
       vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider),
       vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider),
@@ -912,6 +916,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("opencodego.showUsageStatusBar")) {
         resetUsageStatusBar();
+      }
+      if (event.affectsConfiguration("opencodego.showProviderPrefix")) {
+        for (const provider of modelInfoProviders) {
+          provider.notifyModelInfoChanged();
+        }
       }
     }),
   );
@@ -1929,6 +1938,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     const settings = getSettings();
     const metadataSnapshot = await this.getMetadataSnapshot();
+    const showProviderPrefix = vscode.workspace
+      .getConfiguration("opencodego")
+      .get<boolean>("showProviderPrefix", true);
 
     // CONTRACT: VS Code calls provideLanguageModelChatInformation frequently
     // (every ~300ms during UI refresh). Per-model logging produces thousands
@@ -1962,7 +1974,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
       const sharedFields: Omit<OpenCodeModel, "id" | "targetChatSessionType"> = {
         rawModelId: modelId,
-        name: `${this.definition.modelNamePrefix} / ${formatModelName(modelId)}`,
+        name: providerModelDisplayName(this.definition.modelNamePrefix, modelId, showProviderPrefix),
         family: `${this.definition.isAgentVariant && this.definition.baseVendor ? this.definition.baseVendor : this.definition.vendor}-${modelId}-${MODEL_METADATA_REVISION}`,
         // Include effective limits in version so VS Code invalidates stale
         // picker metadata after limit changes (eg. 2M -> 262K corrections).
@@ -2047,6 +2059,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     const rawModelId = model.rawModelId ?? resolveRawModelId(model.id);
     const apiMessages = normalizeMessages(messages.flatMap((message) => convertMessage(message, this.reasoningContentByToolCallId, rawModelId)));
+    const normalizedImageCount = await normalizeImagePartsInPlace(apiMessages);
+    if (normalizedImageCount > 0) {
+      this.log(`[vision] Normalized ${normalizedImageCount} image attachment(s) to provider-safe dimensions/encoding.`);
+    }
     const baseSettings = getSettings();
     // Apply per-request Thinking selection (from Copilot Chat submenu) on top
     // of the workspace default. The override only affects the current model
@@ -3541,6 +3557,31 @@ function dataPartToBase64(data: Uint8Array): string {
   return output;
 }
 
+async function normalizeImagePartsInPlace(messages: ApiMessage[]): Promise<number> {
+  let normalizedCount = 0;
+
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) {
+      continue;
+    }
+
+    for (const part of message.content) {
+      const url = part.type === "image_url" ? part.image_url?.url : undefined;
+      if (!url) {
+        continue;
+      }
+
+      const normalizedUrl = await normalizeImageDataUrl(url);
+      if (normalizedUrl !== url && part.image_url) {
+        part.image_url.url = normalizedUrl;
+        normalizedCount += 1;
+      }
+    }
+  }
+
+  return normalizedCount;
+}
+
 function reasoningForToolCalls(
   toolCalls: OpenAiToolCall[],
   reasoningContentByToolCallId: ReadonlyMap<string, string>
@@ -3818,7 +3859,9 @@ function modelConfigurationSchema(
   }
 
   // --- Context Size (tiered pricing) ---
-  const contextSizeOptions = metadata?.cost ? getContextSizeOptions(metadata.cost, metadata.contextWindow) : undefined;
+  const contextSizeOptions = metadata
+    ? getContextSizeOptionsForModel(modelId, metadata.cost, metadata.contextWindow)
+    : undefined;
   if (contextSizeOptions && contextSizeOptions.length > 0) {
     properties.contextSize = {
       type: "number",
@@ -4359,33 +4402,6 @@ function costCategory(cost: { input: number; output: number }): string {
   if (weighted <= 25) return "medium";
   if (weighted <= 50) return "high";
   return "very_high";
-}
-
-function formatModelName(modelId: string): string {
-  const parts = modelId.split("-");
-  const displayParts: string[] = [];
-
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index];
-
-    if (/^\d+$/.test(part) && /^\d+$/.test(parts[index + 1] ?? "")) {
-      const versionParts = [part];
-
-      while (/^\d+$/.test(parts[index + 1] ?? "")) {
-        versionParts.push(parts[index + 1]);
-        index += 1;
-      }
-
-      displayParts.push(versionParts.join("."));
-      continue;
-    }
-
-    displayParts.push(part);
-  }
-
-  return displayParts
-    .map((part) => part.toUpperCase() === part ? part : part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,6 +2,17 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **`[Model Picker]` Optional provider prefixes (#92).** Added `opencodego.showProviderPrefix` (default `true`) to hide `OpenCode Go` / `OpenCode Zen` prefixes in narrow model pickers when desired. Changes refresh the registered model names immediately.
+- **`[Model Picker]` Kimi context-size selector (#87).** Kimi models with a context window larger than 256K now expose `256K` and the full window in the per-model configuration schema, with the smaller tier selected by default.
+
+### Fixed
+
+- **`[Vision]` Normalize image attachments before OpenCode Go requests (#94).** Image data URLs are resized and re-encoded using the same 2000x2000 / 5 MB base64 limits used by OpenCode's CLI, while preserving the original image when normalization is unavailable.
+
 ## [0.4.5] — 2026-08-03
 
 ### Fixed
