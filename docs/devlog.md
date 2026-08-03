@@ -1,5 +1,5 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `fix/mimo-thinking-budget` | **Updated:** 2026-07-23 Asia/Jakarta | **Current Phase:** Issue #36 — ✅ Fixed, ready to push
+**Branch:** `xianhongtao/issue98` | **Updated:** 2026-08-03 Asia/Jakarta | **Current Phase:** Issue #98 — premature tool-call flush regression, fix implemented
 
 ---
 
@@ -11,7 +11,26 @@
 | **Worked On** | Final stabilization of #36 fix. After iteration 3 (suffix-repetition detection), user reported: (a) `treatReasoningAsContent` was leaking thinking to visible text, (b) `contentAfterReasoning` guard was suppressing ALL models, (c) thinking/reasoning was being "cut off" and stopping without warning. Through 4 additional iterations: (1) removed `treatReasoningAsContent` to fix leak → thinking went back to thinking panel ✅, (2) reverted `contentAfterReasoning` and `shouldSuppressTextEmit` which were false-positiving on DeepSeek/GLM/Kimi (they legitimately use `reasoning_content` then `content`), (3) re-added `treatReasoningAsContent` with correct condition: only when Go gateway + NO `reasoning_effort` in body. Key insight from web research: upstream issue #37635 is confirmed (gateway bug) and PR #37558 merged `reasoning_content` parsing — but the gateway bug itself persists. |
 | **Stopped At** | All fixes verified working. Documentation updated. Ready to push. |
 | **Next Action** | → Commit all changes → push `fix/mimo-thinking-budget` branch → open PR. |
-| **Open Issues** | (1)-(9) same as before. (10) Log spam from agent-host provider still high (#36 debugging showed it). (11) Upstream #37635 still open, workaround can be removed when fixed server-side. |
+| **Open Issues** | (1)-(9) same as before. (10) Log spam from agent-host provider still high (#36 debugging showed it). (11) Upstream #37635 still open, workaround can be removed when fixed server-side. (12) #98 premature tool-call flush regression — fix implemented, pending compile/test. |
+
+---
+
+## 🔬 Issue #98 — Premature tool-call flush (empty `<invoke>`) — 2026-08-03
+
+**Branch:** `xianhongtao/issue98`
+
+**Problem:** After 0.4.4 (#93 gpt-5.6-luna fix), DeepSeek-V4 via OpenCode Zen produced malformed tool calls — `<invoke>` with no `<parameter>` — causing an unrecoverable tool-calling loop. Same model works in OpenCode CLI; reverting to 0.4.3 fixes it.
+
+**Root cause:** #93 added a flush condition `finish_reason == null && pendingToolCalls.size > 0` in `OpenAiResponseExtractor.extractStreamParts()`. Standard OpenAI-compatible SSE streams report `finish_reason: null` on every intermediate chunk, so the first tool-call delta chunk flushed an INCOMPLETE call (empty arguments → `{}` → `<invoke>` without `<parameter>`).
+
+**Fix:**
+1. Flush ONLY on `finish_reason === "tool_calls"` (never on `null`).
+2. New `OpenAiResponseExtractor.flushRemainingToolCalls()` flushes pending calls once at end-of-stream (after `streamOpenCodeResponse` returns) — preserves #93 for gateways omitting finish_reason (gpt-5.6-luna on Go).
+3. Extracted pure `ToolCallAccumulator` (`src/toolCallAccumulator.ts`, no `vscode` import) + unit tests `src/test/toolCallAccumulator.test.ts` (multi-chunk stream emits exactly one complete call; no premature flush; end-of-stream flush; edge cases).
+
+**Files:** `src/streaming.ts`, `src/toolCallAccumulator.ts` (new), `src/test/toolCallAccumulator.test.ts` (new), `CHANGELOG.md`, `docs/issues/42-20260803-premature-tool-call-flush.md`.
+
+**Verification:** `npm run compile`, `npm test`, `npm run test-retry` — all pass. Manual F5: deepseek-v4 (Zen) tool call emits full `<parameter>` ✅, tool loop resolved. ⚠️ gpt-5.6-luna (Go) NOT live-verified — China users cannot access GPT-series models via the gateway; the #93 end-of-stream path is covered by unit tests and the shared extractor code path, but a live check on gpt-5.6-luna remains recommended.
 
 ---
 

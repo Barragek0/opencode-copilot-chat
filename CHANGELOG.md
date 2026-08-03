@@ -2,6 +2,12 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [0.4.5] — 2026-08-03
+
+### Fixed
+
+- **`[Streaming]` Premature tool-call flush caused empty `<invoke>` calls and an unrecoverable tool-calling loop (#98).** The 0.4.4 fix for gpt-5.6-luna (#93) flushed accumulated tool calls whenever `finish_reason` was `null`/`undefined` and tool calls were pending. Standard OpenAI-compatible streams (DeepSeek-V4 via OpenCode Zen, plus Kimi, GLM, Qwen non-plus, MiniMax non-m2.x, MiMo) report `finish_reason: null` on EVERY intermediate chunk, so the first tool-call delta chunk flushed an INCOMPLETE call — empty arguments parsed as `{}`, and VS Code rendered `<invoke>` without `<parameter>`. The model then looped retrying the malformed call. `OpenAiResponseExtractor` now flushes ONLY on `finish_reason === "tool_calls"`; gateways that omit it (gpt-5.6-luna on OpenCode Go) are flushed once at end-of-stream via the new `flushRemainingToolCalls()`, so #93 stays fixed. Tool-call accumulation was extracted into a pure, unit-tested `ToolCallAccumulator` (`src/toolCallAccumulator.ts`, no `vscode` import). Documented in `docs/issues/42-20260803-premature-tool-call-flush.md`.
+
 ## [0.4.4] — 2026-07-25
 
 ### Fixed
