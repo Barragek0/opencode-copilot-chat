@@ -20,7 +20,7 @@ import {
  * causing an unrecoverable tool-call loop (issue #98).
  *
  * The accumulator must therefore ONLY flush on `finish_reason === "tool_calls"`
- * (or via `flushRemaining()` at end-of-stream for gateways that omit it), never
+ * (or via `flushRemainingToolCalls()` at end-of-stream for gateways that omit it), never
  * on intermediate `finish_reason: null` chunks.
  */
 
@@ -90,13 +90,13 @@ describe("ToolCallAccumulator — no premature flush on intermediate chunks (#98
   it("is a no-op when nothing was collected", () => {
     const acc = new ToolCallAccumulator();
     assert.deepEqual(acc.flush(), []);
-    assert.deepEqual(acc.flushRemaining(), []);
+    assert.deepEqual(acc.flushRemainingToolCalls(), []);
     assert.equal(acc.size, 0);
   });
 });
 
 describe("ToolCallAccumulator — end-of-stream flush for gateways omitting finish_reason (#93)", () => {
-  it("flushRemaining emits the complete call when the gateway never sends 'tool_calls'", () => {
+  it("flushRemainingToolCalls emits the complete call when the gateway never sends 'tool_calls'", () => {
     const acc = new ToolCallAccumulator();
     acc.collect(nameChunk);
     acc.collect(argsChunk1);
@@ -104,7 +104,7 @@ describe("ToolCallAccumulator — end-of-stream flush for gateways omitting fini
 
     // No finish_reason anywhere in the stream — emulate gpt-5.6-luna on Go.
     assert.equal(ToolCallAccumulator.shouldFlushOnFinishReason(null), false);
-    const flushed = acc.flushRemaining();
+    const flushed = acc.flushRemainingToolCalls();
 
     assert.equal(flushed.length, 1);
     assert.equal(flushed[0].name, "grep_search");
@@ -112,13 +112,13 @@ describe("ToolCallAccumulator — end-of-stream flush for gateways omitting fini
     assert.equal(acc.size, 0);
   });
 
-  it("flushRemaining is a no-op after a normal finish_reason flush", () => {
+  it("flushRemainingToolCalls is a no-op after a normal finish_reason flush", () => {
     const acc = new ToolCallAccumulator();
     acc.collect(nameChunk);
     acc.collect(argsChunk1);
     acc.collect(argsChunk2);
     acc.flush();
-    assert.deepEqual(acc.flushRemaining(), []);
+    assert.deepEqual(acc.flushRemainingToolCalls(), []);
   });
 });
 

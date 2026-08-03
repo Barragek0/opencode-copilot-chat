@@ -104,7 +104,7 @@ export class ToolCallAccumulator {
    * trigger a flush — flushing there emits an incomplete tool call with empty
    * arguments (rendered by VS Code as `<invoke>` without `<parameter>`).
    * Gateways that omit `finish_reason` entirely are handled by
-   * `flushRemaining()` at end-of-stream.
+   * `flushRemainingToolCalls()` at end-of-stream.
    */
   static shouldFlushOnFinishReason(finishReason: unknown): boolean {
     return finishReason === "tool_calls";
@@ -132,7 +132,7 @@ export class ToolCallAccumulator {
    * gateways that omit the final `finish_reason: "tool_calls"` event. Safe
    * no-op when nothing is pending.
    */
-  flushRemaining(): FlushedToolCall[] {
+  flushRemainingToolCalls(): FlushedToolCall[] {
     if (this.pending.size === 0) {
       return [];
     }
