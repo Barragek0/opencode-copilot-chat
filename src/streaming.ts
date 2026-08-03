@@ -22,6 +22,11 @@ import {
   setContextWindowOutputBufferForRequest,
 } from "./contextWindowHookBridge";
 import { formatUsageLogLine } from "./usage";
+import {
+  parseToolInput,
+  ToolCallAccumulator,
+  type PendingToolCall,
+} from "./toolCallAccumulator";
 
 export interface StreamRequestOptions {
   url: string;
@@ -114,6 +119,10 @@ export async function streamChatCompletions(
     extractFullParts: extractChatCompletionParts,
   });
 
+  extractor.flushRemainingToolCalls(
+    options.progress,
+    options.requestHeaders["x-opencode-request"],
+  );
   extractor.flushReasoningFallback(
     options.progress,
     options.requestHeaders["x-opencode-request"],
@@ -182,6 +191,10 @@ export async function streamResponsesApi(
       extractChatCompletionParts(normalizeResponsesFullResponse(data)),
   });
 
+  extractor.flushRemainingToolCalls(
+    options.progress,
+    options.requestHeaders["x-opencode-request"],
+  );
   extractor.flushReasoningFallback(
     options.progress,
     options.requestHeaders["x-opencode-request"],
@@ -212,6 +225,10 @@ export async function streamGoogleGenerateContent(
       extractChatCompletionParts(normalizeGoogleFullResponse(data)),
   });
 
+  extractor.flushRemainingToolCalls(
+    options.progress,
+    options.requestHeaders["x-opencode-request"],
+  );
   extractor.flushReasoningFallback(
     options.progress,
     options.requestHeaders["x-opencode-request"],
@@ -894,7 +911,7 @@ class ThinkTagFilter {
 }
 
 class OpenAiResponseExtractor {
-  private readonly pendingToolCalls = new Map<number, PendingToolCall>();
+  private readonly toolCallAccumulator = new ToolCallAccumulator();
   private reasoningContent = "";
   private emittedTextLength = 0;
   private emittedToolCallsCount = 0;
@@ -1113,16 +1130,14 @@ class OpenAiResponseExtractor {
       this.collectOpenAiToolCalls(message.tool_calls);
     }
 
-    // Flush accumulated tool calls.
-    // Some gateways (e.g. OpenCode Go for gpt-5.6-luna) omit finish_reason
-    // on the final chunk even when tool calls were streamed.  When
-    // finish_reason is null/undefined but we have pending tool calls, they
-    // are real and must be flushed — otherwise they silently disappear
-    // (issue #93).
-    if (
-      first.finish_reason === "tool_calls"
-      || (first.finish_reason == null && this.pendingToolCalls.size > 0)
-    ) {
+    // Flush accumulated tool calls ONLY when the stream reports the OpenAI
+    // `"tool_calls"` finish reason. Intermediate chunks always carry
+    // `finish_reason: null`, so flushing there would emit an incomplete tool
+    // call (empty arguments → `<invoke>` without `<parameter>`, issue #98).
+    // Gateways that omit `finish_reason` entirely (e.g. OpenCode Go for
+    // gpt-5.6-luna, issue #93) are flushed once at end-of-stream via
+    // `flushRemainingToolCalls()`.
+    if (ToolCallAccumulator.shouldFlushOnFinishReason(first.finish_reason)) {
       const toolParts = this.flushToolCalls();
       this.emittedToolCallsCount += toolParts.length;
       parts.push(...toolParts);
@@ -1205,52 +1220,17 @@ class OpenAiResponseExtractor {
   }
 
   private collectOpenAiToolCalls(toolCalls: unknown): void {
-    if (!Array.isArray(toolCalls)) {
-      return;
-    }
-
-    for (const toolCall of toolCalls) {
-      if (!isRecord(toolCall)) {
-        continue;
-      }
-
-      const index =
-        typeof toolCall.index === "number"
-          ? toolCall.index
-          : this.pendingToolCalls.size;
-      const pending = this.pendingToolCalls.get(index) ?? {
-        id: "",
-        name: "",
-        arguments: "",
-      };
-      if (typeof toolCall.id === "string") {
-        pending.id = toolCall.id;
-      }
-
-      const fn = toolCall.function;
-      if (isRecord(fn)) {
-        if (typeof fn.name === "string") {
-          pending.name += fn.name;
-        }
-        if (typeof fn.arguments === "string") {
-          pending.arguments += fn.arguments;
-        }
-      }
-
-      this.pendingToolCalls.set(index, pending);
-    }
+    this.toolCallAccumulator.collect(toolCalls);
   }
 
   private flushToolCalls(): vscode.LanguageModelToolCallPart[] {
-    const toolCalls = Array.from(this.pendingToolCalls.values()).filter(
-      (toolCall) => toolCall.name,
-    );
-    const parts = toolCalls.map(
-      (toolCall, index) =>
+    const calls = this.toolCallAccumulator.flush();
+    const parts = calls.map(
+      (call, index) =>
         new vscode.LanguageModelToolCallPart(
-          toolCall.id || `opencodego-tool-${Date.now()}-${index}`,
-          toolCall.name,
-          parseToolInput(toolCall.arguments),
+          call.id || `opencodego-tool-${Date.now()}-${index}`,
+          call.name,
+          call.input,
         ),
     );
 
@@ -1262,9 +1242,31 @@ class OpenAiResponseExtractor {
       );
     }
 
-    this.pendingToolCalls.clear();
     this.reasoningContent = "";
     return parts;
+  }
+
+  /**
+   * Flush any tool calls still accumulated when the stream ends. Some
+   * gateways omit the `finish_reason: "tool_calls"` final event (e.g. the
+   * OpenCode Go gateway for gpt-5.6-luna, issue #93), so a final flush here
+   * prevents those calls from silently disappearing.
+   *
+   * Must be called BEFORE `flushReasoningFallback` so tool-call reasoning
+   * replication runs first. Safe no-op when nothing is pending.
+   */
+  flushRemainingToolCalls(
+    progress: vscode.Progress<vscode.LanguageModelResponsePart2>,
+    localRequestId?: string,
+  ): void {
+    if (this.toolCallAccumulator.size === 0) {
+      return;
+    }
+    const toolParts = this.flushToolCalls();
+    this.emittedToolCallsCount += toolParts.length;
+    for (const part of toolParts) {
+      reportProgressPart(localRequestId, progress, part);
+    }
   }
 }
 
@@ -1745,19 +1747,6 @@ function toolCallPartsFromOpenAiMessage(
     );
 }
 
-function parseToolInput(value: string): object {
-  if (!value.trim()) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(value);
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
 function updateRequestUsageSummary(
   summary: RequestUsageSummary,
   data: unknown,
@@ -1833,12 +1822,6 @@ function updateRequestUsageSummary(
   if (firstChoice && typeof firstChoice.finish_reason === "string") {
     summary.finishReason = firstChoice.finish_reason;
   }
-}
-
-interface PendingToolCall {
-  id: string;
-  name: string;
-  arguments: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
