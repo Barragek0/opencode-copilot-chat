@@ -2,7 +2,7 @@ import type * as Photon from "@silvia-odwyer/photon-node";
 
 const MAX_IMAGE_WIDTH = 2_000;
 const MAX_IMAGE_HEIGHT = 2_000;
-const MAX_BASE64_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_BASE64_BYTES = 5 * 1024 * 1024;
 const JPEG_QUALITIES = [80, 85, 70, 55, 40] as const;
 
 type PhotonModule = typeof Photon;
@@ -23,24 +23,35 @@ function parseBase64DataUrl(url: string): { mime: string; base64: string } | und
   return { mime: match[1], base64: match[2] };
 }
 
+export function getImageDataUrlBase64Bytes(url: string): number | undefined {
+  const parsed = parseBase64DataUrl(url);
+  return parsed ? Buffer.byteLength(parsed.base64, "utf8") : undefined;
+}
+
 function candidateSizes(width: number, height: number): Array<{ width: number; height: number }> {
   const scale = Math.min(1, MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height);
-  return Array.from({ length: 32 }).reduce<Array<{ width: number; height: number }>>((sizes) => {
-    const previous = sizes.at(-1) ?? {
-      width: Math.max(1, Math.round(width * scale)),
-      height: Math.max(1, Math.round(height * scale)),
-    };
-    const next = sizes.length === 0
-      ? previous
-      : {
-          width: previous.width === 1 ? 1 : Math.max(1, Math.floor(previous.width * 0.75)),
-          height: previous.height === 1 ? 1 : Math.max(1, Math.floor(previous.height * 0.75)),
-        };
+  let nextWidth = Math.max(1, Math.round(width * scale));
+  let nextHeight = Math.max(1, Math.round(height * scale));
+  const sizes: Array<{ width: number; height: number }> = [];
 
-    return sizes.some((size) => size.width === next.width && size.height === next.height)
-      ? sizes
-      : [...sizes, next];
-  }, []);
+  while (sizes.length < 32) {
+    if (sizes.some((size) => size.width === nextWidth && size.height === nextHeight)) {
+      break;
+    }
+
+    sizes.push({ width: nextWidth, height: nextHeight });
+
+    const reducedWidth = nextWidth === 1 ? 1 : Math.max(1, Math.floor(nextWidth * 0.75));
+    const reducedHeight = nextHeight === 1 ? 1 : Math.max(1, Math.floor(nextHeight * 0.75));
+    if (reducedWidth === nextWidth && reducedHeight === nextHeight) {
+      break;
+    }
+
+    nextWidth = reducedWidth;
+    nextHeight = reducedHeight;
+  }
+
+  return sizes;
 }
 
 /**
@@ -71,9 +82,9 @@ export async function normalizeImageDataUrl(url: string): Promise<string> {
   try {
     const width = decoded.get_width();
     const height = decoded.get_height();
-    const base64Bytes = Buffer.byteLength(parsed.base64, "utf8");
+    const base64Bytes = getImageDataUrlBase64Bytes(url) ?? Number.POSITIVE_INFINITY;
 
-    if (width <= MAX_IMAGE_WIDTH && height <= MAX_IMAGE_HEIGHT && base64Bytes <= MAX_BASE64_BYTES) {
+    if (width <= MAX_IMAGE_WIDTH && height <= MAX_IMAGE_HEIGHT && base64Bytes <= MAX_IMAGE_BASE64_BYTES) {
       return url;
     }
 
@@ -90,7 +101,7 @@ export async function normalizeImageDataUrl(url: string): Promise<string> {
 
         for (const candidate of candidates) {
           const base64 = Buffer.from(candidate.bytes).toString("base64");
-          if (Buffer.byteLength(base64, "utf8") <= MAX_BASE64_BYTES) {
+          if (Buffer.byteLength(base64, "utf8") <= MAX_IMAGE_BASE64_BYTES) {
             return `data:${candidate.mime};base64,${base64}`;
           }
         }

@@ -46,7 +46,11 @@ import {
 } from "./streaming";
 import { GO_VENDOR, ZEN_VENDOR, AGENT_GO_VENDOR, AGENT_ZEN_VENDOR, resolveBaseVendor, type AllProviderVendor, type ProviderVendor } from "./providerTypes";
 import { isInternalDataPart } from "./chatParts";
-import { normalizeImageDataUrl } from "./imageNormalizer";
+import {
+  getImageDataUrlBase64Bytes,
+  MAX_IMAGE_BASE64_BYTES,
+  normalizeImageDataUrl,
+} from "./imageNormalizer";
 import { providerModelDisplayName } from "./modelNames";
 
 import {
@@ -485,6 +489,11 @@ interface OpenAiToolCall {
   };
 }
 
+interface ConvertedMessageResult {
+  messages: ApiMessage[];
+  normalizedImageCount: number;
+}
+
 interface PendingToolCall {
   id: string;
   name: string;
@@ -590,28 +599,6 @@ const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
  * for understanding agent-loop context) without incurring the payload cost.
  */
 const MAX_HISTORY_IMAGES_KEPT = 2;
-
-/**
- * Hard upper limit (in bytes of raw image data) for a single top-level image
- * attachment pasted or dropped into the chat by the user. Top-level images
- * (screenshots, photos) are typically larger than MCP tool-result screenshots,
- * so this threshold is intentionally more liberal than the tool-result guard.
- *
- * Rationale (evidence-based):
- *   - Anthropic API hard limit: 10 MB per image base64 (5 MB on Bedrock/Vertex).
- *   - OpenAI API: 512 MB total payload, but upstream models auto-resize to a
- *     patch budget (1568–2576 px long-edge) so anything larger is wasted.
- *   - OpenCode Go gateway: limit not published, but verified to reject a
- *     3.18 MB payload with HTTP 400 "Upstream request failed" (issue #38).
- *   - 2 MB raw → ~2.7 MB base64, comfortably under observed rejection point
- *     while allowing typical user screenshots/photos without false positives.
- *
- * Larger images are replaced with a placeholder text part so the model still
- * knows an image was attached and the user gets an actionable hint to resize.
- * Vision-capable models auto-downsample upstream anyway, so there is no value
- * in forwarding multi-MB raw image data.
- */
-const MAX_TOP_LEVEL_IMAGE_BYTES = 2_000_000;
 
 type CopilotCompatibleCapabilities = vscode.LanguageModelChatCapabilities & {
   supportsToolCalling: boolean;
@@ -2058,8 +2045,13 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     }
 
     const rawModelId = model.rawModelId ?? resolveRawModelId(model.id);
-    const apiMessages = normalizeMessages(messages.flatMap((message) => convertMessage(message, this.reasoningContentByToolCallId, rawModelId)));
-    const normalizedImageCount = await normalizeImagePartsInPlace(apiMessages);
+    const convertedMessages = await Promise.all(
+      messages.map((message) => convertMessage(message, this.reasoningContentByToolCallId, rawModelId))
+    );
+    const apiMessages = normalizeMessages(convertedMessages.flatMap((result) => result.messages));
+    const normalizedImageCount = convertedMessages
+      .map((result) => result.normalizedImageCount)
+      .reduce((total, count) => total + count, 0);
     if (normalizedImageCount > 0) {
       this.log(`[vision] Normalized ${normalizedImageCount} image attachment(s) to provider-safe dimensions/encoding.`);
     }
@@ -3347,16 +3339,31 @@ function anthropicToolChoice(mode: vscode.LanguageModelChatToolMode): { type: "a
   return { type: mode === vscode.LanguageModelChatToolMode.Required ? "any" : "auto" };
 }
 
-function convertMessage(
+async function convertMessage(
   message: vscode.LanguageModelChatRequestMessage,
   reasoningContentByToolCallId: ReadonlyMap<string, string>,
   rawModelId?: string,
-): ApiMessage[] {
+): Promise<ConvertedMessageResult> {
   const role = message.role === vscode.LanguageModelChatMessageRole.Assistant ? "assistant" : "user";
   const textParts: string[] = [];
   const imageParts: OpenAiContentPart[] = [];
   const toolCalls: OpenAiToolCall[] = [];
   const toolResults: ApiMessage[] = [];
+  let normalizedImageCount = 0;
+
+  const normalizeImagePart = async (part: vscode.LanguageModelDataPart): Promise<string> => {
+    const originalUrl = `data:${part.mimeType};base64,${dataPartToBase64(part.data)}`;
+    const normalizedUrl = await normalizeImageDataUrl(originalUrl);
+    if (normalizedUrl !== originalUrl) {
+      normalizedImageCount += 1;
+    }
+    return normalizedUrl;
+  };
+
+  const finish = (messages: ApiMessage[]): ConvertedMessageResult => ({
+    messages,
+    normalizedImageCount,
+  });
 
   for (const part of message.content) {
     if (part instanceof vscode.LanguageModelToolCallPart) {
@@ -3398,10 +3405,10 @@ function convertMessage(
             );
             continue;
           }
-          const base64 = dataPartToBase64(resultPart.data);
+          const imageUrl = await normalizeImagePart(resultPart);
           toolImageParts.push({
             type: "image_url",
-            image_url: { url: `data:${resultPart.mimeType};base64,${base64}` },
+            image_url: { url: imageUrl },
           });
           continue;
         }
@@ -3458,26 +3465,22 @@ function convertMessage(
     }
 
     if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
-      // SIZE GUARD: Top-level images larger than MAX_TOP_LEVEL_IMAGE_BYTES are
-      // replaced with a placeholder text part. This prevents a single oversized
-      // pasted image (e.g. 4K screenshot, high-res phone photo) from producing
-      // a multi-MB base64 payload that triggers upstream 400 "Upstream request
-      // failed" rejections from OpenCode Go. Vision-capable models auto-resize
-      // upstream to a patch budget anyway, so there is no fidelity loss in
-      // practice — the model would have downscaled it regardless. The user
-      // gets an actionable hint so they can resize and re-attach.
-      if (part.data.byteLength > MAX_TOP_LEVEL_IMAGE_BYTES) {
+      // Normalize before the final payload guard. The previous raw-byte guard
+      // ran first and dropped images that could have been resized or compressed
+      // into a provider-safe representation.
+      const imageUrl = await normalizeImagePart(part);
+      const base64Bytes = getImageDataUrlBase64Bytes(imageUrl);
+      if (base64Bytes === undefined || base64Bytes > MAX_IMAGE_BASE64_BYTES) {
         textParts.push(
-          `[Image attachment omitted: ${part.data.byteLength} bytes exceeds the `
-          + `${MAX_TOP_LEVEL_IMAGE_BYTES}-byte limit for top-level attachments. `
-          + `Resize or compress the image to under ${Math.floor(MAX_TOP_LEVEL_IMAGE_BYTES / 1_000_000)} MB and re-attach it.]`
+          `[Image attachment omitted: normalized payload exceeds the `
+          + `${Math.floor(MAX_IMAGE_BASE64_BYTES / (1024 * 1024))} MB base64 limit. `
+          + `Resize or compress the image and re-attach it.]`
         );
         continue;
       }
-      const base64 = dataPartToBase64(part.data);
       imageParts.push({
         type: "image_url",
-        image_url: { url: `data:${part.mimeType};base64,${base64}` }
+        image_url: { url: imageUrl }
       });
       continue;
     }
@@ -3522,21 +3525,21 @@ function convertMessage(
     // Other families (DeepSeek, Kimi, GLM, Qwen, MiniMax) tolerate the echo
     // and keep it for cross-turn reasoning continuity.
     const shouldOmitReasoningEcho = rawModelId !== undefined && /^mimo-/i.test(rawModelId);
-    return [{
+    return finish([{
       role,
       content: typeof content === "string" ? content || null : content,
       reasoning_content: shouldOmitReasoningEcho
         ? undefined
         : reasoningForToolCalls(toolCalls, reasoningContentByToolCallId),
       tool_calls: toolCalls
-    }];
+    }]);
   }
 
   if (toolResults.length) {
-    return content ? [{ role, content }, ...toolResults] : toolResults;
+    return finish(content ? [{ role, content }, ...toolResults] : toolResults);
   }
 
-  return [{ role, content }];
+  return finish([{ role, content }]);
 }
 
 function dataPartToBase64(data: Uint8Array): string {
@@ -3555,31 +3558,6 @@ function dataPartToBase64(data: Uint8Array): string {
   }
 
   return output;
-}
-
-async function normalizeImagePartsInPlace(messages: ApiMessage[]): Promise<number> {
-  let normalizedCount = 0;
-
-  for (const message of messages) {
-    if (!Array.isArray(message.content)) {
-      continue;
-    }
-
-    for (const part of message.content) {
-      const url = part.type === "image_url" ? part.image_url?.url : undefined;
-      if (!url) {
-        continue;
-      }
-
-      const normalizedUrl = await normalizeImageDataUrl(url);
-      if (normalizedUrl !== url && part.image_url) {
-        part.image_url.url = normalizedUrl;
-        normalizedCount += 1;
-      }
-    }
-  }
-
-  return normalizedCount;
 }
 
 function reasoningForToolCalls(
