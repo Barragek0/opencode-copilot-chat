@@ -1,4 +1,4 @@
-# Issue #44 — gpt-5.6-luna Responses API `invalid_prompt` (HTTP 400)
+# Issue #103 — gpt-5.6-luna Responses API `invalid_prompt` (HTTP 400)
 
 **Date:** 2026-08-04
 **Status:** 🔴 Active

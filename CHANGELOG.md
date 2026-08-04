@@ -4,14 +4,20 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-05
+
 ### Added
 
-- **`[Model Picker]` Optional provider prefixes (#92).** Added `opencodego.showProviderPrefix` (default `true`) to hide `OpenCode Go` / `OpenCode Zen` prefixes in narrow model pickers when desired. Changes refresh the registered model names immediately.
-- **`[Model Picker]` Kimi context-size selector (#87).** Kimi models with a context window larger than 256K now expose `256K` and the full window in the per-model configuration schema, with the smaller tier selected by default.
+- **`[Model Picker]` Optional provider prefixes (#92).** Added `opencodego.showProviderPrefix` (default `true`) to hide `OpenCode Go` / `OpenCode Zen` prefixes in narrow model pickers when desired. Changes refresh the registered model names immediately. Documented in `docs/issues/45-20260803-issue92-provider-prefix.md`.
+- **`[Model Picker]` Kimi context-size selector (#87).** Kimi models with a context window larger than 256K now expose `256K` and the full window in the per-model configuration schema, with the smaller tier selected by default. Documented in `docs/issues/46-20260803-issue87-kimi-context-size.md`.
 
 ### Fixed
 
-- **`[Vision]` Normalize image attachments before OpenCode Go requests (#94).** Image data URLs are resized and re-encoded using the same 2000x2000 / 5 MB base64 limits used by OpenCode's CLI, while preserving the original image when normalization is unavailable.
+- **`[Vision]` Normalize image attachments before OpenCode Go requests (#94).** Image data URLs are resized and re-encoded using the same 2000x2000 / 5 MB base64 limits used by OpenCode's CLI, while preserving the original image when normalization is unavailable. Documented in `docs/issues/44-20260803-issue94-image-normalization.md`.
+
+### Changed
+
+- **`[Vision]` Top-level image handling superseded by normalizer (#94).** The previous `MAX_TOP_LEVEL_IMAGE_BYTES = 2_000_000` raw-byte guard that replaced oversized top-level attachments with a placeholder text part has been **removed**. Top-level images now flow through the new image normalizer (`src/imageNormalizer.ts`, powered by `@silvia-odwyer/photon-node`) **before** a final `MAX_IMAGE_BASE64_BYTES = 5 MB` base64 payload guard, so images that were previously dropped can now be resized and sent successfully. `convertMessage()` is now `async`. The separate `MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000` (1 MB raw) guard for MCP tool-result images is retained, since the normalizer does not bound the cumulative multi-image accumulation case. The superseded `docs/issues/38-20260725-top-level-image-size-guard.md` is marked deprecated. PR [#102](https://github.com/ltmoerdani/opencode-copilot-chat/pull/102) by [@Wallacy](https://github.com/Wallacy).
 
 ## [0.4.5] — 2026-08-03
 

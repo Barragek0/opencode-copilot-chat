@@ -1,10 +1,38 @@
-**Status:** ✅ Solved
+**Status:** ⚠️ Deprecated (superseded by #94)
+**Supersedes:** [`44-20260803-issue94-image-normalization.md`](44-20260803-issue94-image-normalization.md)
 
 # Top-Level Image Attachment Size Guard — Prevent 400 on Oversized Pasted Images
 
 **Topic:** vision / streaming / provider / gateway
-**Updated:** 2026-07-25
+**Updated:** 2026-08-05
 **Tags:** #vision #streaming #provider #gateway #bug
+
+---
+
+## ⚠️ Superseded by PR #102 (issue #94, 2026-08-04)
+
+The fix described below (a hard `MAX_TOP_LEVEL_IMAGE_BYTES = 2_000_000` raw-byte
+guard that replaced oversized images with a placeholder) was **removed** in
+PR #102 commit `4572a9f`. PR #102 introduced a proper image normalizer
+(`src/imageNormalizer.ts`) that resizes and re-encodes oversized images to the
+OpenCode CLI contract (2000×2000 / 5 MB base64) **before** any guard runs, so
+images that the old guard would have dropped are now sent successfully after
+normalization.
+
+What changed in the current code:
+
+- `MAX_TOP_LEVEL_IMAGE_BYTES` constant — **deleted**.
+- `convertMessage()` is now `async`; top-level and tool-result image parts run
+  through `normalizeImagePart()` before the final `MAX_IMAGE_BASE64_BYTES`
+  (5 MB) guard decides whether the normalized payload is still safe to send.
+- `MAX_TOOL_RESULT_IMAGE_BYTES` (1 MB raw, for cumulative MCP screenshot
+  history bounding) is **kept**, since the normalizer does not bound the
+  multi-image accumulation case.
+
+See [`44-20260803-issue94-image-normalization.md`](44-20260803-issue94-image-normalization.md)
+for the current implementation. The rest of this document is preserved as
+historical reference for issue #38 context, MiMo-specific evidence, and the
+byte-count thresholds that informed the original guard.
 
 ---
 
