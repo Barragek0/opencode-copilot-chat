@@ -671,6 +671,44 @@ export function getContextSizeOptions(
   return options;
 }
 
+/**
+ * Resolve context-size options for a concrete model. Kimi K3 exposes a
+ * cheaper 256K context mode alongside its larger window, but models.dev does
+ * not consistently publish that distinction as a pricing tier.
+ */
+export function getContextSizeOptionsForModel(
+  modelId: string,
+  cost: ModelCost | undefined,
+  fullContextWindow: number,
+): ContextSizeOption[] | undefined {
+  const metadataOptions = getContextSizeOptions(cost, fullContextWindow);
+  if (metadataOptions?.length) {
+    return metadataOptions;
+  }
+
+  const kimiBaseContext = 256_000;
+  // 262,144 is the binary representation commonly used for a 256K window;
+  // do not expose a fake second tier for models whose whole window is 256K.
+  if (!/^(?:kimi-|k3(?:-|$))/i.test(modelId) || fullContextWindow <= 262_144) {
+    return undefined;
+  }
+
+  return [
+    {
+      value: kimiBaseContext,
+      label: formatContextSize(kimiBaseContext),
+      description: "Default pricing",
+      isDefault: true,
+    },
+    {
+      value: fullContextWindow,
+      label: formatContextSize(fullContextWindow),
+      description: "Higher pricing",
+      isDefault: false,
+    },
+  ];
+}
+
 function formatContextSize(size: number): string {
   if (size >= 1_000_000) {
     const m = size / 1_000_000;
