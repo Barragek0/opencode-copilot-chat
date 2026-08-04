@@ -45,6 +45,9 @@
     "url": "https://github.com/ltmoerdani/opencode-copilot-chat/issues"
   },
   "homepage": "https://github.com/ltmoerdani/opencode-copilot-chat#readme",
+  "prettier": {
+    "trailingComma": "none"
+  },
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -322,6 +325,12 @@
     ]
   },
   "scripts": {
+    "lint": "npm run lint:js && npm run lint:md",
+    "lint:js": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "lint:md": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\"",
+    "format": "npx prettier --write .",
+    "format:check": "npx prettier --check .",
     "compile": "tsc -p ./",
     "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
     "watch": "tsc -watch -p ./",
@@ -329,13 +338,31 @@
     "test-retry": "npx --yes tsx scripts/test-retry-e2e.mts",
     "prepackage": "npm run compile && npm test",
     "package": "vsce package",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,ts,mts,cts}": [
+      "eslint --fix --max-warnings 0",
+      "prettier --write"
+    ],
+    "*.{json,jsonc,yml,yaml,css,scss,less,html,svg}": "prettier --write",
+    "*.md": [
+      "prettier --write",
+      "markdownlint-cli2 --config .markdownlint.json --fix"
+    ]
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
     "@types/vscode": "^1.125.0",
     "@vscode/vsce": "^3.9.2",
-    "typescript": "^6.0.3"
+    "eslint": "^10.8.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
+    "markdownlint-cli2": "^0.23.2",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.66.0"
   },
   "dependencies": {
     "@silvia-odwyer/photon-node": "^0.3.4"
