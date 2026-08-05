@@ -1482,6 +1482,28 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     this.changeEmitter.fire();
   }
   private readonly apiKeysByModelId = new Map<string, string>();
+
+  /**
+   * globalState key tracking whether this vendor has a configured BYOK group
+   * (issue #106). Set when a configured-group call is served; read by the
+   * groupless call to decide whether to stay silent. Scoped per vendor so an
+   * `opencodego` group does not affect `opencodezen`.
+   */
+  private get byokGroupStateKey(): string {
+    return `opencodego.byokGroup.v1.${this.definition.vendor}`;
+  }
+
+  private async hasByokGroupConfigured(): Promise<boolean> {
+    return this.context.globalState.get<boolean>(this.byokGroupStateKey, false);
+  }
+
+  private async markByokGroupConfigured(): Promise<void> {
+    await this.context.globalState.update(this.byokGroupStateKey, true);
+  }
+
+  private async clearByokGroupConfigured(): Promise<void> {
+    await this.context.globalState.update(this.byokGroupStateKey, undefined);
+  }
   /** Capped to prevent unbounded growth across long sessions. */
   private readonly reasoningContentByToolCallId = new Map<string, string>();
   private static readonly REASONING_CACHE_LIMIT = 500;
@@ -1737,10 +1759,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     if (choice.action === "clear") {
       await this.context.secrets.delete(SECRET_KEY);
-      // Note: if the user also configured the key via VS Code's Manage Models
-      // panel (BYOK), the next picker resolution will re-store it from
-      // options.configuration into secrets.  To fully remove the key, clear
-      // it from the Manage Models panel too.
+      // Reset the BYOK-group flag (issue #106) so the extension's own
+      // secret-storage flow takes over again. If the user still has a group
+      // configured in VS Code's Manage Models panel, the next picker
+      // resolution will re-mark the flag and re-store the group key — to
+      // fully remove the key, clear it from the Manage Models panel too.
+      await this.clearByokGroupConfigured();
       this.changeEmitter.fire();
       vscode.window.showInformationMessage("OpenCode Go API key cleared. If you also set it via Manage Models, remove it there too.");
       return;
@@ -1866,6 +1890,13 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     // 1. Try BYOK configuration first (VS Code may supply the API key directly).
     let apiKey = getConfiguredApiKey(opts);
 
+    // A call that carries a BYOK key is a configured-group call. Record that
+    // the vendor is configured natively, so the groupless call stays silent
+    // (issue #106, see step 2 below).
+    if (apiKey) {
+      await this.markByokGroupConfigured();
+    }
+
     // 2. Fall back to the extension's own secret storage when BYOK did not
     //    provide a usable key. This supports users who stored their key via
     //    the extension's `Set API Key` command instead of VS Code's native
@@ -1889,7 +1920,19 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     //    was set via the extension command, because the previous guard
     //    `isAgentVariant || options.configuration` skipped the fallback for
     //    non-agent providers with `configuration=undefined`.
+    //
+    //    ISSUE #106: VS Code calls this method once WITHOUT a group (the
+    //    groupless call, `configuration` undefined) and then once per configured
+    //    group. It namespaces model identifiers by group (`toModelIdentifier`:
+    //    `<vendor>/<group>/<id>` vs `<vendor>/<id>`), so a secrets-backed set
+    //    returned on the groupless call is kept ALONGSIDE the group's set and
+    //    every model is listed twice. When a BYOK group has been observed (flag
+    //    set above), the group call(s) are authoritative — return [] here so the
+    //    groupless call does not emit a duplicate set.
     if (!apiKey) {
+      if (await this.hasByokGroupConfigured()) {
+        return [];
+      }
       apiKey = await this.context.secrets.get(SECRET_KEY);
     }
 
