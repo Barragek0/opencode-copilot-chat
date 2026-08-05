@@ -1,18 +1,29 @@
 /**
- * Runtime retry with degraded parameters for HTTP 400 errors.
+ * Runtime retry decisions for HTTP failures.
  *
- * When the upstream API rejects a parameter (e.g. thinking.type "disabled",
- * invalid temperature, unsupported reasoning_effort), this module:
- * 1. Parses the error message to identify the problematic parameter
- * 2. Removes or adjusts it in the request body
- * 3. Returns the patched body for a single retry
+ * Two distinct retry families are handled here:
+ * 1. Degraded-parameter retry for HTTP 400 errors (see analyzeHttp400ForRetry).
+ * 2. Transient 5xx classification (see isTransientServerError) for short
+ *    backoff retries when the gateway router is temporarily unavailable.
  *
  * CONTRACT:
  * - Pure functions only — no vscode import, no side effects.
- * - Only handles recoverable 400 errors. Auth (401/403), rate limit (429),
- *   and server errors (5xx) are NOT retried.
- * - At most ONE retry per request to avoid infinite loops.
+ * - analyzeHttp400ForRetry only handles recoverable 400 errors. Auth
+ *   (401/403), rate limit (429), and permanent server errors are NOT retried
+ *   via parameter patching. At most ONE retry per request to avoid infinite loops.
+ * - isTransientServerError only flags server conditions that are known to be
+ *   momentary (router capacity / upstream churn). Unknown 5xx payloads are NOT
+ *   retried so real bugs surface instead of being masked by retries.
  */
+
+/** Max retries for a transient 5xx before surfacing the error to the user. */
+export const TRANSIENT_5XX_MAX_RETRIES = 2;
+
+/** Base backoff for transient 5xx retries (doubles per attempt, max ~8s). */
+export const TRANSIENT_5XX_RETRY_BASE_MS = 1000;
+
+/** Max random jitter added to each backoff to spread concurrent retries. */
+export const TRANSIENT_5XX_RETRY_JITTER_MS = 250;
 
 /** Result of attempting to patch a request body for retry. */
 export interface RetryPatch {
@@ -186,4 +197,29 @@ export function analyzeHttp400ForRetry(
     }
   }
   return undefined;
+}
+
+/**
+ * Classify an HTTP error as a transient server failure worth retrying.
+ *
+ * - 502/503/504 are transient by definition (gateway churn, upstream down).
+ * - Other 5xx are retried only when the response body identifies the known
+ *   momentary condition `Router.Unavailable` (the OpenCode Zen gateway
+ *   reports it when no healthy backend is currently reachable for a model).
+ * - Anything else (including 500s with unrelated bodies) is permanent.
+ */
+export function isTransientServerError(
+  status: number,
+  errorDetail: string,
+): boolean {
+  if (status === 502 || status === 503 || status === 504) {
+    return true;
+  }
+  return (
+    status >= 500 && /RouterUnavailable/i.test(compactErrorCode(errorDetail))
+  );
+}
+
+function compactErrorCode(value: string): string {
+  return value.replace(/[^a-zA-Z]/g, "");
 }

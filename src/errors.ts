@@ -60,11 +60,25 @@ export function buildOpenCodeRequestError(
     );
   }
 
-  const userMessage = `${providerDisplayName} API request failed (HTTP ${response.status})${modelHint ? ` for ${modelId}` : ""}: ${apiMessage}${capacityHint}`;
-  return new OpenCodeRequestError(
-    `${providerDisplayName} API request failed (${response.status})${modelHint}${sizeHint}${capacityHint}: ${apiMessage}`,
-    userMessage,
-  );
+  const userMessage = `${providerDisplayName} API request failed (HTTP ${response.status})${modelHint ? ` for ${modelId}` : ""}: ${describeRouterUnavailable(apiError, apiMessage)}${capacityHint}`;
+  const requestMessage = `${providerDisplayName} API request failed (${response.status})${modelHint}${sizeHint}${capacityHint}: ${apiMessage}`;
+  return new OpenCodeRequestError(requestMessage, userMessage);
+}
+
+/**
+ * Replace the raw gateway JSON detail with an actionable hint when the error
+ * is the transient `Router.Unavailable` condition (no healthy backend for
+ * the model right now). Returns the original message otherwise.
+ */
+function describeRouterUnavailable(
+  apiError: ParsedApiError,
+  fallback: string,
+): string {
+  const type = apiError.type?.toLowerCase() ?? "";
+  if (!type.includes("routerunavailable")) {
+    return fallback;
+  }
+  return "OpenCode's router has no healthy backend for this model right now. Retry in a few seconds, or switch to another model.";
 }
 
 export function truncateForLog(value: string, max = 1200): string {
