@@ -45,9 +45,6 @@
     "url": "https://github.com/ltmoerdani/opencode-copilot-chat/issues"
   },
   "homepage": "https://github.com/ltmoerdani/opencode-copilot-chat#readme",
-  "prettier": {
-    "trailingComma": "none"
-  },
   "engines": {
     "vscode": "^1.125.0"
   },
