@@ -1490,7 +1490,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
    * `opencodego` group does not affect `opencodezen`.
    */
   private get byokGroupStateKey(): string {
-    return `opencodego.byokGroup.v1.${this.definition.vendor}`;
+    return `opencode.byokGroup.v1.${this.definition.vendor}`;
   }
 
   private async hasByokGroupConfigured(): Promise<boolean> {
