@@ -7,7 +7,13 @@ import {
   readRateLimitInfo,
   truncateForLog,
 } from "./errors";
-import { analyzeHttp400ForRetry } from "./retry";
+import {
+  analyzeHttp400ForRetry,
+  isTransientServerError,
+  TRANSIENT_5XX_MAX_RETRIES,
+  TRANSIENT_5XX_RETRY_BASE_MS,
+  TRANSIENT_5XX_RETRY_JITTER_MS,
+} from "./retry";
 import {
   normalizeGoogleFullResponse,
   normalizeGoogleStreamEvent,
@@ -288,7 +294,7 @@ function reportProgressPart(
  *     successfully emitted, so the caller can decide whether to also
  *     accumulate into `reasoningContent` for the legacy fallback path.
  */
-const thinkingPartConstructor: // eslint-disable-line @typescript-eslint/no-explicit-any
+const thinkingPartConstructor:
   | (new (value: string | string[]) => vscode.LanguageModelResponsePart2)
   | undefined = (() => {
   const ctor = (vscode as unknown as {
@@ -325,6 +331,28 @@ function emitThinkingPart(
     // Defensive: never let a thinking-part emit failure break the visible response.
     return false;
   }
+}
+
+/**
+ * Wait for `ms` milliseconds, aborting early if the token is cancelled.
+ *
+ * IMPORTANT: the cancellation listener is registered BEFORE the timer is
+ * started, and cleared after it fires. This ordering guarantees there is no
+ * window where a cancellation arrives between `await sleep` resuming and the
+ * listener being removed — which would otherwise call `clearTimeout` on an
+ * already-finished timer (harmless) or, worse, resolve a stale listener.
+ */
+function sleepWithCancellation(
+  ms: number,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    token.onCancellationRequested(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 async function streamOpenCodeResponse(
@@ -471,18 +499,20 @@ async function streamOpenCodeResponse(
     // does not support Content-Encoding: gzip and returns HTTP 500.
     // ------------------------------------------------------------------
     let payload = rawPayload;
-    let fetchHeaders: Record<string, string> = {
+    const fetchHeaders: Record<string, string> = {
       ...(options.authHeaders ?? { Authorization: `Bearer ${options.apiKey}` }),
       "Content-Type": "application/json",
       ...options.requestHeaders,
     };
+    const fetchWithBody = (body: string) =>
+      fetch(options.url, {
+        method: "POST",
+        headers: fetchHeaders,
+        body,
+        signal: controller.signal,
+      });
 
-    let response = await fetch(options.url, {
-      method: "POST",
-      headers: fetchHeaders,
-      body: payload,
-      signal: controller.signal,
-    });
+    let response = await fetchWithBody(payload);
 
     // --- Runtime retry for recoverable HTTP 400 errors ---
     // If the upstream rejects a parameter (thinking, temperature, reasoning_effort),
@@ -502,12 +532,7 @@ async function streamOpenCodeResponse(
           `[retry] HTTP 400 recoverable: ${patch.reason}. Retrying with patched body…`,
         );
         payload = JSON.stringify(patch.body);
-        response = await fetch(options.url, {
-          method: "POST",
-          headers: fetchHeaders,
-          body: payload,
-          signal: controller.signal,
-        });
+        response = await fetchWithBody(payload);
         options.output?.appendLine(
           `[retry] Response after patch: ${response.status} ${response.statusText}`,
         );
@@ -515,8 +540,40 @@ async function streamOpenCodeResponse(
         // handler below doesn't try to re-read (the stream is already consumed).
         if (!response.ok && response.status === 400) {
           consumedErrorBody = await response.text();
+        } else {
+          // The patched retry produced a fresh (non-consumed) body, so any
+          // stored 400 detail no longer matches the current response.
+          consumedErrorBody = undefined;
         }
       }
+    }
+
+    // --- Transient 5xx retry (gateway/router capacity) ---
+    // Retry a small number of times with exponential backoff (plus jitter)
+    // when the gateway is momentarily unavailable (502/503/504, or 5xx body
+    // that names Router.Unavailable). Cancellation aborts the wait immediately.
+    let attempt = 0;
+    while (
+      attempt < TRANSIENT_5XX_MAX_RETRIES &&
+      isTransientServerError(response.status, consumedErrorBody ?? "")
+    ) {
+      attempt += 1;
+      // Jitter spreads concurrent retries so they don't pile on the gateway
+      // at the same timestamp.
+      const backoffMs = Math.round(
+        TRANSIENT_5XX_RETRY_BASE_MS * 2 ** (attempt - 1) +
+          Math.random() * TRANSIENT_5XX_RETRY_JITTER_MS,
+      );
+      options.output?.appendLine(
+        `[retry] transient ${response.status} (attempt ${attempt}/${TRANSIENT_5XX_MAX_RETRIES}); retrying in ${backoffMs}ms…`,
+      );
+      await sleepWithCancellation(backoffMs, options.token);
+      if (options.token.isCancellationRequested) {
+        break;
+      }
+      response = await fetchWithBody(payload);
+      // A fresh response may carry a new error body; drop stale 400 detail.
+      consumedErrorBody = undefined;
     }
 
     responseStatus = response.status;
@@ -1780,10 +1837,6 @@ function updateRequestUsageSummary(
       typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
     const anthropicOutputTokens =
       typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
-    const cacheCreationInputTokens =
-      typeof usage.cache_creation_input_tokens === "number"
-        ? usage.cache_creation_input_tokens
-        : undefined;
     const cacheReadInputTokens =
       typeof usage.cache_read_input_tokens === "number"
         ? usage.cache_read_input_tokens
