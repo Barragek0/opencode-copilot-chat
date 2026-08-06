@@ -4,6 +4,10 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Fixed
+
+- **`[Provider]` OpenCode Zen models listed twice when using a native BYOK group (#106).** With the API key configured via VS Code's Manage Models / BYOK flow, every OpenCode Zen model appeared twice (16 instead of 8). VS Code calls `provideLanguageModelChatInformation` once without a group and then once per configured group, namespacing identifiers by group — so the secrets-backed set emitted on the groupless call (since 0.5.0, #86) was kept alongside the group's set. The provider now records per vendor when a BYOK group has been configured and the groupless call stays silent in that case; the `Clear API Key` action resets the flag. Documented in `docs/issues/48-20260805-issue106-zen-duplicate-models.md`.
+
 ## [0.5.0] — 2026-08-05
 
 ### Added
