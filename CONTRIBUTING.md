@@ -6,15 +6,15 @@
 
 ## 🎯 Ways to contribute (easy → hard)
 
-| Level | What | How |
-|---|---|---|
-| ⭐ **Easiest** | Star the repo | Click ⭐ top-right |
-| 🐛 **Easy** | Report a bug | [Open an issue](https://github.com/ltmoerdani/opencode-copilot-chat/issues/new?template=bug_report.md) |
-| 💡 **Easy** | Suggest a feature or model | [Open a discussion](https://github.com/ltmoerdani/opencode-copilot-chat/discussions) |
-| 📸 **Easy** | Add a screenshot or GIF | Drop in `docs/screenshots/`, open PR |
-| 📝 **Medium** | Fix a typo / improve docs | Edit README or `docs/`, open PR |
-| 🔧 **Medium** | Fix a bug | Look for [`good first issue`](https://github.com/ltmoerdani/opencode-copilot-chat/labels/good%20first%20issue) label |
-| 🚀 **Advanced** | Add a new model or feature | [Start a discussion](https://github.com/ltmoerdani/opencode-copilot-chat/discussions) first, then PR |
+| Level           | What                       | How                                                                                                                  |
+| --------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| ⭐ **Easiest**  | Star the repo              | Click ⭐ top-right                                                                                                   |
+| 🐛 **Easy**     | Report a bug               | [Open an issue](https://github.com/ltmoerdani/opencode-copilot-chat/issues/new?template=bug_report.md)               |
+| 💡 **Easy**     | Suggest a feature or model | [Open a discussion](https://github.com/ltmoerdani/opencode-copilot-chat/discussions)                                 |
+| 📸 **Easy**     | Add a screenshot or GIF    | Drop in `docs/screenshots/`, open PR                                                                                 |
+| 📝 **Medium**   | Fix a typo / improve docs  | Edit README or `docs/`, open PR                                                                                      |
+| 🔧 **Medium**   | Fix a bug                  | Look for [`good first issue`](https://github.com/ltmoerdani/opencode-copilot-chat/labels/good%20first%20issue) label |
+| 🚀 **Advanced** | Add a new model or feature | [Start a discussion](https://github.com/ltmoerdani/opencode-copilot-chat/discussions) first, then PR                 |
 
 > **New to open source?** Start with [`good first issue`](https://github.com/ltmoerdani/opencode-copilot-chat/labels/good%20first%20issue) — those are picked specifically for newcomers.
 
@@ -53,9 +53,11 @@ That's it! You can now test your changes in the Extension Development Host.
 ## 🧪 Validation Scripts
 
 ### `npm run test-retry` — E2E retry test (no API key needed)
+
 Tests the runtime retry mechanism with a mock server. Proves that HTTP 400 → patch → retry → HTTP 200 works.
 
 ### `npm run validate-models` — Live API validation (requires API key)
+
 Tests ALL thinking/reasoning parameter combinations for each model against the live OpenCode API. Reuses the extension's exact logic.
 
 ```powershell
@@ -82,6 +84,15 @@ If you are an AI agent (GitHub Copilot, ChatGPT, etc.) working on this repo:
 
 These rules exist to prevent accidental pushes to production branches.
 
+### Workflow expectations
+
+- **Think first.** State assumptions explicitly; if context is missing or ambiguous, ask rather than guessing.
+- **Surgical changes.** Don't refactor or "improve" adjacent code, comments, or formatting that isn't part of the task. Match existing style. Mention unrelated issues you notice — don't fix them unasked.
+- **Fix root causes, not symptoms.** When a report names a symptom, grep every caller of the touched function and fix the shared logic once.
+- **No bulk automation.** Never mass-edit values via scripts or find/replace — change things deliberately, one at a time.
+- **Self-review.** After changes, re-read the diff as the next engineer (human or AI) who maintains this code.
+- **Verify before claiming done.** Run `npm run compile` before saying a task is complete. Keep linting and formatting at their strictest configured level — never bypass a failing hook with `--no-verify`; fix the root cause instead.
+
 ---
 
 ## 💬 Questions?
@@ -90,8 +101,4 @@ These rules exist to prevent accidental pushes to production branches.
 
 ---
 
-<div align="center">
-
 **Be kind. Be constructive. Assume good intent.** 🙏
-
-</div>
