@@ -53,6 +53,10 @@ import {
 } from "./modelLimits";
 import { buildResponsesRequestEnvelope } from "./responsesRequest";
 import { runtimeDiagnosticsLines } from "./runtimeDiagnostics";
+import {
+  estimatePromptTokenCount,
+  estimateTokenCount,
+} from "./tokenEstimate";
 
 import {
   formatCacheHitRatio,
@@ -2182,7 +2186,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     // Estimate after vision proxying and history trimming so the output budget
     // reflects the payload that is actually sent upstream.
-    const promptTokens = estimateTokenCount(JSON.stringify(apiMessages));
+    const promptTokens = estimatePromptTokenCount(apiMessages, options.tools);
     const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
 
     const thinkingPayload = buildThinkingPayload(rawModelId, settings.thinking, hasImageInput && metadata.supportsVision);
@@ -2223,7 +2227,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       }
     };
 
-    this.log(`Request: initiator=${options.requestInitiator} model=${model.id} rawModel=${rawModelId} endpoint=${routing.endpointKind} metadataSource=${metadata.source} messages=${apiMessages.length} session=${requestHeaders["x-opencode-session"]} request=${requestHeaders["x-opencode-request"]} modelConfiguration=${JSON.stringify(pickThinkingModelConfiguration(requestOverride))} thinking=${JSON.stringify(settings.thinking)} thinkingPayload=${JSON.stringify(thinkingPayload)}`);
+    this.log(`Request: initiator=${options.requestInitiator} model=${model.id} rawModel=${rawModelId} endpoint=${routing.endpointKind} metadataSource=${metadata.source} messages=${apiMessages.length} promptEstimate=${promptTokens} maxOutputTokens=${limits.maxOutputTokens} session=${requestHeaders["x-opencode-session"]} request=${requestHeaders["x-opencode-request"]} modelConfiguration=${JSON.stringify(pickThinkingModelConfiguration(requestOverride))} thinking=${JSON.stringify(settings.thinking)} thinkingPayload=${JSON.stringify(thinkingPayload)}`);
     if (settings.debugReasoning) {
       this.log("Reasoning debug is enabled. Provider reasoning_content will be written to this output channel when available.");
     }
@@ -3982,36 +3986,6 @@ function modelLimits(
     contextSize: contextSizeOverride,
     promptTokens,
   });
-}
-
-function estimateTokenCount(value: string): number {
-  if (!value) {
-    return 0;
-  }
-
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return 0;
-  }
-
-  // Standard heuristic: 1 token ≈ 4 characters (OpenAI rule of thumb).
-  // For CJK text, each character is roughly 1-2 tokens, so we add the
-  // CJK character count as an additional buffer.
-  //
-  // NOTE: We intentionally do NOT use a word-count-based heuristic here.
-  // JSON-serialized messages contain many structural characters ({, }, ", :, ,)
-  // that inflate word counts by 3-5×, causing safeOutputBudget to collapse to 1
-  // (see issue #83). The charEstimate-based approach naturally overestimates
-  // for JSON (higher char/token ratio), which is the safe direction — we prefer
-  // a conservative output budget over context overflow 400 errors.
-  const cjkCharacters = normalized.match(/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/gu)?.length ?? 0;
-  const charEstimate = Math.ceil(normalized.length / 4);
-
-  // Add 10% buffer for code-heavy text where char/token ratio is lower
-  // (more tokens per character, e.g. identifiers, operators).
-  const codeBuffer = Math.ceil(charEstimate * 0.1);
-
-  return Math.max(1, Math.ceil(charEstimate + codeBuffer + cjkCharacters));
 }
 
 function modelCapabilities(

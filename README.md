@@ -226,6 +226,11 @@ Per-model reasoning configuration, dynamically enhanced with `reasoning_options`
 
 > **`opencodego.debugReasoning`** — writes provider `reasoning_content` to **Output → OpenCode** for debugging.
 
+### Context Safety
+
+- Request budgets include both conversation messages and tool/MCP schemas, with proportional headroom for differences between provider tokenizers.
+- When an upstream provider returns exact context-overflow counts, the extension reduces the output budget and retries once automatically.
+
 ### 📊 Usage Tracking
 
 - **Go Usage Tracker** — real-time burn-rate of OpenCode Go subscription:

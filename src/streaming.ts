@@ -527,9 +527,9 @@ async function streamOpenCodeResponse(
     let response = await fetchWithBody(payload);
 
     // --- Runtime retry for recoverable HTTP 400 errors ---
-    // If the upstream rejects a parameter (thinking, temperature, reasoning_effort),
-    // patch the body and retry once. This handles stale models.dev metadata and
-    // provider API changes without requiring a code release.
+    // If the upstream rejects a parameter or reports an exact context overflow,
+    // patch the body and retry once. This handles tokenizer differences, stale
+    // models.dev metadata, and provider API changes without a hard user failure.
     let consumedErrorBody: string | undefined;
     if (response.status === 400) {
       const errorDetail = await response.text();
