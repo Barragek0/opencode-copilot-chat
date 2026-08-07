@@ -8,6 +8,31 @@ export interface ResponsesRequestEnvelopeOptions {
   toolChoice?: unknown;
 }
 
+/**
+ * Structural message shape used by the Responses input serializer. Mirrors the
+ * `ApiMessage` / `OpenAiContentPart` / `OpenAiToolCall` shapes produced by
+ * `convertMessage()` in `extension.ts` — kept local so this module stays pure
+ * (no `vscode` import) and unit-testable.
+ */
+export interface ResponsesApiMessage {
+  role: string;
+  content: string | null | readonly ResponsesApiContentPart[];
+  tool_call_id?: string;
+  tool_calls?: readonly ResponsesApiToolCall[];
+}
+
+export interface ResponsesApiContentPart {
+  type: "text" | "image_url";
+  text?: string;
+  image_url?: { url: string };
+}
+
+export interface ResponsesApiToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
 /** Build the transport-independent portion of an OpenAI Responses request. */
 export function buildResponsesRequestEnvelope(options: ResponsesRequestEnvelopeOptions): Record<string, unknown> {
   const tools = options.tools ?? [];
@@ -22,4 +47,134 @@ export function buildResponsesRequestEnvelope(options: ResponsesRequestEnvelopeO
     ...(options.thinkingPayload ?? {}),
     ...(tools.length > 0 ? { tools, tool_choice: options.toolChoice } : {}),
   };
+}
+
+// RULES: The Responses API `input` list uses a different item grammar than
+// Chat Completions `messages`. Text → `input_text`, images → `input_image`,
+// assistant text → `output_text` inside a message item, tool calls →
+// `function_call`, tool results → `function_call_output`. This converter keeps
+// that grammar in one pure module so it can be unit-tested without VS Code.
+
+/**
+ * Convert one internal `ApiMessage` into the Responses API `input` items.
+ * Returns an empty array for unsupported roles / empty user content.
+ */
+export function responsesInputItemsFromMessage(message: ResponsesApiMessage): Array<Record<string, unknown>> {
+  if (message.role === "user") {
+    const content = responsesUserContent(message.content);
+    return content.length ? [{ role: "user", content }] : [];
+  }
+
+  if (message.role === "assistant") {
+    const items: Array<Record<string, unknown>> = [];
+    const text = responsesAssistantText(message.content);
+    if (text) {
+      items.push({ role: "assistant", content: [{ type: "output_text", text }] });
+    }
+
+    for (const toolCall of message.tool_calls ?? []) {
+      items.push({
+        type: "function_call",
+        id: toolCall.id,
+        call_id: toolCall.id,
+        name: toolCall.function.name,
+        arguments: toolCall.function.arguments,
+      });
+    }
+
+    return items;
+  }
+
+  if (message.role === "tool") {
+    // The Responses API's function_call_output.output field expects a string.
+    // Tool results that carry images (e.g. MCP screenshots) cannot be
+    // represented natively here, so we degrade to the joined text payload.
+    // Vision-capable OpenAI/Anthropic/Google transports handle images in tool
+    // results natively via their respective request builders.
+    const output = typeof message.content === "string"
+      ? message.content
+      : responsesToolOutput(message.content);
+    return [{
+      type: "function_call_output",
+      call_id: message.tool_call_id ?? `tool-${Date.now()}`,
+      output,
+    }];
+  }
+
+  return [];
+}
+
+function responsesUserContent(content: ResponsesApiMessage["content"]): Array<Record<string, unknown>> {
+  if (typeof content === "string") {
+    return content ? [{ type: "input_text", text: content }] : [];
+  }
+
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  return content.flatMap((part): Array<Record<string, unknown>> => {
+    if (part.type === "text" && typeof part.text === "string") {
+      return [{ type: "input_text", text: part.text }];
+    }
+
+    if (part.type === "image_url" && part.image_url?.url) {
+      // RULES: Responses API `input_image.image_url` is a plain STRING (a
+      // fully qualified URL or a base64 data URL), unlike Chat Completions
+      // which nests it as `{ url: "..." }`. Emitting the nested object shape
+      // makes the gateway reject the whole request with `invalid_prompt`
+      // (HTTP 400) — e.g. gpt-5.6-luna with an image attachment.
+      return [{ type: "input_image", image_url: part.image_url.url }];
+    }
+
+    return [];
+  });
+}
+
+function responsesAssistantText(content: ResponsesApiMessage["content"]): string {
+  return joinedTextContent(content);
+}
+
+// RULES: Responses API function_call_output.output is a plain string and does
+// not support inline image content blocks. To preserve tool result context
+// for vision-capable models that would otherwise lose the image entirely, we
+// keep any text parts joined with newlines and append a short note when an
+// image was present. The note is intentionally brief (not a data URI) so it
+// doesn't bloat the payload; the model is told the image was omitted.
+function responsesToolOutput(content: ResponsesApiMessage["content"]): string {
+  if (!Array.isArray(content)) {
+    return JSON.stringify(content ?? "");
+  }
+
+  const text = joinedTextContent(content, "\n");
+  const hasImage = content.some((part) => part.type === "image_url" && part.image_url?.url);
+  if (!hasImage) {
+    return text || "";
+  }
+
+  return [text, "[Image attachment omitted — Responses API does not support images in tool output]"]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
+ * Join the text parts of a content array (or return a plain string as-is).
+ * Shared by the Responses, Anthropic, and Google request builders.
+ */
+export function joinedTextContent(
+  content: string | null | readonly { type: string; text?: string }[],
+  separator = "",
+): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .filter((part): part is { type: string; text: string } => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join(separator);
 }
