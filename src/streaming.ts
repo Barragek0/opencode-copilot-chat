@@ -336,22 +336,34 @@ function emitThinkingPart(
 /**
  * Wait for `ms` milliseconds, aborting early if the token is cancelled.
  *
- * IMPORTANT: the cancellation listener is registered BEFORE the timer is
- * started, and cleared after it fires. This ordering guarantees there is no
- * window where a cancellation arrives between `await sleep` resuming and the
- * listener being removed — which would otherwise call `clearTimeout` on an
- * already-finished timer (harmless) or, worse, resolve a stale listener.
+ * The shared completion path clears the timer and disposes the cancellation
+ * listener. A second cancellation check closes the registration race.
  */
 function sleepWithCancellation(
   ms: number,
   token: vscode.CancellationToken,
 ): Promise<void> {
+  if (token.isCancellationRequested) return Promise.resolve();
+
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    token.onCancellationRequested(() => {
+    let settled = false;
+    const state: { cancellation?: vscode.Disposable } = {};
+    const finish = () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      state.cancellation?.dispose();
       resolve();
-    });
+    };
+    const timer = setTimeout(finish, ms);
+    state.cancellation = token.onCancellationRequested(finish);
+
+    // Close the race between the initial check and listener registration.
+    if (settled) {
+      state.cancellation.dispose();
+    } else if (token.isCancellationRequested) {
+      finish();
+    }
   });
 }
 

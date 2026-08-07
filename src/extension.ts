@@ -7,7 +7,6 @@ import {
   MODEL_METADATA_REVISION,
   MODELS_DEV_API_URL,
   bundledModelMetadataSnapshot,
-  fallbackModelMetadata,
   getContextSizeOptionsForModel,
   hasExplicitModelLimits,
   isFreshModelMetadata,
@@ -16,10 +15,7 @@ import {
   resolveModelMetadata,
   toEffectiveModelId,
   VISION_CAPABLE_MODELS,
-  type BaseModelLimits,
   type CachedModelMetadataSnapshot,
-  type ContextSizeOption,
-  type ModelCost,
   type ModelMetadataFields,
   type ModelsDevResponse,
   type ResolvedModelMetadata,
@@ -33,7 +29,6 @@ import {
   buildThinkingPayload,
   applyRequestThinkingOverride,
   thinkingFamily,
-  type ThinkingFamily,
   type ThinkingSettings,
 } from "./thinking";
 import { buildOpenCodeGatewayAuthHeaders } from "./openCodeAuth";
@@ -52,6 +47,12 @@ import {
   normalizeImageDataUrl,
 } from "./imageNormalizer";
 import { providerModelDisplayName } from "./modelNames";
+import {
+  calculateModelLimits,
+  type ModelLimits,
+} from "./modelLimits";
+import { buildResponsesRequestEnvelope } from "./responsesRequest";
+import { runtimeDiagnosticsLines } from "./runtimeDiagnostics";
 
 import {
   formatCacheHitRatio,
@@ -84,7 +85,6 @@ import {
 } from "./usageProfile";
 
 const SECRET_KEY = "opencodego.apiKey";
-const SECRET_STORE_KEY = "opencodego.activeApiKey";
 const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
 const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
 
@@ -168,7 +168,7 @@ function ensureProfileSync(apiKey: string): void {
  * Same as ensureProfileSync, but also refreshes the UI.
  * Called from onTransportSummary during request recording.
  */
-function ensureProfileForApiKey(apiKey: string, _displayName: string): GoUsageTracker {
+function ensureProfileForApiKey(apiKey: string): GoUsageTracker {
   ensureProfileSync(apiKey);
   return getOrCreateTracker(keyFingerprint(apiKey));
 }
@@ -258,10 +258,12 @@ function getUserAgent(): string {
  * - HTTP 408/429/5xx is transient — gateway/rate-limit style failures.
  *   These arrive via the "Model list request failed (NNN): ..." message
  *   that `fetchModels()` throws on a non-2xx response.
- * - AbortError from a CancellationToken is NEVER retried.
+ * - AbortError from a CancellationToken is NEVER retried. TimeoutError from
+ *   AbortSignal.timeout is transient and can be retried.
  */
 function isTransientFetchError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") return false;
+  if (error instanceof DOMException && error.name === "TimeoutError") return true;
   const cause = (error as { cause?: { code?: string; name?: string } } | undefined)?.cause;
   const code = cause?.code ?? (error as { code?: string } | undefined)?.code;
   const name = cause?.name ?? (error as { name?: string } | undefined)?.name;
@@ -299,17 +301,27 @@ function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
     return Promise.reject(new DOMException("Aborted", "AbortError"));
   }
   return new Promise((resolve, reject) => {
-    let sub: vscode.Disposable | undefined;
-    const timer = setTimeout(() => {
-      sub?.dispose();
-      resolve();
-    }, ms);
-    if (token) {
-      sub = token.onCancellationRequested(() => {
-        clearTimeout(timer);
-        sub?.dispose();
+    let settled = false;
+    const state: { subscription?: vscode.Disposable } = {};
+    const finish = (cancelled: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      state.subscription?.dispose();
+      if (cancelled) {
         reject(new DOMException("Aborted", "AbortError"));
-      });
+      } else {
+        resolve();
+      }
+    };
+    const timer = setTimeout(() => finish(false), ms);
+    if (token) {
+      state.subscription = token.onCancellationRequested(() => finish(true));
+      if (settled) {
+        state.subscription.dispose();
+      } else if (token.isCancellationRequested) {
+        finish(true);
+      }
     }
   });
 }
@@ -494,12 +506,6 @@ interface ConvertedMessageResult {
   normalizedImageCount: number;
 }
 
-interface PendingToolCall {
-  id: string;
-  name: string;
-  arguments: string;
-}
-
 /**
  * Reasoning effort levels per model family, sourced from the upstream
  * OpenCode provider transform (anomalyco/opencode, packages/opencode/src/provider/transform.ts):
@@ -534,27 +540,6 @@ type ConfiguredLanguageModelResponseOptions = vscode.ProvideLanguageModelChatRes
   configuration?: LanguageModelConfiguration;
 };
 
-interface ModelLimits extends BaseModelLimits {
-  advertisedContextWindow: number;
-  advertisedMaxInputTokens: number;
-  advertisedMaxOutputTokens: number;
-}
-
-interface ModelRoutingFields {
-  endpointKind: ModelEndpointKind;
-  endpointUrl: string;
-  sdkPackage?: string;
-}
-
-// Copilot surfaces combine input/output metadata differently across views.
-// Reserve a modest UI output budget, while requests still use the real model max.
-const UI_OUTPUT_TOKEN_RESERVE = 8192;
-/**
- * Minimum output budget (in tokens) to prevent safeOutputBudget from collapsing
- * to 1 when estimateTokenCount overestimates the prompt size. Ensures the model
- * can still generate a meaningful response even with conservative estimation.
- */
-const MIN_OUTPUT_BUDGET = 4096;
 const MESSAGE_TOKEN_OVERHEAD = 4;
 const MESSAGE_NAME_TOKEN_OVERHEAD = 1;
 const TOOL_CALL_TOKEN_OVERHEAD = 10;
@@ -733,6 +718,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
     vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
+    vscode.commands.registerCommand("opencodego.configureUtilityModels", () => configureUtilityModels()),
     vscode.commands.registerCommand("opencodezen.diagnostics", () => zenProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodezen.manage", () => zenProvider.manage()),
     vscode.commands.registerCommand("opencodezen.refreshModels", () => zenProvider.refreshModels()),
@@ -912,50 +898,14 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  checkUtilityModelConfiguration(context);
-
   void warmModelPickerMetadata();
 }
 
-/**
- * VS Code 1.128 introduced `chat.byokUtilityModelDefault` with a default of "none",
- * which breaks all background utility tasks (title generation, commit messages, intent
- * detection) for BYOK users. This function auto-configures it to "mainAgent" on first
- * activation so background tasks continue to work seamlessly.
- *
- * RULES:
- * - Only runs on VS Code 1.128+.
- * - Skips if any utility model setting is already explicitly configured.
- * - Uses a one-time globalState flag to avoid showing the notification on every activation.
- * - Valid enum (from VS Code 1.128 desktop bundle): "none" | "mainAgent" | "copilot".
- */
-function checkUtilityModelConfiguration(context: vscode.ExtensionContext): void {
-  const [major, minor] = vscode.version.split(".").map(Number);
-  if (major < 1 || (major === 1 && minor < 128)) return;
-
-  const chat = vscode.workspace.getConfiguration("chat");
-  const byokDefault    = chat.get<string>("byokUtilityModelDefault", "");
-  const utilitySmall   = chat.get<string>("utilitySmallModel", "");
-  const utilityGeneral = chat.get<string>("utilityModel", "");
-
-  // Treat VS Code's schema default values as "not configured"
-  const isConfigured =
-    (byokDefault !== "" && byokDefault !== undefined && byokDefault !== "none") ||
-    (utilitySmall !== "" && utilitySmall !== undefined && utilitySmall !== "Default") ||
-    (utilityGeneral !== "" && utilityGeneral !== undefined && utilityGeneral !== "Default");
-  if (isConfigured) return;
-
-  void chat
-    .update("byokUtilityModelDefault", "mainAgent", vscode.ConfigurationTarget.Global)
-    .then(() => {
-      const NOTICE_KEY = "opencode.utilityModelAutoFixed.v1128";
-      if (context.globalState.get<boolean>(NOTICE_KEY)) return;
-      void context.globalState.update(NOTICE_KEY, true);
-      void vscode.window.showInformationMessage(
-        "OpenCode: Automatically fixed VS Code 1.128 utility model setting. " +
-          "Background tasks (chat titles, commit messages) now use your OpenCode model.",
-      );
-    });
+async function configureUtilityModels(): Promise<void> {
+  await vscode.commands.executeCommand(
+    "workbench.action.openSettings",
+    "@id:chat.byokUtilityModelDefault @id:chat.utilityModel @id:chat.utilitySmallModel",
+  );
 }
 
 async function warmModelPickerMetadata(): Promise<void> {
@@ -1227,7 +1177,8 @@ function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>, sessionC
   if (nonLegacyCount(profilesCache) > 0) {
     commands.push("opencodego.renameActiveProfile");
   }
-  (md as any).supportedCommands = commands;
+  (md as vscode.MarkdownString & { supportedCommands?: string[] })
+    .supportedCommands = commands;
 
   md.appendMarkdown(
     `<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="420">`,
@@ -1350,7 +1301,7 @@ async function showUsageTargetEditor(
 type _UsageSummary = ReturnType<GoUsageTracker["getSummary"]>;
 
 function usageTooltipSvgDataUri(s: _UsageSummary, sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number }, profileLabel?: string): string {
-  const svg = buildUsageTooltipSvg(s, sc);
+  const svg = buildUsageTooltipSvg(s, sc, profileLabel);
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
@@ -1740,7 +1691,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         { label: "Set API Key", action: "set" as const },
         { label: "Clear API Key", action: "clear" as const },
         { label: "Test Connection", action: "test" as const },
-        { label: "Refresh Models", action: "refresh" as const }
+        { label: "Refresh Models", action: "refresh" as const },
+        { label: "Configure Utility Models", action: "utility" as const },
+        { label: "Open Diagnostics", action: "diagnostics" as const },
       ],
       {
         title: `Manage ${this.definition.displayName}`,
@@ -1766,12 +1719,24 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       // fully remove the key, clear it from the Manage Models panel too.
       await this.clearByokGroupConfigured();
       this.changeEmitter.fire();
-      vscode.window.showInformationMessage("OpenCode Go API key cleared. If you also set it via Manage Models, remove it there too.");
+      vscode.window.showInformationMessage(
+        `${this.definition.displayName} API key cleared. If you also set it via Manage Models, remove it there too.`,
+      );
       return;
     }
 
     if (choice.action === "test") {
       await this.testConnection();
+      return;
+    }
+
+    if (choice.action === "utility") {
+      await configureUtilityModels();
+      return;
+    }
+
+    if (choice.action === "diagnostics") {
+      await this.showDiagnostics();
       return;
     }
 
@@ -1800,11 +1765,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           messages: [{ role: "user", content: "reply with just: ok" }],
           max_tokens: 10,
           stream: false
-        })
+        }),
+        signal: AbortSignal.timeout(30_000),
       });
 
       const responseText = await response.text();
-      statusBar.dispose();
       this.log(`Test response (${response.status}): ${responseText}`);
 
       if (response.ok) {
@@ -1813,32 +1778,42 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         vscode.window.showErrorMessage(`${this.definition.displayName}: Connection failed (HTTP ${response.status}). Check Output panel for details.`);
       }
     } catch (error) {
-      statusBar.dispose();
       const message = error instanceof Error ? error.message : String(error);
       this.log(`Test connection error: ${message}`);
       vscode.window.showErrorMessage(`${this.definition.displayName}: Connection error - ${message}`);
+    } finally {
+      statusBar.dispose();
     }
   }
 
   async setApiKey(): Promise<void> {
     const apiKey = await vscode.window.showInputBox({
-      title: "OpenCode Go API Key",
-      prompt: "Paste your OpenCode Go API key. It will be stored securely in VS Code SecretStorage.",
+      title: `${this.definition.displayName} API Key`,
+      prompt: `Paste your ${this.definition.displayName} API key. It will be stored securely in VS Code SecretStorage.`,
       password: true,
       ignoreFocusOut: true
     });
 
-    if (!apiKey) {
+    const normalizedApiKey = apiKey?.trim();
+    if (!normalizedApiKey) {
       return;
     }
 
-    await this.context.secrets.store(SECRET_KEY, apiKey.trim());
+    await this.context.secrets.store(SECRET_KEY, normalizedApiKey);
     this.changeEmitter.fire();
-    vscode.window.showInformationMessage("OpenCode Go API key saved.");
+    vscode.window.showInformationMessage(`${this.definition.displayName} API key saved.`);
   }
 
   async showDiagnostics(): Promise<void> {
-    const models = await vscode.lm.selectChatModels({ vendor: this.definition.vendor });
+    let models: readonly vscode.LanguageModelChat[] = [];
+    let modelSelectionError: string | undefined;
+    try {
+      models = await vscode.lm.selectChatModels({ vendor: this.definition.vendor });
+    } catch (error) {
+      modelSelectionError = error instanceof Error ? error.message : String(error);
+    }
+
+    const hasStoredApiKey = Boolean(await this.context.secrets.get(SECRET_KEY));
     const metadataSnapshot = await this.getMetadataSnapshot();
     const lines = models.map((model) => {
       const rawModelId = resolveRawModelId(model.id);
@@ -1866,6 +1841,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     const content = [
       `# ${this.definition.displayName} Diagnostics`,
+      "",
+      "## Runtime",
+      "",
+      ...runtimeDiagnosticsLines(this.context),
+      `- credentialInSecretStorage: ${hasStoredApiKey}`,
+      `- modelSelectionError: ${modelSelectionError ?? "none"}`,
       "",
       "## Recent Requests",
       "",
@@ -2020,11 +2001,15 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
             ? `${baseTooltip}\n\n${modalityBadges}`
             : baseTooltip,
         isUserSelectable: true,
+        isBYOK: true,
         maxInputTokens: limits.advertisedMaxInputTokens,
         maxOutputTokens: limits.advertisedMaxOutputTokens,
-        capabilities: modelCapabilities(metadata),
+        capabilities: modelCapabilities(metadata, modelId),
         endpointKind: routing.endpointKind,
         provider: this.definition,
+        ...(capacityNote
+          ? { warningText: { capacity: capacityNote } }
+          : {}),
         // Pricing fields (VS Code languageModelPricing proposal)
         ...modelPricingFields(modelId, this.baseVendor, metadata),
         // Inline so Copilot Chat picks up the Thinking submenu directly
@@ -2115,12 +2100,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const metadata = this.resolveModelMetadata(rawModelId, metadataSnapshot);
     const routing = resolveModelRouting(rawModelId, this.definition);
 
-    // Estimate prompt tokens to cap output budget and prevent context overflow.
-    // The server counts tokens differently from our local estimate, so this
-    // is a conservative approximation — the actual output budget may be
-    // slightly smaller or larger, but it prevents hard 400 rejections.
-    const promptTokens = estimateTokenCount(JSON.stringify(apiMessages));
-    const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
     const hasImageInput = messagesHaveImages(apiMessages);
     const actuallySupportsVision = metadata.supportsVision; // cached before capabilities override
 
@@ -2201,6 +2180,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       this.log(`[history-trim] Replaced ${trimmedCount} old image(s) with placeholder text to bound payload (kept most recent ${MAX_HISTORY_IMAGES_KEPT}).`);
     }
 
+    // Estimate after vision proxying and history trimming so the output budget
+    // reflects the payload that is actually sent upstream.
+    const promptTokens = estimateTokenCount(JSON.stringify(apiMessages));
+    const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
+
     const thinkingPayload = buildThinkingPayload(rawModelId, settings.thinking, hasImageInput && metadata.supportsVision);
     const requestHeaders = buildOpenCodeRequestHeaders(
       messages,
@@ -2229,7 +2213,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       );
       updateUsageStatusBar(this.definition.displayName, rawModelId, summary);
       if (this.baseVendor === GO_VENDOR) {
-        const tracker = ensureProfileForApiKey(apiKey, this.definition.displayName);
+        const tracker = ensureProfileForApiKey(apiKey);
         if (tracker) {
           this.log(`[go-usage] Recording profile=${activeProfileFingerprint}: model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached}`);
           tracker.record(summary, metadata.cost);
@@ -2409,12 +2393,14 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       if (token?.isCancellationRequested) {
         return this.fallbackModelList();
       }
+      let cancellationLink: { signal: AbortSignal; dispose: () => void } | undefined;
       try {
         // Compose the per-request abort with the caller's cancellation token
         // so either one tears down the in-flight fetch.
         const timeoutSignal = AbortSignal.timeout(MODEL_LIST_FETCH_TIMEOUT_MS);
+        cancellationLink = token ? this.signalFromToken(token) : undefined;
         const signal = token
-          ? AbortSignal.any([timeoutSignal, this.signalFromToken(token)])
+          ? AbortSignal.any([timeoutSignal, cancellationLink!.signal])
           : timeoutSignal;
 
         const response = await fetch(this.definition.modelsUrl, { headers, signal });
@@ -2435,6 +2421,8 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         void this.context.globalState.update(this.modelListCacheKey, this.cachedModelList);
         return filtered;
       } catch (error) {
+        cancellationLink?.dispose();
+        cancellationLink = undefined;
         lastError = error;
         // 1. If the caller's cancellation token fired, never retry — bail.
         if (token?.isCancellationRequested) {
@@ -2457,6 +2445,8 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           // Cancellation during backoff — bail to fallback.
           return this.fallbackModelList();
         }
+      } finally {
+        cancellationLink?.dispose();
       }
     }
 
@@ -2471,17 +2461,24 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   /** Bundle the cancellation semantics of a VS Code token into an AbortSignal. */
-  private signalFromToken(token: vscode.CancellationToken): AbortSignal {
+  private signalFromToken(
+    token: vscode.CancellationToken,
+  ): { signal: AbortSignal; dispose: () => void } {
     const controller = new AbortController();
+    let subscription: vscode.Disposable | undefined;
     if (token.isCancellationRequested) {
       controller.abort();
     } else {
-      const sub = token.onCancellationRequested(() => {
-        controller.abort();
-        sub.dispose();
-      });
+      subscription = token.onCancellationRequested(() => controller.abort());
+      if (token.isCancellationRequested) controller.abort();
     }
-    return controller.signal;
+    return {
+      signal: controller.signal,
+      dispose: () => {
+        subscription?.dispose();
+        subscription = undefined;
+      },
+    };
   }
 
   private errMsg(error: unknown): string {
@@ -2886,17 +2883,18 @@ function buildResponsesRequestBody(
   const tools = mapResponsesTools(options.tools);
   const thinkingPayload = buildThinkingPayload(modelId, settings.thinking, messagesHaveImages(messages));
 
-  return {
+  return buildResponsesRequestEnvelope({
     model: modelId,
     input,
-    max_output_tokens: limits.maxOutputTokens,
-    // Only send temperature if the model supports it (not deprecated)
-    ...(metadata.temperature !== false ? { temperature: settings.temperature } : {}),
-    stream: true,
-    ...thinkingPayload,
-    ...(tools.length ? { tools, tool_choice: toolChoice(options.toolMode) } : {}),
-    text: { verbosity: modelId === "gpt-5-codex" ? "medium" : "low" },
-  };
+    maxOutputTokens: limits.maxOutputTokens,
+    // Some models reject any non-default temperature value.
+    ...(metadata.temperature === false
+      ? {}
+      : { temperature: settings.temperature }),
+    thinkingPayload,
+    tools,
+    toolChoice: toolChoice(options.toolMode),
+  });
 }
 
 function responsesInputItemsFromMessage(message: ApiMessage): Array<Record<string, unknown>> {
@@ -3978,37 +3976,12 @@ function modelLimits(
   contextSizeOverride?: number,
   promptTokens?: number,
 ): ModelLimits {
-  const baseContextWindow = positiveOverride(settings.maxInputTokensOverride) ?? metadata.contextWindow;
-  // If the user selected a specific context size tier, cap the window to that
-  const contextWindow = contextSizeOverride !== undefined
-    ? Math.min(baseContextWindow, contextSizeOverride)
-    : baseContextWindow;
-  const maxOutputTokens = positiveOverride(settings.maxOutputTokensOverride) ?? metadata.maxOutputTokens;
-  // Cap output so that prompt + output never exceeds the context window.
-  // When promptTokens is known (from message normalization), use the actual
-  // count; otherwise fall back to a conservative 80% reserve for the prompt.
-  // The safety margin compensates for estimateTokenCount() underestimating
-  // by 0-2%, which on large prompts (~130K) can push the payload over the
-  // context window limit and cause a 400.
-  const TOKEN_ESTIMATE_SAFETY_MARGIN = 64;
-  const promptReserve = (promptTokens ?? Math.floor(contextWindow * 0.8)) + TOKEN_ESTIMATE_SAFETY_MARGIN;
-  const safeOutputBudget = Math.max(MIN_OUTPUT_BUDGET, contextWindow - promptReserve);
-  const apiMaxOutputTokens = Math.min(maxOutputTokens, safeOutputBudget);
-  // advertisedContextWindow = actual model context window (not inflated).
-  // Adding apiMaxOutputTokens here inflates the value above the real limit,
-  // which causes VS Code to round up and display "2M" instead of "1M" for a
-  // 1M-context model, and worse: VS Code may try to send payloads larger than
-  // the model's actual total context window.
-  const advertisedContextWindow = contextWindow;
-  const advertisedMaxOutputTokens = Math.max(1, Math.min(apiMaxOutputTokens, UI_OUTPUT_TOKEN_RESERVE));
-
-  return {
-    contextWindow,
-    maxOutputTokens: apiMaxOutputTokens,
-    advertisedContextWindow,
-    advertisedMaxInputTokens: Math.max(1, advertisedContextWindow - advertisedMaxOutputTokens),
-    advertisedMaxOutputTokens
-  };
+  return calculateModelLimits(metadata, {
+    maxInputTokens: settings.maxInputTokensOverride,
+    maxOutputTokens: settings.maxOutputTokensOverride,
+    contextSize: contextSizeOverride,
+    promptTokens,
+  });
 }
 
 function estimateTokenCount(value: string): number {
@@ -4041,11 +4014,10 @@ function estimateTokenCount(value: string): number {
   return Math.max(1, Math.ceil(charEstimate + codeBuffer + cjkCharacters));
 }
 
-function positiveOverride(value: number): number | undefined {
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
-}
-
-function modelCapabilities(metadata: ResolvedModelMetadata): CopilotCompatibleCapabilities {
+function modelCapabilities(
+  metadata: ResolvedModelMetadata,
+  modelId: string,
+): CopilotCompatibleCapabilities {
   // When a vision proxy model is configured (non-empty ID in globalState),
   // report imageInput: true for ALL models so VS Code does not strip image
   // parts before they reach our provider. The vision proxy interceptor
@@ -4057,7 +4029,16 @@ function modelCapabilities(metadata: ResolvedModelMetadata): CopilotCompatibleCa
     toolCalling: true,
     supportsImageToText: supportsVision,
     supportsToolCalling: true,
+    editTools: preferredEditTools(modelId),
   };
+}
+
+function preferredEditTools(modelId: string): string[] {
+  if (/^(?:gpt-|o\d|codex)|codex/i.test(modelId)) {
+    return ["apply-patch"];
+  }
+
+  return ["multi-find-replace", "find-replace"];
 }
 
 function formatModalityBadges(metadata: ResolvedModelMetadata): string {
@@ -4106,7 +4087,7 @@ function isFreeZenModel(modelId: string): boolean {
   return modelId.endsWith("-free") || FREE_ZEN_MODEL_IDS.has(modelId);
 }
 
-function isFreeModel(modelId: string, vendor: ProviderDefinition["vendor"]): boolean {
+function isFreeModel(modelId: string): boolean {
   return (
     FREE_ZEN_MODEL_IDS.has(modelId) ||
     modelId.endsWith("-free")
@@ -4166,7 +4147,8 @@ async function proxyVision(
       } else if (part instanceof vscode.LanguageModelTextPart) {
         parts.push(part);
       } else if (typeof part === "object" && part !== null && "value" in part) {
-        parts.push(new vscode.LanguageModelTextPart(String((part as any).value)));
+        const valuePart = part as { value: unknown };
+        parts.push(new vscode.LanguageModelTextPart(String(valuePart.value)));
       }
     }
     if (parts.length > 0) {
@@ -4361,7 +4343,7 @@ function modelPricingFields(
   outputCost?: number;
   cacheCost?: number;
 } {
-  const free = isFreeModel(modelId, vendor);
+  const free = isFreeModel(modelId);
 
   if (free) {
     return { pricing: "Free", priceCategory: "low" };

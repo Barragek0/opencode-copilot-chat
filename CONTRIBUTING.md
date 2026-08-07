@@ -41,7 +41,9 @@ That's it! You can now test your changes in the Extension Development Host.
 ## 📋 Before you open a Pull Request
 
 - [ ] `npm run compile` passes (no errors)
+- [ ] `npm run lint` passes
 - [ ] `npm test` passes (all unit tests)
+- [ ] `npm run package` produces a VSIX
 - [ ] `npm run test-retry` passes (E2E retry test)
 - [ ] You tested it works (at least one model)
 - [ ] You updated docs if needed (CHANGELOG, README, or `docs/`)

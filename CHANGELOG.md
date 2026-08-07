@@ -4,7 +4,23 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Added
+
+- **`[VS Code]` Current BYOK and edit-tool metadata.** OpenCode models are now explicitly marked with `isBYOK`, advertise preferred edit tools (`apply-patch` for GPT/Codex and find/replace tools for other families), expose capacity warnings through the model picker warning field, and connect provider management buttons to the existing Manage commands.
+- **`[Diagnostics]` Runtime and elevation details (#89).** Provider diagnostics now include the extension and VS Code versions, extension host, remote/UI mode, workspace trust, Node/platform details, Windows integrity level, installation paths, credential presence, and model-selection errors. Added `OpenCode: Configure Utility Models` and linked diagnostics/utility settings from the provider Manage menu.
+
 ### Fixed
+
+- **`[Responses]` Long sessions rejected with `invalid_prompt` (#103).** Responses requests now send `truncation: "auto"`, omit the proxy-sensitive `text.verbosity` field, and cap `max_output_tokens` to the context remaining after the normalized prompt. Prompt estimation now happens after vision proxying and old-image trimming. The limit and request-envelope logic were extracted into pure modules with regression tests.
+- **`[Reliability]` Cancellation listener leaks.** Model discovery and streaming retry delays now dispose VS Code cancellation subscriptions after success, timeout, or cancellation. The provider connection test also has a 30-second timeout.
+- **`[Usage]` Profile label missing from the SVG tooltip.** The active profile label is now forwarded to the SVG builder instead of being calculated and discarded.
+- **`[Build]` Removed source files no longer survive in the VSIX.** Compilation now cleans `out/` before invoking TypeScript, preventing stale artifacts such as the removed autocomplete implementation from being packaged.
+
+### Changed
+
+- **`[VS Code]` Utility-model configuration is user-controlled.** Activation no longer silently modifies the global `chat.byokUtilityModelDefault` setting. The new command opens the three official utility-model settings instead.
+- **`[CI]` Tests, JavaScript lint, and VSIX packaging are blocking checks.** CI no longer reports success when tests or packaging fail, and the existing TypeScript/JavaScript lint baseline is clean.
+- **`[Package]` Development-only files are excluded from the VSIX.** Internal docs, scripts, compiled tests, source maps, GitHub/Husky configuration, and lint configuration are no longer shipped; the README demo and Photon runtime remain included.
 
 - **`[Provider]` OpenCode Zen models listed twice when using a native BYOK group (#106).** With the API key configured via VS Code's Manage Models / BYOK flow, every OpenCode Zen model appeared twice (16 instead of 8). VS Code calls `provideLanguageModelChatInformation` once without a group and then once per configured group, namespacing identifiers by group — so the secrets-backed set emitted on the groupless call (since 0.5.0, #86) was kept alongside the group's set. The provider now records per vendor when a BYOK group has been configured and the groupless call stays silent in that case; the `Clear API Key` action resets the flag. Documented in `docs/issues/48-20260805-issue106-zen-duplicate-models.md`.
 
@@ -208,8 +224,6 @@ Mitigates [#24](https://github.com/ltmoerdani/opencode-copilot-chat/issues/24).
 - `metadata.ts` `toEffectiveModelId()` vendor parameter widened to accept `AllProviderVendor`.
 - Replaces the `opencodego.showInAgentsWindow` setting from PR #42 with the cleaner two-setting approach (`agentsWindow` + `showAgentModelsInManagePanel`).
 
-### Changed
-
 - **Thinking helpers extracted to `src/thinking.ts` (pure module).** `thinkingFamily`, `buildFamilyThinkingSchema`, `applyRequestThinkingOverride`, `buildThinkingPayload`, and `buildQwenAnthropicThinkingPayload` moved out of `extension.ts` into a new pure module (`src/thinking.ts`) with zero `vscode` dependency. This enables unit testing without mocking the VS Code API surface. `extension.ts` now re-imports all five functions; all call sites unchanged — behavior identical. Unit tests added (`src/test/metadata.test.ts`, `src/test/thinking.test.ts` — 32 tests, all passing).
 
 Fixes [#25](https://github.com/ltmoerdani/opencode-copilot-chat/issues/25), [#41](https://github.com/ltmoerdani/opencode-copilot-chat/issues/41). Alternative to PR [#42](https://github.com/ltmoerdani/opencode-copilot-chat/pull/42) by [@Wallacy](https://github.com/Wallacy).
@@ -231,6 +245,7 @@ Fixes [#25](https://github.com/ltmoerdani/opencode-copilot-chat/issues/25), [#41
 Fixes [#41](https://github.com/ltmoerdani/opencode-copilot-chat/issues/41). PR [#42](https://github.com/ltmoerdani/opencode-copilot-chat/pull/42) by [@Marinski](https://github.com/Marinski).
 
 ---
+
 ## [0.3.0] — 2026-06-14
 
 ### Added
@@ -374,7 +389,7 @@ Fixes [#11](https://github.com/ltmoerdani/opencode-copilot-chat/issues/11). PR [
 
 ### Fixed
 
-- Fixed Qwen models returning 401 error ("Model qwen3.7-max is not supported for format oa-compat"). Qwen models on the OpenCode Go gateway are only available through the Anthropic Messages API endpoint, not the OpenAI chat-completions endpoint. Reverted the routing while fixing the actual root cause. _Background: the initial investigation on 2026-05-15 identified that `qwen3.6-plus-free` uses an Anthropic-bridged gateway that re-derives tools from message history, causing infinite tool-call loops (see `docs/issues/01-20260515-qwen36-tool-call-loop.md`)._
+- Fixed Qwen models returning 401 error ("Model qwen3.7-max is not supported for format oa-compat"). Qwen models on the OpenCode Go gateway are only available through the Anthropic Messages API endpoint, not the OpenAI chat-completions endpoint. Reverted the routing while fixing the actual root cause. *Background: the initial investigation on 2026-05-15 identified that `qwen3.6-plus-free` uses an Anthropic-bridged gateway that re-derives tools from message history, causing infinite tool-call loops (see `docs/issues/01-20260515-qwen36-tool-call-loop.md`).*
 - Fixed Anthropic streaming tool call parsing in `AnthropicResponseExtractor`. The extractor now correctly handles Anthropic SSE event types (`content_block_start` with `tool_use` blocks, `content_block_delta` with `input_json_delta`, `message_delta`, `message_stop`) so Qwen tool calls are properly captured and surfaced to VS Code Copilot Chat.
 - Fixed Anthropic usage metadata parsing. Added support for Anthropic-native fields (`input_tokens`, `output_tokens`, `cache_read_input_tokens`) in addition to OpenAI fields, so the context window indicator updates correctly for Qwen models routed through the messages endpoint.
 - Fixed Qwen thinking payload format when routed through the Anthropic messages endpoint. Qwen thinking settings are now translated to Anthropic-native format (`{ type: "enabled"|"disabled" }`) instead of Qwen-native `enable_thinking` boolean, matching what the OpenCode gateway expects.

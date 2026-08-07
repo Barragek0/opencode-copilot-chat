@@ -29,13 +29,14 @@ jobs:
       - name: 🔨 Compile TypeScript
         run: npm run compile
 
+      - name: 🔎 Lint source and maintenance docs
+        run: npm run lint
+
       - name: 🧪 Run tests
         run: npm test
-        continue-on-error: true
 
       - name: 📦 Package VSIX (dry run)
         run: npm run package
-        continue-on-error: true
 
       - name: 📤 Upload VSIX artifact
         uses: actions/upload-artifact@v4

@@ -2,7 +2,7 @@
 
 # 🚀 OpenCode for GitHub Copilot Chat
 
-### Use **30+ frontier AI models** (DeepSeek V4, Kimi K2.6, GLM-5.1, GPT-5.5, Claude Opus 4.7, Gemini 3.5, Grok…) in GitHub Copilot Chat — **BYOK**
+**Use 30+ frontier AI models** (DeepSeek V4, Kimi K2.6, GLM-5.1, GPT-5.5, Claude Opus 4.7, Gemini 3.5, Grok…) in GitHub Copilot Chat — **BYOK**
 
 **Bring Your Own Key (BYOK)** · OpenCode Zen (free + paid models) or Go ($10/mo subscription) · Works with native Copilot Agent Mode
 
@@ -10,7 +10,7 @@
 [![VS Code Marketplace](https://img.shields.io/badge/Install-VS%20Code%20Marketplace-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ltmoerdani.opencode-copilot-chat)
 [![Version](https://img.shields.io/github/v/release/ltmoerdani/opencode-copilot-chat?label=Version&color=6c47ff)](https://github.com/ltmoerdani/opencode-copilot-chat/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-1.118%2B-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
+[![VS Code](https://img.shields.io/badge/VS%20Code-1.125%2B-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen)](./CONTRIBUTING.md)
 [![Stars](https://img.shields.io/github/stars/ltmoerdani/opencode-copilot-chat?style=social)](https://github.com/ltmoerdani/opencode-copilot-chat)
 
@@ -20,7 +20,7 @@
 
 ---
 
-> ### 💡 The elevator pitch
+> **💡 The elevator pitch**
 >
 > **Copilot Chat is great — but its premium models cost $39/mo (Pro+), and the free tier is rate-limited.**
 > This extension plugs **OpenCode's model gateway** into Copilot Chat's model picker. **OpenCode Zen** gives you 2-5 rotating free models (Big Pickle is always free; DeepSeek V4 Flash, MiMo-V2.5, and others rotate) plus paid models like Claude Opus, GPT-5.5, and Gemini at pay-as-you-go rates. **OpenCode Go** ($10/mo, $5 first month promo) gives you a curated set of open models (DeepSeek V4 Pro, Kimi K2.6, GLM-5.1, Qwen3.7 Max, MiMo V2.5 Pro) with generous usage limits. You keep the native Copilot UI, tool-calling, and Agent Mode — you just get **way more models**, often **cheaper than Copilot Pro+**.
@@ -31,7 +31,7 @@
 
 | | What you get |
 |---|---|
-| 💸 **Cheaper than Copilot Pro+** | Copilot Free + OpenCode **Zen free** models = **$0** for 2-5 rotating models (Big Pickle always free; DeepSeek V4 Flash, MiMo-V2.5, and others rotate). Paid Zen models (Claude Opus, GPT-5.5) available at pay-as-you-go rates. Go subscription **$10/mo** ($5 first month) |
+| 💸 **Cheaper than Copilot Pro+** | VS Code + OpenCode **Zen free** models = **$0** for 2-5 rotating models (Big Pickle always free; DeepSeek V4 Flash, MiMo-V2.5, and others rotate). Paid Zen models (Claude Opus, GPT-5.5) available at pay-as-you-go rates. Go subscription **$10/mo** ($5 first month) |
 | 🌍 **30+ frontier models** | DeepSeek V4, Kimi K2.6, GLM-5.1, Qwen3.7 Max, MiMo V2.5, MiniMax M2.7, Big Pickle, Nemotron — **all in one picker** |
 | 🤖 **Full Agent Mode** | Tool-calling (read files, edit, run terminal) works natively — not just chat. Models also appear in the **Agents window** (Copilot CLI session) |
 | 🧠 **Thinking controls** | Per-model reasoning effort (DeepSeek `max`, Qwen `thinking_budget`, MiniMax `on/off`, Mimo `low/med/high`) |
@@ -47,7 +47,7 @@
 ## ⚡ Quick Start (60 sec)
 
 ```text
-1.  Install GitHub Copilot Chat (free) ──────────────────────────── ✓
+1.  Install or update VS Code 1.125+ ────────────────────────────── ✓
 2.  Install this extension ──────────────────────────────────────── ✓
 3.  Get an OpenCode Zen API key → opencode.ai/auth ─────────────── ✓
 4.  Open Copilot Chat → click model → "Add Models" → OpenCode Zen ── ✓
@@ -57,7 +57,7 @@
 <details>
 <summary><b>📖 Detailed step-by-step with screenshots</b></summary>
 
-1. **Install [GitHub Copilot Chat](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat)** — free, requires only a GitHub account.
+1. **Install or update [VS Code](https://code.visualstudio.com/)** to version 1.125 or newer. OpenCode BYOK chat works without a GitHub sign-in or Copilot plan.
 2. **Install this extension** from the VS Code Marketplace (or press `F5` in this repo for dev mode).
 3. **Get an API key:**
    - **Free models:** Sign up at [opencode.ai](https://opencode.ai) → grab an **OpenCode Zen** key. 2-5 models are truly free (Big Pickle is always free; DeepSeek V4 Flash Free, MiMo-V2.5 Free, and others rotate).
@@ -72,6 +72,7 @@
 10. **Select any OpenCode model** from the picker and start chatting. 🚀
 
 > **💡 Tips:**
+>
 > - Go and Zen are **separate provider groups** — both can be active simultaneously. Switch anytime from the picker.
 > - If a model shows in **Language Models** view but not the chat picker, hover its row and click the **eye icon (👁)** to enable it.
 > - Set `opencodego.freeOnly: false` to reveal **paid Zen models** in the picker.
@@ -197,13 +198,13 @@ GitHub Copilot has four tiers now — **Free**, **Pro ($10/mo)**, **Pro+ ($39/mo
 | 🎁 **Free frontier models?** | ❌ | ❌ | ❌ (paid tier only) | ✅ **2-5 rotating free models** via Zen (Big Pickle always free) |
 | 🚫 **Rate limit** | 2,000 completions/mo | Unlimited (rate-limited) | 4× Pro credits | Per OpenCode tier (Zen free has low limits without balance; Go has generous limits) |
 
-> **Not a replacement** — this extension *extends* Copilot Chat. You still need the (free) Copilot Chat extension + a GitHub account. BYOK models bypass the Copilot subscription billing entirely — you pay OpenCode directly (or nothing, on Zen free).
+> **Model bridge, not completions replacement** — OpenCode BYOK models work in VS Code Chat without a Copilot plan or GitHub sign-in. Standard inline suggestions, next-edit suggestions, semantic search, and embedding-backed features still require GitHub/Copilot support. OpenCode requests bypass Copilot billing entirely — you pay OpenCode directly (or nothing, on Zen free).
 
 ### 💡 When to use which?
 
-- **Copilot Free + OpenCode Zen** → **$0 total**. Best for students, hobbyists, and trying frontier models.
+- **VS Code + OpenCode Zen** → **$0 total** for BYOK chat. Best for students, hobbyists, and trying frontier models.
 - **Copilot Pro + OpenCode Go** → $10/mo for Copilot's polish + $10/mo for DeepSeek Pro, Kimi K2.6, Qwen3.7 Max.
-- **This extension alone** → Already works with just Copilot Free. Keep Copilot for autocomplete, use OpenCode models for chat/agent when you need variety or free tier.
+- **This extension alone** → Chat, agent tools, and configured utility tasks work without Copilot. Add Copilot only when you also need inline suggestions, semantic search, or embedding-backed features.
 
 ---
 
@@ -281,11 +282,13 @@ OpenCode models appear in the VS Code **Agents window** model picker when starti
 
 1. Agent models are enabled by default (`agentsWindow: true`). No changes needed for basic usage.
 2. Add this to your VS Code `settings.json` to enable the extension in the Agents window process:
+
    ```json
    "extensions.supportAgentsWindow": {
      "ltmoerdani.opencode-copilot-chat": true
    }
    ```
+
 3. Reload the window (`Developer: Reload Window`).
 4. Open the **Agents window** → start a new session → select **Copilot CLI** as the agent type.
 5. Open the model picker — OpenCode models appear under **Local** (normal models) and **Copilot** (agent-host variants).
@@ -293,6 +296,7 @@ OpenCode models appear in the VS Code **Agents window** model picker when starti
 Normal OpenCode models (`opencodego`, `opencodezen`) appear in the **Local** section of the Agents window picker from VS Code ≥1.126 onwards. On ≤1.125 they may require the `supportAgentsWindow` setting. Agent-host variants (`opencodego-agent`, `opencodezen-agent`) appear under **Copilot** because they carry `targetChatSessionType: "copilotcli"` and are matched by `CopilotChatSessionsProvider`.
 
 To manage agent API keys separately or see agent vendors in the Manage panel, enable:
+
 ```json
 "opencodego.showAgentModelsInManagePanel": true
 ```
@@ -312,6 +316,8 @@ To manage agent API keys separately or see agent vendors in the Manage panel, en
 | `OpenCode Go: Diagnostics` | Markdown report of all Go models + recent request summaries |
 | `OpenCode Zen: Diagnostics` | Same for Zen |
 | `OpenCode: Model Picker Diagnostics` | All registered models (Go + Zen + Copilot) side-by-side |
+
+Provider diagnostics also include the VS Code/extension versions, extension host, workspace trust, Windows elevation level, installation paths, credential presence, and model-selection errors.
 
 ---
 
@@ -362,6 +368,7 @@ The easiest way to manage your key is **Settings → Language Models** (gear ⚙
 | `OpenCode Zen: Refresh Models` | Force a fresh Zen model-list fetch (bypasses the Manage menu) |
 | `OpenCode Zen: Diagnostics` | Report of Zen models + request history |
 | `OpenCode: Model Picker Diagnostics` | All registered models (Go + Zen + Copilot) side-by-side |
+| `OpenCode: Configure Utility Models` | Open the VS Code settings for background utility tasks |
 | `OpenCode: Set Thinking Effort…` | Per-family thinking mode picker |
 | `OpenCode Go: Show Usage Details` | Detailed Go subscription usage breakdown |
 
@@ -372,9 +379,9 @@ The easiest way to manage your key is **Settings → Language Models** (gear ⚙
 <details>
 <summary><b>Do I need Copilot Pro, Pro+, or Max?</b></summary>
 
-**No.** You only need the free [GitHub Copilot Chat extension](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat) and any GitHub account — even the **Copilot Free** tier works. BYOK models bypass Copilot's subscription billing entirely.
+**No.** On supported VS Code versions, BYOK chat works without a Copilot plan and without signing in to GitHub. Add OpenCode from **Chat: Manage Language Models** and select a model in Chat. Requests are billed only by OpenCode and do not consume Copilot requests.
 
-If you already pay for Copilot Pro ($10), Pro+ ($39), or Max ($100), you can still use this extension alongside it — keep Copilot for autocomplete, switch to OpenCode models in chat when you want variety, free tier, or specific models GitHub doesn't offer.
+Inline suggestions, next-edit suggestions, semantic search, and embedding-backed features still require GitHub/Copilot support. This extension provides chat, agent tool calls, and utility-model access; it does not replace standard Copilot autocomplete.
 
 </details>
 
@@ -407,6 +414,22 @@ In VS Code's **SecretStorage** — the same encrypted store used by GitHub auth.
 <summary><b>Can I use Go and Zen at the same time?</b></summary>
 
 **Yes.** They're separate provider groups. Add both via **Language Models → Add Models…**, enter each key separately, and switch between them from the chat model picker anytime.
+
+</details>
+
+<details>
+<summary><b>Can this import models from a local <code>opencode serve</code> instance?</b></summary>
+
+Not safely through the VS Code language-model provider contract yet. `opencode serve` exposes OpenCode sessions and agents, whose tools execute inside OpenCode, rather than a Chat Completions, Responses, or Messages inference endpoint that can return VS Code tool calls. Registering only its model list would produce entries that lose Copilot's tool loop and permission UI.
+
+For a local OpenAI/Anthropic-compatible inference server, use VS Code's **Custom Endpoint** provider directly. Native OpenCode-server support is tracked in [#88](https://github.com/ltmoerdani/opencode-copilot-chat/issues/88).
+
+</details>
+
+<details>
+<summary><b>What should I include when the extension fails in an elevated/admin VS Code?</b></summary>
+
+Run `OpenCode Go: Diagnostics` or `OpenCode Zen: Diagnostics` and attach the **Runtime** section plus the failing request summary. It identifies whether the elevated launch selected a different VS Code binary, extension installation, host, workspace trust state, or Windows integrity level. The extension requires VS Code 1.125 or newer.
 
 </details>
 

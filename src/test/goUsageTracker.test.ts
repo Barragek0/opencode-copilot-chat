@@ -36,7 +36,7 @@ interface GoUsageTrackerInstance {
 
 interface GoUsageTrackerConstructor {
   new (
-    context: any,
+    context: unknown,
     log?: (msg: string) => void,
     costResolver?: (modelId: string) => ModelCost | undefined,
   ): GoUsageTrackerInstance;
@@ -50,8 +50,8 @@ function createMockStore(initial: Record<string, unknown> = {}) {
   const _data = new Map(Object.entries(initial));
   return {
     _data,
-    get: (key: string, defaultVal: any): any =>
-      _data.has(key) ? _data.get(key) : defaultVal,
+    get: <T>(key: string, defaultVal: T): T =>
+      _data.has(key) ? _data.get(key) as T : defaultVal,
     update: (key: string, value: unknown): Promise<void> => {
       _data.set(key, value);
       return Promise.resolve();
@@ -112,11 +112,19 @@ module.exports = {
   "utf-8",
 );
 
-const originalResolveFilename = (Module as any)._resolveFilename;
-(Module as any)._resolveFilename = function (
+type ResolveFilename = (
   request: string,
-  parent: any,
-  ...args: any[]
+  parent: unknown,
+  ...args: unknown[]
+) => string;
+const moduleResolver = Module as unknown as {
+  _resolveFilename: ResolveFilename;
+};
+const originalResolveFilename = moduleResolver._resolveFilename;
+moduleResolver._resolveFilename = function (
+  request: string,
+  parent: unknown,
+  ...args: unknown[]
 ): string {
   if (request === "vscode") {
     return vscodeMockPath;
@@ -338,7 +346,10 @@ describe("goUsageTracker", () => {
         const storedEntries = context.globalState.get("opencodego.usageLog.v1", []);
         assert.equal(storedEntries.length, 1);
 
-        const storedSessions = context.globalState.get("opencodego.sessionCosts.v1", []);
+        const storedSessions = context.globalState.get<SessionSummary[]>(
+          "opencodego.sessionCosts.v1",
+          [],
+        );
         assert.equal(storedSessions.length, 1);
         assert.equal(storedSessions[0].sessionId, "s1");
       });

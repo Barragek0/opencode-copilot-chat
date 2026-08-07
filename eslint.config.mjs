@@ -10,5 +10,23 @@ export default tseslint.config(
   {
     ignores: gitignore
   },
-  ...tseslint.configs.recommended
+  ...tseslint.configs.recommended,
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          varsIgnorePattern: "^_"
+        }
+      ]
+    }
+  },
+  {
+    files: ["**/*.d.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off"
+    }
+  }
 );
