@@ -339,7 +339,7 @@
     "format:check": "npx prettier --check .",
     "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
     "compile": "npm run clean && tsc -p ./",
-    "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
+    "test": "npm run compile && node scripts/run-unit-tests.mjs",
     "watch": "npm run clean && tsc -watch -p ./",
     "validate-models": "npx --yes tsx scripts/validate-models.mts",
     "test-retry": "npx --yes tsx scripts/test-retry-e2e.mts",
