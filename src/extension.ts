@@ -52,7 +52,11 @@ import {
   calculateModelLimits,
   type ModelLimits,
 } from "./modelLimits";
-import { buildResponsesRequestEnvelope } from "./responsesRequest";
+import {
+  buildResponsesRequestEnvelope,
+  joinedTextContent,
+  responsesInputItemsFromMessage,
+} from "./responsesRequest";
 import { runtimeDiagnosticsLines } from "./runtimeDiagnostics";
 import {
   estimatePromptTokenCount,
@@ -2903,117 +2907,6 @@ function buildResponsesRequestBody(
   });
 }
 
-function responsesInputItemsFromMessage(message: ApiMessage): Array<Record<string, unknown>> {
-  if (message.role === "user") {
-    const content = responsesUserContent(message.content);
-    return content.length ? [{ role: "user", content }] : [];
-  }
-
-  if (message.role === "assistant") {
-    const items: Array<Record<string, unknown>> = [];
-    const text = responsesAssistantText(message.content);
-    if (text) {
-      items.push({ role: "assistant", content: [{ type: "output_text", text }] });
-    }
-
-    for (const toolCall of message.tool_calls ?? []) {
-      items.push({
-        type: "function_call",
-        id: toolCall.id,
-        call_id: toolCall.id,
-        name: toolCall.function.name,
-        arguments: toolCall.function.arguments,
-      });
-    }
-
-    return items;
-  }
-
-  if (message.role === "tool") {
-    // The Responses API's function_call_output.output field expects a string.
-    // Tool results that carry images (e.g. MCP screenshots) cannot be
-    // represented natively here, so we degrade to the joined text payload.
-    // Vision-capable OpenAI/Anthropic/Google transports handle images in tool
-    // results natively via their respective request builders.
-    const output = typeof message.content === "string"
-      ? message.content
-      : responsesToolOutput(message.content);
-    return [{
-      type: "function_call_output",
-      call_id: message.tool_call_id ?? `tool-${Date.now()}`,
-      output,
-    }];
-  }
-
-  return [];
-}
-
-function responsesUserContent(content: ApiMessage["content"]): Array<Record<string, unknown>> {
-  if (typeof content === "string") {
-    return content ? [{ type: "input_text", text: content }] : [];
-  }
-
-  if (!Array.isArray(content)) {
-    return [];
-  }
-
-  return content.flatMap((part): Array<Record<string, unknown>> => {
-    if (part.type === "text" && typeof part.text === "string") {
-      return [{ type: "input_text", text: part.text }];
-    }
-
-    if (part.type === "image_url" && part.image_url?.url) {
-      return [{ type: "input_image", image_url: { url: part.image_url.url } }];
-    }
-
-    return [];
-  });
-}
-
-function responsesAssistantText(content: ApiMessage["content"]): string {
-  return joinedTextContent(content);
-}
-
-// RULES: Responses API function_call_output.output is a plain string and does
-// not support inline image content blocks. To preserve tool result context
-// for vision-capable models that would otherwise lose the image entirely, we
-// keep any text parts joined with newlines and append a short note when an
-// image was present. The note is intentionally brief (not a data URI) so it
-// doesn't bloat the payload; the model is told the image was omitted.
-function responsesToolOutput(content: ApiMessage["content"]): string {
-  if (!Array.isArray(content)) {
-    return JSON.stringify(content ?? "");
-  }
-
-  const text = joinedTextContent(content, "\n");
-  const hasImage = content.some((part) => part.type === "image_url" && part.image_url?.url);
-  if (!hasImage) {
-    return text || "";
-  }
-
-  return [text, "[Image attachment omitted — Responses API does not support images in tool output]"]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function joinedTextContent(
-  content: ApiMessage["content"],
-  separator = "",
-): string {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  return content
-    .filter((part): part is OpenAiContentPart & { text: string } => part.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
-    .join(separator);
-}
-
 function buildGoogleGenerateContentBody(
   messages: ApiMessage[],
   options: vscode.ProvideLanguageModelChatResponseOptions,
@@ -3066,7 +2959,7 @@ function googleContentsFromMessages(messages: ApiMessage[]): Array<Record<string
       if (typeof message.reasoning_content === "string" && message.reasoning_content.trim()) {
         parts.push({ text: message.reasoning_content, thought: true });
       }
-      const text = responsesAssistantText(message.content);
+      const text = joinedTextContent(message.content);
       if (text) {
         parts.push({ text });
       }
