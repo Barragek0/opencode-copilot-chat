@@ -1,5 +1,19 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
-**Branch:** `xianhongtao/issue98` | **Updated:** 2026-08-03 Asia/Jakarta | **Current Phase:** Issue #98 — premature tool-call flush regression, fix implemented
+**Branch:** `main` | **Updated:** 2026-08-07 Asia/Jakarta | **Current Phase:** PR #113 review & merge (issues #103 + #109)
+
+---
+
+## ✅ PR #113 Review & Merge — Bridge Hardening (#103 + #109) — 2026-08-07
+
+**Action:** Reviewed and merged Wallacy's PR #113 (`feat/bridge-hardening`) — context-overflow hardening for long and tool-heavy Copilot sessions.
+
+**Scope:** Fixes #103 (gpt-5.6-luna Responses `invalid_prompt`) and #109 (DeepSeek V4 Flash context overflow). Key changes: `truncation: "auto"` + dropped `text.verbosity` + bounded `max_output_tokens` on Responses; tool/MCP schemas included in prompt estimates; proportional 12% tokenizer headroom replacing the fixed 64-token margin; HTTP 400 context-overflow recovery using upstream counts (all 4 transports); `editTools` removed for Marketplace compatibility; cold-start SecretStorage API key fallback; runtime diagnostics; cancellation listener leak fixes; blocking CI (lint + test + package).
+
+**Verification (local):** `npm run compile` clean, `npm test` 156/156 pass, lint clean. #109 math verified (666237 + 371156 < 1048576).
+
+**Merge:** merge commit `268059f` (NOT squash). All 4 contributor commits preserved: `7b9a240`, `62065e9`, `2daa9fe`, `0157a61`.
+
+**Post-merge:** issues #103 and #109 closed. Live gateway verification for near-limit sessions still recommended.
 
 ---
 

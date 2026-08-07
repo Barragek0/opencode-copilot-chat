@@ -1,9 +1,10 @@
 # Issue #109 - DeepSeek V4 Flash Context Overflow
 
 **Date:** 2026-08-07
-**Status:** Implemented; live reporter verification pending
+**Status:** ✅ Solved — merged via PR #113 on 2026-08-07
 **Severity:** High
 **GitHub:** [#109](https://github.com/ltmoerdani/opencode-copilot-chat/issues/109)
+**PR:** [#113](https://github.com/ltmoerdani/opencode-copilot-chat/pull/113)
 
 ## Symptom
 
@@ -46,3 +47,7 @@ transports without DeepSeek-specific branching.
 - `src/test/tokenEstimate.test.ts` verifies that tool schemas increase the
   prompt estimate.
 - The retry is skipped when the prompt itself cannot fit by reducing output.
+
+## Resolution
+
+Merged via **PR #113** (merge commit `268059f`, 2026-08-07) into `main`. All 4 contributor commits preserved. The protection applies to every transport and model family (Chat Completions, Anthropic Messages, Responses, Gemini). Live gateway smoke tests passed; the reporter's near-limit live session is still pending final confirmation.

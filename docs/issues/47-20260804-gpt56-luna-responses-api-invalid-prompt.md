@@ -1,8 +1,9 @@
 # Issue #103 — gpt-5.6-luna Responses API `invalid_prompt` (HTTP 400)
 
 **Date:** 2026-08-04
-**Status:** 🟡 Implemented; live gateway verification pending
+**Status:** ✅ Solved — merged via PR #113 on 2026-08-07
 **Severity:** High
+**PR:** [#113](https://github.com/ltmoerdani/opencode-copilot-chat/pull/113)
 **GitHub:** [#103](https://github.com/ltmoerdani/opencode-copilot-chat/issues/103)
 **Related:** #41 (`docs/issues/41-20260803-gpt56-luna-routing-fix.md`)
 
@@ -114,6 +115,10 @@ The `text` field was removed from the shared Responses request envelope. It is n
     - Long session, 10+ turns with code output and MCP tool results. Confirm no 400.
     - Image input. Confirm vision still works. Caveat: with `truncation: "auto"`, the earliest image will be dropped first on overflow.
 - Inspect the Output Channel during that run. The `[request]` log should show payload size and a 200 response.
+
+## Resolution
+
+Merged via **PR #113** (merge commit `268059f`, 2026-08-07) into `main`. All 4 contributor commits preserved. The fix applies to every model routed through the Responses transport. Live gateway smoke tests passed; a full near-limit production session is still recommended before closing out.
 
 ## Risk assessment
 
