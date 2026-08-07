@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { buildStableModelCapabilities } from "../modelCapabilities";
 
 /**
  * Vision proxy condition tests.
@@ -66,25 +67,25 @@ describe("modelCapabilities vision proxy flag", () => {
   // This tells VS Code NOT to strip images from requests.
 
   it("returns imageInput: true when proxy is enabled on text-only models", () => {
-    const capabilities = simulateModelCapabilities(false, true);
+    const capabilities = buildStableModelCapabilities(true);
     assert.equal(capabilities.imageInput, true);
   });
 
   it("returns imageInput: true when model natively supports vision", () => {
-    const capabilities = simulateModelCapabilities(true, false);
+    const capabilities = buildStableModelCapabilities(true);
     assert.equal(capabilities.imageInput, true);
   });
 
   it("returns imageInput: false only when no vision support and no proxy", () => {
-    const capabilities = simulateModelCapabilities(false, false);
+    const capabilities = buildStableModelCapabilities(false);
     assert.equal(capabilities.imageInput, false);
   });
-});
 
-function simulateModelCapabilities(
-  metadataSupportsVision: boolean,
-  visionProxyEnabled: boolean,
-): { imageInput: boolean } {
-  const supportsVision = metadataSupportsVision || visionProxyEnabled;
-  return { imageInput: supportsVision };
-}
+  it("keeps tool calling enabled without proposal-gated edit tool hints", () => {
+    const capabilities = buildStableModelCapabilities(true);
+
+    assert.equal(capabilities.toolCalling, true);
+    assert.equal(capabilities.supportsToolCalling, true);
+    assert.equal("editTools" in capabilities, false);
+  });
+});

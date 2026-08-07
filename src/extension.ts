@@ -47,6 +47,7 @@ import {
   normalizeImageDataUrl,
 } from "./imageNormalizer";
 import { providerModelDisplayName } from "./modelNames";
+import { buildStableModelCapabilities } from "./modelCapabilities";
 import {
   calculateModelLimits,
   type ModelLimits,
@@ -72,6 +73,7 @@ import {
   estimateCost,
   type UsageBaselineTargets,
 } from "./goUsageTracker";
+import { resolveResponseApiKey } from "./apiKeyResolution";
 import {
   LEGACY_FINGERPRINT,
   keyFingerprint,
@@ -588,11 +590,6 @@ const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
  * for understanding agent-loop context) without incurring the payload cost.
  */
 const MAX_HISTORY_IMAGES_KEPT = 2;
-
-type CopilotCompatibleCapabilities = vscode.LanguageModelChatCapabilities & {
-  supportsToolCalling: boolean;
-  supportsImageToText: boolean;
-};
 
 // Models live on the OpenCode Zen gateway but with constrained GPU capacity.
 // They were re-enabled by the OpenCode team after a brief shutdown
@@ -2008,7 +2005,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         isBYOK: true,
         maxInputTokens: limits.advertisedMaxInputTokens,
         maxOutputTokens: limits.advertisedMaxOutputTokens,
-        capabilities: modelCapabilities(metadata, modelId),
+        capabilities: modelCapabilities(metadata),
         endpointKind: routing.endpointKind,
         provider: this.definition,
         ...(capacityNote
@@ -2068,9 +2065,14 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     progress: vscode.Progress<vscode.LanguageModelResponsePart2>,
     token: vscode.CancellationToken
   ): Promise<void> {
-    const apiKey =
-      getConfiguredApiKey(options as ConfiguredLanguageModelResponseOptions)
-      ?? this.apiKeysByModelId.get(model.id);
+    // VS Code can invoke a cached selected model immediately after the
+    // extension host restarts, before model discovery repopulates the in-memory
+    // ID map. Keep SecretStorage as the cold-start fallback for that request.
+    const apiKey = resolveResponseApiKey(
+      getConfiguredApiKey(options as ConfiguredLanguageModelResponseOptions),
+      this.apiKeysByModelId.get(model.id),
+      await this.context.secrets.get(SECRET_KEY),
+    );
 
     if (!apiKey) {
       throw new Error(`${this.definition.displayName} API key is required. Use the ${this.definition.displayName} gear icon in Language Models to configure it, then reload the window.`);
@@ -3990,29 +3992,16 @@ function modelLimits(
 
 function modelCapabilities(
   metadata: ResolvedModelMetadata,
-  modelId: string,
-): CopilotCompatibleCapabilities {
+): vscode.LanguageModelChatCapabilities {
   // When a vision proxy model is configured (non-empty ID in globalState),
   // report imageInput: true for ALL models so VS Code does not strip image
   // parts before they reach our provider. The vision proxy interceptor
   // forwards images to the configured model transparently.
   const supportsVision = metadata.supportsVision || isVisionProxyEnabled();
 
-  return {
-    imageInput: supportsVision,
-    toolCalling: true,
-    supportsImageToText: supportsVision,
-    supportsToolCalling: true,
-    editTools: preferredEditTools(modelId),
-  };
-}
-
-function preferredEditTools(modelId: string): string[] {
-  if (/^(?:gpt-|o\d|codex)|codex/i.test(modelId)) {
-    return ["apply-patch"];
-  }
-
-  return ["multi-find-replace", "find-replace"];
+  // `editTools` is intentionally absent. VS Code 1.132 still gates that hint
+  // behind the chatProvider proposal for non-allowlisted extensions.
+  return buildStableModelCapabilities(supportsVision);
 }
 
 function formatModalityBadges(metadata: ResolvedModelMetadata): string {

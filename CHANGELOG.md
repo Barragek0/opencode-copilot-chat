@@ -6,13 +6,15 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Added
 
-- **`[VS Code]` Current BYOK and edit-tool metadata.** OpenCode models are now explicitly marked with `isBYOK`, advertise preferred edit tools (`apply-patch` for GPT/Codex and find/replace tools for other families), expose capacity warnings through the model picker warning field, and connect provider management buttons to the existing Manage commands.
+- **`[VS Code]` Current BYOK metadata and model management.** OpenCode models are now explicitly marked with `isBYOK`, expose capacity warnings through the model picker warning field, and connect provider management buttons to the existing Manage commands.
 - **`[Diagnostics]` Runtime and elevation details (#89).** Provider diagnostics now include the extension and VS Code versions, extension host, remote/UI mode, workspace trust, Node/platform details, Windows integrity level, installation paths, credential presence, and model-selection errors. Added `OpenCode: Configure Utility Models` and linked diagnostics/utility settings from the provider Manage menu.
 
 ### Fixed
 
 - **`[Responses]` Long sessions rejected with `invalid_prompt` (#103).** Responses requests now send `truncation: "auto"`, omit the proxy-sensitive `text.verbosity` field, and cap `max_output_tokens` to the context remaining after the normalized prompt. Prompt estimation now happens after vision proxying and old-image trimming. The limit and request-envelope logic were extracted into pure modules with regression tests.
 - **`[Context]` DeepSeek V4 Flash overflow with large tool-enabled sessions (#109).** Request-time prompt estimates now include VS Code/Copilot tool schemas instead of counting only messages, and reserve proportional tokenizer headroom rather than a fixed 64-token margin. If an upstream tokenizer still reports an exact context overflow, the HTTP 400 recovery path uses the provider's authoritative context/request/completion counts to reduce the Chat, Messages, Responses, or Gemini output budget and retry once. The protection applies to every transport and model family.
+- **`[Credentials]` Cached models lost their API key after an Extension Host restart.** Response handling now falls back to the extension's SecretStorage when VS Code invokes a cached selected model before model discovery has rebuilt the in-memory model-to-key map.
+- **`[VS Code]` Manage Models rejected the extension for using the `chatProvider` proposal.** Model metadata no longer advertises the proposal-gated `capabilities.editTools` field, so the published extension works in regular VS Code without `--enable-proposed-api`.
 - **`[Reliability]` Cancellation listener leaks.** Model discovery and streaming retry delays now dispose VS Code cancellation subscriptions after success, timeout, or cancellation. The provider connection test also has a 30-second timeout.
 - **`[Usage]` Profile label missing from the SVG tooltip.** The active profile label is now forwarded to the SVG builder instead of being calculated and discarded.
 - **`[Build]` Removed source files no longer survive in the VSIX.** Compilation now cleans `out/` before invoking TypeScript, preventing stale artifacts such as the removed autocomplete implementation from being packaged.
