@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// version: 5
+// version: 6
 
 declare module 'vscode' {
 
@@ -46,6 +46,12 @@ declare module 'vscode' {
 		 * A numeric value for comparing model cost tiers.
 		 */
 		readonly multiplierNumeric?: number;
+
+		/**
+		 * Whether this model uses credentials supplied by the user instead of the
+		 * built-in Copilot service.
+		 */
+		readonly isBYOK?: boolean;
 
 		/**
 		 * Optional pricing label for this model, such as "Free", etc.
@@ -107,6 +113,21 @@ declare module 'vscode' {
 		 * The value must match a `type` declared in a `chatSessions` extension contribution.
 		 */
 		readonly targetChatSessionType?: string;
+
+		/**
+		 * Optional categorized warnings shown in the model picker hover.
+		 */
+		readonly warningText?: Record<string, string>;
+
+		/**
+		 * Optional promotional information for this model.
+		 */
+		readonly promo?: {
+			readonly id: string;
+			readonly discountPercent: number;
+			readonly endsAt: string;
+			readonly message: string;
+		};
 	}
 
 	export interface LanguageModelChatCapabilities {

@@ -8,9 +8,10 @@
  *
  * CONTRACT:
  * - Pure functions only — no vscode import, no side effects.
- * - analyzeHttp400ForRetry only handles recoverable 400 errors. Auth
- *   (401/403), rate limit (429), and permanent server errors are NOT retried
- *   via parameter patching. At most ONE retry per request to avoid infinite loops.
+ * - analyzeHttp400ForRetry handles recoverable parameter errors and context
+ *   overflows with authoritative token counts. Auth (401/403), rate limit
+ *   (429), and permanent server errors are NOT retried via parameter patching.
+ *   At most ONE retry per request avoids infinite loops.
  * - isTransientServerError only flags server conditions that are known to be
  *   momentary (router capacity / upstream churn). Unknown 5xx payloads are NOT
  *   retried so real bugs surface instead of being masked by retries.
@@ -32,6 +33,9 @@ export interface RetryPatch {
   /** Human-readable description of what was changed (for logging). */
   reason: string;
 }
+
+const CONTEXT_RETRY_MIN_SAFETY_TOKENS = 256;
+const CONTEXT_RETRY_SAFETY_RATIO = 0.001;
 
 /**
  * Patterns that indicate a recoverable 400 error caused by an unsupported
@@ -183,6 +187,9 @@ export function analyzeHttp400ForRetry(
   errorMessage: string,
   body: Record<string, unknown>,
 ): RetryPatch | undefined {
+  const contextPatch = patchContextOverflow(errorMessage, body);
+  if (contextPatch) return contextPatch;
+
   for (const { pattern, patch, describe } of RECOVERABLE_ERROR_PATTERNS) {
     const match = errorMessage.match(pattern);
     if (match) {
@@ -197,6 +204,55 @@ export function analyzeHttp400ForRetry(
     }
   }
   return undefined;
+}
+
+function patchContextOverflow(errorMessage: string, body: Record<string, unknown>): RetryPatch | undefined {
+  const contextWindow = parseTokenCount(errorMessage.match(/maximum context length is\s*([\d,]+)\s*tokens?/i)?.[1]);
+  const requestedTokens = parseTokenCount(errorMessage.match(/you requested\s*([\d,]+)\s*tokens?/i)?.[1]);
+  if (contextWindow === undefined || requestedTokens === undefined) return undefined;
+
+  const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveInteger(body[key]) !== undefined);
+  const generationConfig = recordValue(body.generationConfig);
+  const configuredOutput = outputKey
+    ? positiveInteger(body[outputKey])
+    : positiveInteger(generationConfig?.maxOutputTokens);
+  if (configuredOutput === undefined) return undefined;
+
+  const reportedOutput = parseTokenCount(errorMessage.match(/([\d,]+)\s+in the (?:completion|output)/i)?.[1]);
+  const currentOutput = reportedOutput ?? configuredOutput;
+  const overflow = requestedTokens - contextWindow;
+  if (overflow <= 0) return undefined;
+
+  const safetyMargin = Math.max(CONTEXT_RETRY_MIN_SAFETY_TOKENS, Math.ceil(contextWindow * CONTEXT_RETRY_SAFETY_RATIO));
+  const nextOutput = Math.floor(currentOutput - overflow - safetyMargin);
+  if (nextOutput < 1 || nextOutput >= configuredOutput) {
+    return undefined;
+  }
+
+  const outputLabel = outputKey ?? "generationConfig.maxOutputTokens";
+  const patchedBody = outputKey
+    ? { ...body, [outputKey]: nextOutput }
+    : { ...body, generationConfig: { ...generationConfig, maxOutputTokens: nextOutput } };
+
+  return {
+    body: patchedBody,
+    reason: `reduced ${outputLabel} from ${configuredOutput} to ${nextOutput} using upstream context counts`,
+  };
+}
+
+function parseTokenCount(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  return positiveInteger(Number(value.replaceAll(",", "")));
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 /**

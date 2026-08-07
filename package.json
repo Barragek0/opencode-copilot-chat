@@ -75,6 +75,10 @@
         "title": "OpenCode Go: Refresh Models"
       },
       {
+        "command": "opencodego.configureUtilityModels",
+        "title": "OpenCode: Configure Utility Models"
+      },
+      {
         "command": "opencodego.diagnostics",
         "title": "OpenCode Go: Diagnostics"
       },
@@ -276,6 +280,7 @@
       {
         "vendor": "opencodego",
         "displayName": "OpenCode Go",
+        "managementCommand": "opencodego.manage",
         "configuration": {
           "type": "object",
           "required": [
@@ -294,6 +299,7 @@
       {
         "vendor": "opencodezen",
         "displayName": "OpenCode Zen",
+        "managementCommand": "opencodezen.manage",
         "configuration": {
           "type": "object",
           "required": [
@@ -312,11 +318,13 @@
       {
         "vendor": "opencodego-agent",
         "displayName": "OpenCode Go (Agents)",
+        "managementCommand": "opencodego.manage",
         "when": "config.opencodego.showAgentModelsInManagePanel"
       },
       {
         "vendor": "opencodezen-agent",
         "displayName": "OpenCode Zen (Agents)",
+        "managementCommand": "opencodezen.manage",
         "when": "config.opencodego.showAgentModelsInManagePanel"
       }
     ]
@@ -325,29 +333,26 @@
     "lint": "npm run lint:js && npm run lint:md",
     "lint:js": "eslint .",
     "lint:fix": "eslint . --fix",
-    "lint:md": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\"",
+    "lint:md": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\" \"#docs/**\"",
+    "lint:md:all": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\"",
     "format": "npx prettier --write .",
     "format:check": "npx prettier --check .",
-    "compile": "tsc -p ./",
-    "test": "npm run compile && node --test \"out/test/**/*.test.js\"",
-    "watch": "tsc -watch -p ./",
+    "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
+    "compile": "npm run clean && tsc -p ./",
+    "test": "npm run compile && node scripts/run-unit-tests.mjs",
+    "watch": "npm run clean && tsc -watch -p ./",
     "validate-models": "npx --yes tsx scripts/validate-models.mts",
     "test-retry": "npx --yes tsx scripts/test-retry-e2e.mts",
-    "prepackage": "npm run compile && npm test",
+    "prepackage": "npm test",
     "package": "vsce package",
     "vscode:prepublish": "npm run compile",
     "prepare": "husky"
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,mts,cts}": [
-      "eslint --fix --max-warnings 0",
-      "prettier --write"
+      "eslint --fix --max-warnings 0"
     ],
-    "*.{json,jsonc,yml,yaml,css,scss,less,html,svg}": "prettier --write",
-    "*.md": [
-      "prettier --write",
-      "markdownlint-cli2 --config .markdownlint.json --fix"
-    ]
+    "*.{json,jsonc,yml,yaml,css,scss,less,html,svg}": "prettier --write"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

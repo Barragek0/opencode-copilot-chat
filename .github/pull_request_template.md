@@ -9,5 +9,8 @@
 ## ✅ Checklist
 
 - [ ] `npm run compile` passes
+- [ ] `npm run lint` passes
+- [ ] `npm test` passes
+- [ ] `npm run package` produces a VSIX
 - [ ] I tested it works
 - [ ] I updated docs/CHANGELOG if needed

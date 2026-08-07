@@ -1,7 +1,7 @@
 # Issue #103 — gpt-5.6-luna Responses API `invalid_prompt` (HTTP 400)
 
 **Date:** 2026-08-04
-**Status:** 🔴 Active
+**Status:** 🟡 Implemented; live gateway verification pending
 **Severity:** High
 **GitHub:** [#103](https://github.com/ltmoerdani/opencode-copilot-chat/issues/103)
 **Related:** #41 (`docs/issues/41-20260803-gpt56-luna-routing-fix.md`)
@@ -10,7 +10,7 @@
 
 Requests to `gpt-5.6-luna` via the Responses API fail once a session grows past a certain size:
 
-```
+```text
 OpenCode Go API request failed (400) model=gpt-5.6-luna payloadBytes=1528273:
 Error from provider (Console Go): Upstream request failed:
 [invalid_prompt] Invalid Responses API request
@@ -61,80 +61,78 @@ text: { verbosity: modelId === "gpt-5-codex" ? "medium" : "low" },
 
 Small payload, so `prompt + 128K < 1.05M`. The gateway also appears to tolerate `verbosity` on small requests. As the payload grows, one of the three conditions above trips. The bug only shows up under load.
 
-## Proposed fix
+## Implemented fix
 
-Ranked by impact, largest first.
+Implemented on 2026-08-06 for every model routed through the Responses transport.
 
 ### 1. Send `truncation: "auto"` on the Responses body
 
-**File:** `src/extension.ts`, inside `buildResponsesRequestBody()`.
+**Files:** `src/responsesRequest.ts` and `src/extension.ts`.
 
 ```ts
-return {
+return buildResponsesRequestEnvelope({
   model: modelId,
   input,
-  max_output_tokens: limits.maxOutputTokens,
-  ...(metadata.temperature !== false ? { temperature: settings.temperature } : {}),
-  stream: true,
-  truncation: "auto",  // ← add
-  ...thinkingPayload,
-  ...(tools.length ? { tools, tool_choice: toolChoice(options.toolMode) } : {}),
-  text: { verbosity: modelId === "gpt-5-codex" ? "medium" : "low" },
-};
+  maxOutputTokens: limits.maxOutputTokens,
+  thinkingPayload,
+  tools,
+});
 ```
 
 OpenAI explicitly recommends `"auto"` for stateless multi-turn usage. This alone fixes most long-session failures without user intervention.
 
 ### 2. Cap `max_output_tokens` against the remaining window
 
-**File:** `src/extension.ts`, inside `buildResponsesRequestBody()`.
+**File:** `src/modelLimits.ts`.
 
 ```ts
-// Rough estimate: 4 chars ≈ 1 token
-const inputByteLength = JSON.stringify(input).length;
-const estimatedInputTokens = Math.ceil(inputByteLength / 4);
-const safeMaxOutput = Math.max(
-  1024,  // floor
-  Math.min(limits.maxOutputTokens, limits.contextWindow - estimatedInputTokens - 1024)
+const remainingContext = Math.max(1, contextWindow - promptReserve);
+const maxOutputTokens = Math.max(
+  1,
+  Math.min(configuredMaxOutputTokens, remainingContext),
 );
 ```
 
-This handles the edge case where `prompt + max_output_tokens` would overshoot the window. A rough estimate is fine here because fix #1 already provides a safety net.
+The previous 4,096-token floor could exceed the remaining context and recreate the 400. Request-time limits now use a strict floor of one token; `truncation: "auto"` remains the fallback when the input itself exceeds the window. Estimation runs after vision proxying and old-image trimming, so it reflects the actual payload.
 
-### 3. (Optional) Stop sending `text.verbosity`
+### 3. Stop sending `text.verbosity`
 
 **File:** `src/extension.ts`, inside `buildResponsesRequestBody()`.
 
-Drop the `text` field from the body entirely. The field is non-essential, and the risk of a provider rejecting it outweighs the marginal verbosity control. Lower priority than #1 and #2.
+The `text` field was removed from the shared Responses request envelope. It is non-essential, and avoiding it keeps the OpenCode proxy compatible with upstream providers that reject unknown or unsupported options.
 
-## Verification plan
+### Regression coverage
 
-1. `npm run compile` clean.
-2. Launch the Extension Development Host (F5).
-3. Run `gpt-5.6-luna` against three scenarios:
-   - Short session, 1–3 turns. Confirm no regression.
-   - Long session, 10+ turns with code output and MCP tool results. Confirm no 400.
-   - Image input. Confirm vision still works. Caveat: with `truncation: "auto"`, the earliest image will be dropped first on overflow.
-4. Inspect the Output Channel. The `[request]` log should show payload size and a 200 response.
+- `src/test/modelLimits.test.ts` covers near-full contexts, overrides, and advertised limits.
+- `src/test/responsesRequest.test.ts` covers automatic truncation, bounded output, optional fields, and the absence of `text.verbosity`.
+
+## Verification
+
+- Automated: compile, lint, all 145 unit tests, and clean VSIX packaging pass.
+- Live gateway verification remains for three scenarios:
+    - Short session, 1–3 turns. Confirm no regression.
+    - Long session, 10+ turns with code output and MCP tool results. Confirm no 400.
+    - Image input. Confirm vision still works. Caveat: with `truncation: "auto"`, the earliest image will be dropped first on overflow.
+- Inspect the Output Channel during that run. The `[request]` log should show payload size and a 200 response.
 
 ## Risk assessment
 
 | Fix | Risk | Mitigation |
 |-----|------|------------|
-| `truncation: "auto"` | Drops early conversation turns, possibly including the system message, when overflow occurs | Surface a user-facing warning when truncation triggers. Dropping context is still better than a hard 400. |
-| Cap `max_output_tokens` | Output may come back shorter than expected | Floor of 1024 tokens. Users can still override via thinking config if they need more. |
+| `truncation: "auto"` | Drops early conversation turns when overflow occurs | It activates only when needed; preserving a response is preferable to a hard 400. |
+| Cap `max_output_tokens` | Output may come back shorter than expected | The budget is bounded to the measured remaining context, with server-side truncation as the overflow fallback. |
 | Remove `text.verbosity` | Output becomes slightly more verbose by default | Negligible. |
 
 ## Scope note
 
 This bug is not specific to `gpt-5.6-luna`. Any GPT model routed to the Responses API will hit the same wall. `gpt-5.6-luna` is just the one where it shows up first, because it is the model most often used in long agent sessions with many tool calls.
 
-The fix should apply to every model that routes to the Responses transport. No per-model hardcoding.
+The fix applies to every model that routes to the Responses transport. There is no per-model hardcoding.
 
 ## References
 
 - OpenAI Responses API reference: `https://developers.openai.com/api/reference/resources/responses` (see `truncation` field)
 - Issue #41: `docs/issues/41-20260803-gpt56-luna-routing-fix.md`
-- Source: `src/extension.ts` lines 2826–2849 (`buildResponsesRequestBody`)
-- Source: `src/routing.ts` lines 27–33 (Responses routing for `gpt-*`)
-- Source: `src/metadata.ts` line 177 (`gpt-5.6-luna` limits)
+- Source: `src/extension.ts` (`buildResponsesRequestBody`)
+- Source: `src/routing.ts` (Responses routing for `gpt-*`)
+- Source: `src/metadata.ts` (`gpt-5.6-luna` limits)

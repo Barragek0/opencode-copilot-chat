@@ -70,6 +70,51 @@ describe("analyzeHttp400ForRetry — non-recoverable errors", () => {
   });
 });
 
+describe("analyzeHttp400ForRetry — context overflow", () => {
+  it("reduces max_tokens using the authoritative counts from issue #109", () => {
+    const body = { model: "deepseek-v4-flash", max_tokens: 384_000 };
+    const result = analyzeHttp400ForRetry(
+      "This model's maximum context length is 1048576 tokens. However, you requested 1050237 tokens (666237 in the messages, 384000 in the completion).",
+      body,
+    );
+
+    assert.ok(result, "should be recoverable");
+    assert.equal(result.body?.max_tokens, 381_290);
+    assert.match(result.reason, /upstream context counts/i);
+  });
+
+  it("supports Responses-style max_output_tokens and formatted counts", () => {
+    const body = { model: "gpt-test", max_output_tokens: 32_000 };
+    const result = analyzeHttp400ForRetry(
+      "Maximum context length is 128,000 tokens; you requested 130,000 tokens (98,000 in the input, 32,000 in the output).",
+      body,
+    );
+
+    assert.ok(result, "should be recoverable");
+    assert.equal(result.body?.max_output_tokens, 29_744);
+  });
+
+  it("patches the nested Google output budget", () => {
+    const body = { model: "gemini-test", generationConfig: { maxOutputTokens: 32_000, temperature: 0.2 } };
+    const result = analyzeHttp400ForRetry(
+      "Maximum context length is 128,000 tokens; you requested 130,000 tokens (98,000 in the input, 32,000 in the output).",
+      body,
+    );
+
+    assert.ok(result, "should be recoverable");
+    assert.deepEqual(result.body?.generationConfig, { maxOutputTokens: 29_744, temperature: 0.2 });
+  });
+
+  it("does not retry when reducing completion cannot fit the prompt", () => {
+    const result = analyzeHttp400ForRetry(
+      "Maximum context length is 1,000 tokens. You requested 1,500 tokens (1,400 in the messages, 100 in the completion).",
+      { model: "test", max_tokens: 100 },
+    );
+
+    assert.equal(result, undefined);
+  });
+});
+
 describe("isTransientServerError", () => {
   it("flags 502/503/504 as transient", () => {
     assert.equal(isTransientServerError(502, "Bad Gateway"), true);

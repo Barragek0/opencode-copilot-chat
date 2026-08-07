@@ -35,8 +35,16 @@ fs.writeFileSync(
   "utf-8",
 );
 
-const originalResolveFilename = (Module as any)._resolveFilename;
-(Module as any)._resolveFilename = function (
+type ResolveFilename = (
+  request: string,
+  parent: unknown,
+  ...args: unknown[]
+) => string;
+const moduleResolver = Module as unknown as {
+  _resolveFilename: ResolveFilename;
+};
+const originalResolveFilename = moduleResolver._resolveFilename;
+moduleResolver._resolveFilename = function (
   request: string,
   parent: unknown,
   ...args: unknown[]
