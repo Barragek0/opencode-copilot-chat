@@ -124,9 +124,13 @@ manual testing.
    individually but does not trim smaller images that collectively exceed
    the model's context window. VS Code's own trimming is expected to handle
    that, but our `estimateTokenCount` under-counts base64 payloads.
-3. **Top-level image attachments still have no size cap.** Only tool-result
-   images are bounded. Consistent limit can be added in a follow-up if
-   users hit oversized pasted images.
+3. ~~**Top-level image attachments still have no size cap.**~~ **Resolved.**
+   Top-level images are now normalized via `normalizeImagePart()` (PR #102 /
+   issue #94) and bounded by `MAX_IMAGE_BASE64_BYTES = 5 MB` before send.
+   Tool-result images run through the same normalizer (`src/extension.ts`
+   `convertMessage()` ~L3232) **before** the `MAX_TOOL_RESULT_IMAGE_BYTES`
+   raw guard still applies for cumulative MCP history bounding. See
+   [`docs/features/13-20260803-image-normalization.md`](13-20260803-image-normalization.md).
 
 ---
 
@@ -134,4 +138,6 @@ manual testing.
 
 - [`docs/features/01-20260514-vision-image-input.md`](01-20260514-vision-image-input.md) — top-level image attachments
 - [`docs/features/11-20260715-vision-proxy.md`](11-20260715-vision-proxy.md) — proxy for text-only models
+- [`docs/features/13-20260803-image-normalization.md`](13-20260803-image-normalization.md) — image normalizer (resized/re-encoded before size guard, supersedes raw-byte-only guard)
 - [`docs/issues/34-20260720-mcp-tool-result-image-dropped.md`](../issues/34-20260720-mcp-tool-result-image-dropped.md) — root-cause + fix writeup
+- [`docs/issues/38-20260725-top-level-image-size-guard.md`](../issues/38-20260725-top-level-image-size-guard.md) — ⚠️ Deprecated, superseded by #94 normalizer

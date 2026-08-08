@@ -5,7 +5,7 @@
 **Related:** GitHub Issue [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86)
 **Reporter:** [@Witchcraft2k](https://github.com/Witchcraft2k)
 **Extension version affected:** 0.4.3
-**Fixed in:** 0.4.6 (unreleased)
+**Fixed in:** [0.5.0](https://github.com/ltmoerdani/opencode-copilot-chat/releases/tag/v0.5.0) (PR [#101](https://github.com/ltmoerdani/opencode-copilot-chat/pull/101), merged 2026-08-03)
 
 ## Problem
 
@@ -163,9 +163,23 @@ Compile verification: `npm run compile` → ✅ no errors.
 
 - `src/extension.ts` — removed the `isAgentVariant || options.configuration` guard; rewrote the comment block with verified lifecycle semantics and an explicit reference to issue #86 and the reference implementation in `microsoft/vscode`.
 
+## Post-Merge Follow-Up
+
+### Regression: duplicate Zen models (#106)
+
+The unconditional fallback introduced a side effect: when a user **also** configured a native BYOK group, VS Code called `provideLanguageModelChatInformation` twice for the Zen vendor, once without a group and once per configured group. Because the groupless call now also resolved a key from `SecretStorage` (the change shipped here), it emitted its own model set that VS Code kept alongside the group-namespaced set. The net effect was every Zen model appearing twice in the picker.
+
+This was tracked in [#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106) and fixed in PR [#108](https://github.com/ltmoerdani/opencode-copilot-chat/pull/108) by recording, per vendor, when a BYOK group has been configured and keeping the groupless call silent in that case. The `Clear API Key` action resets the flag so the extension-command key path remains usable. Documented in `docs/issues/48-20260805-issue106-zen-duplicate-models.md`.
+
+### Changelog placement
+
+The CHANGELOG groups this fix under `[0.4.5]`, matching the in-development version when the PR landed. The fix shipped publicly in the **0.5.0** release, which bundled several pending `[0.4.5]` entries together.
+
 ## References
 
 - GitHub Issue: [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86)
+- Pull Request: [#101](https://github.com/ltmoerdani/opencode-copilot-chat/pull/101) (merged via merge commit `40e5db5`)
+- Regression follow-up: [#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106) / PR [#108](https://github.com/ltmoerdani/opencode-copilot-chat/pull/108)
 - VS Code proposed API: [`vscode.proposed.chatProvider.d.ts`](https://github.com/microsoft/vscode/blob/main/src/vscode-dts/vscode.proposed.chatProvider.d.ts) (`PrepareLanguageModelChatModelOptions`)
 - Reference BYOK implementation: [`abstractLanguageModelChatProvider.ts`](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/extension/byok/vscode-node/abstractLanguageModelChatProvider.ts)
 - Internal research note: `/memories/repo/issue86-zen-non-agent-0-models-research.md`

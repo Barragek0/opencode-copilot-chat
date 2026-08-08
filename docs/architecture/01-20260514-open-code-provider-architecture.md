@@ -48,6 +48,9 @@ This document is intentionally backdated to the original provider-architecture s
 | 2026-06-12 | 0.2.7   | Temperature support guard and Kimi thinking documentation correction                                                                                                                                      | ✅ Solved |
 | 2026-06-23 | 0.3.4   | VS Code ≥1.126 model picker crash fix: `category` type from object to string, secrets fallback via `options.configuration` discriminator, agent variant independent resolution                            | ✅ Solved |
 | 2026-06-24 | 0.3.4   | Security hardening: removed API key debug log leak, Clear API Key BYOK warning, `reasoningContentByToolCallId` memory cap at 500, removed dead `agentProvidersByBaseVendor` map and `categoryOrder` field | ✅ Solved |
+| 2026-08-03 | 0.5.0   | Issue [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86) (PR [#101](https://github.com/ltmoerdani/opencode-copilot-chat/pull/101)): dropped the `isAgentVariant \|\| options.configuration` guard so non-agent `opencodezen` / `opencodego` providers fall back to `SecretStorage` whenever `options.configuration` is absent. Mirrors Copilot's own `AbstractLanguageModelChatProvider`. The previous in-code comment claiming `configuration=undefined` was a transient "still resolving" state was incorrect. | ✅ Solved |
+| 2026-08-05 | 0.5.0   | Issue [#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106) (PR [#108](https://github.com/ltmoerdani/opencode-copilot-chat/pull/108)): regression from the #86 fix where a native BYOK group caused every Zen model to be listed twice. The provider now records per vendor when a BYOK group exists and keeps the groupless call silent in that case. | ✅ Solved |
+| 2026-08-07 | Unreleased | PR [#113](https://github.com/ltmoerdani/opencode-copilot-chat/pull/113) bridge hardening (#103 + #109): `truncation: "auto"` + bounded output on Responses, tool/MCP schemas in prompt estimates, proportional tokenizer headroom, upstream-count HTTP 400 recovery across 4 transports, `editTools` dropped for Marketplace, cold-start `SecretStorage` credentials, runtime diagnostics, blocking CI | ✅ Solved |
 
 ---
 
@@ -98,6 +101,13 @@ The recommended setup path is still VS Code's native **Language Models** UI. The
 ## API Key Handling
 
 The native provider configuration passes the API key through `options.configuration.apiKey` during model listing and request handling. Because VS Code may not always pass provider configuration into every chat response call, the provider also caches resolved keys by model ID after successful model discovery.
+
+For model discovery (`provideLanguageModelChatInformation`), the extension resolves the key in two steps:
+
+1. Read `options.configuration.apiKey` (the native BYOK value) if VS Code supplied one.
+2. If step 1 produced nothing, fall back to `SecretStorage` unconditionally.
+
+The unconditional fallback (since 0.5.0, [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86)) covers users who stored the key via the extension command `OpenCode Go: Set API Key` instead of the native BYOK flow. It mirrors Copilot's own `AbstractLanguageModelChatProvider`, which always falls back to its own storage when `configuration.apiKey` is absent. A per-vendor flag (`hasConfiguredByokGroup`) suppresses the groupless call once a native BYOK group exists, so models are not listed twice ([#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106)).
 
 Security rules:
 
@@ -256,6 +266,15 @@ The usage path includes:
 - status bar summaries for latest response usage
 - recent transport summaries persisted to VS Code `globalState`
 
+### Context Safety
+
+Since PR #113, request budgets are bounded so long and tool-heavy sessions are not rejected by the upstream tokenizer:
+
+- Prompt estimates (`src/tokenEstimate.ts`) include Copilot/MCP tool schemas, not just message text, and run after vision proxying and old-image trimming.
+- `src/modelLimits.ts` reserves proportional tokenizer headroom (12% of the local prompt estimate, floor 64 tokens) instead of a fixed margin, and caps the requested output to the context remaining after the prompt.
+- Responses requests (`src/responsesRequest.ts`) send `truncation: "auto"` and omit the proxy-sensitive `text.verbosity` field.
+- If upstream still reports an exact context overflow (HTTP 400 with authoritative counts), `src/retry.ts` reduces the `max_tokens` / `max_output_tokens` / `max_completion_tokens` / Gemini `generationConfig.maxOutputTokens` budget and retries once, across all four transports.
+
 The context-window hook silently no-ops if VS Code internals change or cannot be captured.
 
 ---
@@ -288,6 +307,13 @@ Core implementation files:
 - `src/usage.ts`
 - `src/goUsageTracker.ts`
 - `src/contextWindowHook.ts`
+- `src/retry.ts` (400 parameter + context-overflow recovery, transient 5xx classification)
+- `src/modelLimits.ts` (advertised vs request limits, proportional tokenizer headroom)
+- `src/responsesRequest.ts` (Responses request envelope: `truncation: "auto"`, bounded output)
+- `src/tokenEstimate.ts` (prompt estimate incl. tool/MCP schemas)
+- `src/modelCapabilities.ts` (proposal-safe capabilities, no `editTools`)
+- `src/apiKeyResolution.ts` (configured → registered → SecretStorage key resolution)
+- `src/runtimeDiagnostics.ts` (runtime/elevation diagnostics)
 - `package.json`
 
 Documentation and release files:

@@ -1,4 +1,4 @@
-**Status:** Implemented on `fix/open-issues-87-92-94`
+**Status:** ✅ Solved — merged via [PR #102](https://github.com/ltmoerdani/opencode-copilot-chat/pull/102) (commit `e43c01b`). Shipped in 0.5.0.
 
 # Kimi Context Size Picker (#87)
 

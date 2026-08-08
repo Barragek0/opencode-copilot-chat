@@ -144,7 +144,7 @@ In `streaming.ts`, `onTransportSummary` is now called **before** the usage `Data
 | **QuickPick (icon menu)**    | `💬 Latest Session (est)` item in Daily Summary section                   | Same condition                       |
 | **Usage webview (SVG)**      | Same SVG card as tooltip                                                  | Same condition                       |
 
-SVG card height adjusts dynamically: `310px` with session data, `286px` without. Card width widens from `330px` to `345px` when session data is present to fit the longer `Session (est):` label.
+SVG card height adjusts dynamically: `310px` with session data, `286px` without. Card width is `420px` (or `440px` when session data is present to fit the longer `Session (est):` label). Updated from 330/345px in PR #96 (issue #85).
 
 ---
 

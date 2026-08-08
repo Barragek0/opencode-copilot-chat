@@ -1,4 +1,4 @@
-# Issue #42 — Premature tool-call flush causes empty `<invoke>` calls (regression from #93)
+# Issue #98 — Premature tool-call flush causes empty `<invoke>` calls (regression from #93)
 
 **Date:** 2026-08-03
 **Status:** ✅ Fixed
@@ -66,7 +66,7 @@ An empty `{}` input is legitimate for tools that take no parameters. The bug was
 - `collect(toolCalls)` — accumulate deltas by `index` (fragmented `name`/`arguments` appended).
 - `shouldFlushOnFinishReason(finishReason)` — only `=== "tool_calls"`.
 - `flush()` — return complete calls, drop entries with empty `name`, clear pending.
-- `flushRemaining()` — end-of-stream flush; safe no-op when nothing is pending.
+- `flushRemainingToolCalls()` — end-of-stream flush; safe no-op when nothing is pending.
 
 ### 2. `src/streaming.ts` — `OpenAiResponseExtractor`
 
@@ -87,7 +87,7 @@ An empty `{}` input is legitimate for tools that take no parameters. The bug was
 
 - Multi-chunk stream emits **exactly one** complete tool call only when `finish_reason` is `"tool_calls"`.
 - No premature flush on intermediate `finish_reason: null` chunks (the #93 regression).
-- `flushRemaining()` emits the complete call for gateways omitting `finish_reason` (gpt-5.6-luna case).
+- `flushRemainingToolCalls()` emits the complete call for gateways omitting `finish_reason` (gpt-5.6-luna case).
 - Empty-name (arguments-only) deltas filtered; multiple tool calls handled by index; fragmented names appended.
 - `parseToolInput` returns `{}` for empty/partial/non-object JSON.
 
@@ -102,7 +102,7 @@ An empty `{}` input is legitimate for tools that take no parameters. The bug was
 - ✅ `npm test` — new `toolCallAccumulator` suite passes.
 - ✅ `npm run test-retry` — E2E retry test passes.
 - ✅ Manual F5 verification — `deepseek-v4` (Zen): tool calls now emit full `<parameter>`; the tool-calling loop is resolved.
-- ⚠️ `gpt-5.6-luna` (Go) **NOT live-verified**. The maintainer/reporter is in China, where GPT-series models cannot be reached through the gateway, so a live regression check of the #93 path was not possible. That path (end-of-stream `flushRemaining()`) is covered by the unit tests and shares the exact extractor code path verified with DeepSeek, but a live check on `gpt-5.6-luna` remains recommended for anyone who can access GPT models.
+- ⚠️ `gpt-5.6-luna` (Go) **NOT live-verified**. The maintainer/reporter is in China, where GPT-series models cannot be reached through the gateway, so a live regression check of the #93 path was not possible. That path (end-of-stream `flushRemainingToolCalls()`) is covered by the unit tests and shares the exact extractor code path verified with DeepSeek, but a live check on `gpt-5.6-luna` remains recommended for anyone who can access GPT models.
 
 ## Recommendation
 

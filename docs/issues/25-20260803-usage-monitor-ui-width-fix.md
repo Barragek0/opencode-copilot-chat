@@ -65,6 +65,17 @@ The minimum gap increased from 33px to 40px, with most gaps now at 80px — prov
 ### Files Changed
 
 - `src/extension.ts` — `buildUsageTooltipSvg()` (column positions, SVG dimensions), `buildUsageTooltip()` (img width), `updateWebviewContent()` (webview max-width)
+- `CHANGELOG.md` — Entry added under [0.4.4]
+- `docs/features/05-20260613-usage-webview-panel.md` — Updated webview max-width from 480px to 560px
+- `docs/features/09-20260626-session-level-cost-tracking.md` — Updated SVG card width from 330/345px to 420/440px
+
+### Cross-references
+
+- **PR:** [#96](https://github.com/ltmoerdani/opencode-copilot-chat/pull/96) (merged to main)
+- **Issue:** [#85](https://github.com/ltmoerdani/opencode-copilot-chat/issues/85) (auto-closed by `fixes #85`)
+- **Branch:** `fix/issue-85-usage-monitor-ui-width`
+- **Commit:** `a0911bf` (rebased onto main, merge commit `c1a6dc6`)
+- **Devlog:** `docs/devlog.md` — session entry added 2026-08-03
 
 ---
 

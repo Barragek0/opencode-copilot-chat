@@ -106,7 +106,7 @@ sequenceDiagram
 - Wraps SVG in themed HTML using VS Code CSS variables:
   - `var(--vscode-editor-background)` for body background
   - `var(--vscode-editor-foreground)` for text color
-- SVG rendered at 100% width, max 480px, with subtle shadow and rounded corners
+- SVG rendered at 100% width, max 560px (updated from 480px in PR #96, issue #85), with subtle shadow and rounded corners
 
 ### Auto-Sync
 

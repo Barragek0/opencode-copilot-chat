@@ -4,8 +4,11 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-08-08
+
 ### Added
 
+- **`[Streaming]` Transient 5xx gateway retry (#107).** The streaming request path now retries momentary gateway failures instead of failing on the first attempt: classic `502`/`503`/`504`, plus any `5xx` whose body names the OpenCode `Router.Unavailable` condition (no healthy backend for the model right now). The new pure classifier `isTransientServerError(status, errorDetail)` is conservative by design — unknown `5xx` payloads stay permanent so real bugs surface. Up to 2 retries with exponential backoff plus jitter (`TRANSIENT_5XX_RETRY_BASE_MS` 1s doubling, `TRANSIENT_5XX_RETRY_JITTER_MS` ≤250ms) to avoid piling concurrent retries onto the gateway at the same timestamp. Cancellation aborts the backoff immediately via the cancellation-aware `sleepWithCancellation`. `Router.Unavailable` errors now surface an actionable hint ("no healthy backend for this model right now — retry in a few seconds or switch models") instead of raw gateway JSON. Documented in `docs/issues/51-20260807-pr107-transient-5xx-retry-merge.md`. PR [#107](https://github.com/ltmoerdani/opencode-copilot-chat/pull/107) by [@Fahad090NP](https://github.com/Fahad090NP).
 - **`[VS Code]` Current BYOK metadata and model management.** OpenCode models are now explicitly marked with `isBYOK`, expose capacity warnings through the model picker warning field, and connect provider management buttons to the existing Manage commands.
 - **`[Diagnostics]` Runtime and elevation details (#89).** Provider diagnostics now include the extension and VS Code versions, extension host, remote/UI mode, workspace trust, Node/platform details, Windows integrity level, installation paths, credential presence, and model-selection errors. Added `OpenCode: Configure Utility Models` and linked diagnostics/utility settings from the provider Manage menu.
 
@@ -27,6 +30,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 - **`[Package]` Development-only files are excluded from the VSIX.** Internal docs, scripts, compiled tests, source maps, GitHub/Husky configuration, and lint configuration are no longer shipped; the README demo and Photon runtime remain included.
 
 - **`[Provider]` OpenCode Zen models listed twice when using a native BYOK group (#106).** With the API key configured via VS Code's Manage Models / BYOK flow, every OpenCode Zen model appeared twice (16 instead of 8). VS Code calls `provideLanguageModelChatInformation` once without a group and then once per configured group, namespacing identifiers by group — so the secrets-backed set emitted on the groupless call (since 0.5.0, #86) was kept alongside the group's set. The provider now records per vendor when a BYOK group has been configured and the groupless call stays silent in that case; the `Clear API Key` action resets the flag. Documented in `docs/issues/48-20260805-issue106-zen-duplicate-models.md`.
+- **`[Tooling]` Prettier codemod and markdownlint cleanup (#114).** One-shot formatting pass across 99 files (docs, `src`, scripts, config) so the #110 pre-commit hook stops being a tripwire and `git blame`/`git bisect` stay clean. `npm run format` applied using the existing `.prettierrc.json` (formatting only, no logic changes), and markdownlint went from 2219 to 0 issues: `.markdownlint.json` relaxes MD033/MD041/MD060 and scopes MD024 to `siblings_only`, 51 bare code fences gained `text`/`md` language tags, literal `|` pipes inside inline code were escaped (a real table rendering bug), a duplicate `### Changed` in this file was merged, and a README heading level was fixed. Documented in `docs/issues/54-20260808-pr114-format-codemod-merge.md`. PR [#114](https://github.com/ltmoerdani/opencode-copilot-chat/pull/114) by [@Fahad090NP](https://github.com/Fahad090NP).
 
 ## [0.5.0] — 2026-08-05
 

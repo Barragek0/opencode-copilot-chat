@@ -1,20 +1,223 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
 
-**Branch:** `main` | **Updated:** 2026-08-07 Asia/Jakarta | **Current Phase:** PR #113 review & merge (issues #103 + #109)
+**Branch:** `main` | **Updated:** 2026-08-08 Asia/Jakarta | **Current Phase:** Documentation backfill — PR #110/#113/#114 issue docs + devlog entries
 
 ---
 
-## ✅ PR #113 Review & Merge — Bridge Hardening (#103 + #109) — 2026-08-07
+## ✅ PR #114 Merge — Prettier Format Codemod + Markdownlint Fixes — 2026-08-08
 
-**Action:** Reviewed and merged Wallacy's PR #113 (`feat/bridge-hardening`) — context-overflow hardening for long and tool-heavy Copilot sessions.
+**Action:** Merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #114 (`chore/format-codemod`) — one-shot prettier formatting across 99 files plus markdownlint fixes (2219 → 0 issues).
 
-**Scope:** Fixes #103 (gpt-5.6-luna Responses `invalid_prompt`) and #109 (DeepSeek V4 Flash context overflow). Key changes: `truncation: "auto"` + dropped `text.verbosity` + bounded `max_output_tokens` on Responses; tool/MCP schemas included in prompt estimates; proportional 12% tokenizer headroom replacing the fixed 64-token margin; HTTP 400 context-overflow recovery using upstream counts (all 4 transports); `editTools` removed for Marketplace compatibility; cold-start SecretStorage API key fallback; runtime diagnostics; cancellation listener leak fixes; blocking CI (lint + test + package).
+**Problem:** The husky/lint-staged pre-commit hook from #110 went live the moment that PR landed, but 99 files in the repo still failed `npm run format:check`. The next contributor to touch any of those files would have been blocked on commit.
 
-**Verification (local):** `npm run compile` clean, `npm test` 156/156 pass, lint clean. #109 math verified (666237 + 371156 < 1048576).
+**Fix:** Two coordinated changes landed as a single commit so `git blame`/`git bisect` stay clean:
 
-**Merge:** merge commit `268059f` (NOT squash). All 4 contributor commits preserved: `7b9a240`, `62065e9`, `2daa9fe`, `0157a61`.
+1. **Prettier format** — `npm run format` applied across 99 files (docs 63, src 27, scripts 3, root/config 5) using `.prettierrc.json` from #108. Formatting only, no logic changes.
+2. **Markdownlint fixes** — `.markdownlint.json` relaxed (`MD033`, `MD041`, `MD060` off; `MD024` set to `siblings_only`), 51 bare code fences got language tags, literal `|` pipes inside inline code escaped (real table rendering bug), duplicate `### Changed` in CHANGELOG merged, README heading level fixed.
 
-**Post-merge:** issues #103 and #109 closed. Live gateway verification for near-limit sessions still recommended.
+**Sequencing note:** Merged back-to-back with #110 so the window where the hook could trip stayed closed.
+
+**Files:** 99 files touched. Highlights: `.markdownlint.json`, `CHANGELOG.md`, `README.md`, `docs/**/*.md`, `src/*.ts`, `src/test/*.test.ts`, `scripts/*.mts`.
+
+**Verification:** `npm run lint:md` → 0 issues (72 files). `npx prettier --check .` → all pass. `npm run compile` clean, `npm test` green (161/161).
+
+**Merge:** merge commit `94ef74f`.
+
+**Docs:** `docs/issues/54-20260808-pr114-format-codemod-merge.md` (new).
+
+**Follow-up:** Separate PR for the remaining 45 ESLint errors (`@typescript-eslint/no-explicit-any` in `src/` and vendored `vscode.proposed.*.d.ts`).
+
+---
+
+## ✅ PR #116 Merge — gpt-5.6-luna Image `invalid_prompt` Fix — 2026-08-07
+
+**Action:** Merged PR #116 (`fix/responses-api-image-url-string`) — `gpt-5.6-luna` and every GPT-5.x Responses-routed model on OpenCode Go failed with `[invalid_prompt] Invalid Responses API request` (HTTP 400) on the first turn with an image attached.
+
+**Root cause:** The Responses input serializer emitted `input_image.image_url` as the Chat Completions nested object `{ url: "…" }`, but the Responses API expects a plain string (URL or base64 data URL). The malformed shape predates #93 (GPT → Responses routing) and only surfaced once Luna started routing through `/v1/responses`.
+
+**Fix:** `responsesUserContent()` in `src/responsesRequest.ts` now emits `image_url` as a string. The full Responses input conversion (`responsesInputItemsFromMessage`, `responsesUserContent`, `responsesAssistantText`, `responsesToolOutput`, `joinedTextContent`) was extracted from `src/extension.ts` into the pure, unit-testable `src/responsesRequest.ts` module. Regression suite covers the string shape, empty messages, assistant tool calls, image-bearing tool results, and unsupported roles.
+
+**Files:** `src/responsesRequest.ts` (new, pure module), `src/extension.ts` (-119 lines, now imports the pure functions), `src/test/responsesRequest.test.ts` (new suite).
+
+**Verification:** `npm test` → 161/161 pass. Live gateway check (attach an image to `gpt-5.6-luna`) still pending Go API key.
+
+**Merge:** merge commit `e25a247`.
+
+**Docs:** `docs/issues/49-20260808-luna-image-invalid-prompt.md` (from PR).
+
+---
+
+## ✅ PR #113 Merge — Bridge Hardening (#103 + #109) — 2026-08-07
+
+**Action:** Reviewed and merged [@Wallacy](https://github.com/Wallacy)'s PR #113 (`feat/bridge-hardening`) — context-overflow hardening for long and tool-heavy Copilot sessions.
+
+**Problem:** Two related overflow failures surfaced once multi-turn agent sessions and Responses-routed models hit production:
+
+- #103 — long sessions rejected with `invalid_prompt` because Responses requests sent `text.verbosity` (proxy-sensitive) and did not cap `max_output_tokens` against remaining context.
+- #109 — DeepSeek V4 Flash hit its 1M-token ceiling while the extension still requested the full 384K completion allowance, because prompt estimates only counted message text and ignored Copilot/MCP tool schemas.
+
+**Fix:** Four classes of hardening landed together:
+
+1. **Context budget** — enable `truncation: "auto"` for Responses, drop `text.verbosity`, include tool schemas in prompt estimates, reserve proportional tokenizer headroom, bound output to remaining context, recover from upstream HTTP 400 by reducing output budget using provider-reported counts and retry once.
+2. **VS Code integration** — mark models `isBYOK`, expose capacity warnings, add utility-model configuration, drop proposal-gated `capabilities.editTools` so the published extension works in regular VS Code.
+3. **Credentials** — restore credentials for cached models after Extension Host restart by falling back to `SecretStorage`.
+4. **Reliability/build** — dispose cancellation listeners, 30s provider connection timeout, clean `out/` before compile, blocking CI checks, trim dev-only files from VSIX.
+
+**Review notes:** Confirmed the `capabilities.editTools` drop is safe (only an edit-tool preference hint, not a capability gate). #89 diagnostics enriched but definitive elevated/admin fix still pending repro.
+
+**Files:** `src/extension.ts`, `src/contextWindowHook.ts`, `src/contextWindowHookBridge.ts`, `src/responsesRequest.ts`, `src/modelCapabilities.ts`, `src/retry.ts`, `src/streaming.ts`, `src/test/`, `README.md`, `CHANGELOG.md`.
+
+**Verification:** `npm run compile` clean, `npm run lint` passes, unit tests green. Live validation for #109 near-limit session still pending reporter confirmation.
+
+**Merge:** merge commit `268059f`.
+
+**Docs:** `docs/issues/53-20260807-pr113-bridge-hardening-merge.md` (new). Related issue docs: `47-20260804-gpt56-luna-responses-api-invalid-prompt.md` (#103), `49-20260807-issue109-deepseek-context-overflow.md` (#109).
+
+---
+
+## ✅ PR #110 Merge — Husky + ESLint + Markdownlint Toolchain — 2026-08-06
+
+**Action:** Reviewed and merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #110 (`chore/tooling`) — husky + lint-staged pre-commit hook, ESLint flat config, prettier, markdownlint, tsconfig scoped to `src`, and CONTRIBUTING.md AI-agent workflow guidance.
+
+**Problem:** No lint/format toolchain existed. The repo had accumulated style drift across 99 files, and there was no guard against AI-generated PRs introducing inconsistent formatting or lint failures.
+
+**Fix:** Developer tooling + docs baseline landed after a six-point review (all addressed in commit `4c43b10`):
+
+1. Husky + lint-staged pre-commit hook (`eslint --fix`, `prettier`, `markdownlint-cli2 --fix`).
+2. ESLint flat config (`typescript-eslint` recommended), ignore list read from `.gitignore`.
+3. Prettier config kept in `.prettierrc.json` (single source from #108); a duplicate package.json block was dropped.
+4. Markdownlint with `MD013` off; further relaxations landed in #114.
+5. `tsconfig` scoped to `src` so `tsc -p ./` no longer scans the gitignored `inspirations/` reference folder.
+6. CONTRIBUTING.md "Workflow expectations" (think first, surgical changes, fix root causes, no bulk automation, self-review, verify before claiming done).
+
+**Review notes:**
+
+- Caught a **prettier config conflict** — `package.json` had `trailingComma: "none"` contradicting `.prettierrc.json` (`all` from #108). Dropped the duplicate.
+- Caught a **misleading "3167 problems" claim** — actual count after scoping was 48. The 3167 came from eslint scanning an untracked local `inspirations/` folder.
+- Requested the **format codemod land as a one-shot PR** before the hook goes live (became #114).
+- Requested **rebase on main** so `.prettierrc.json` from #108 was picked up.
+- Flagged **"AGENTS.md dropped" wording** as inaccurate (file never existed).
+- `npm audit fix` applied: 7 → 0 vulnerabilities.
+
+**Files:** `.husky/pre-commit`, `.markdownlint.json`, `CONTRIBUTING.md`, `eslint.config.mjs`, `package.json`, `tsconfig.json`.
+
+**Verification:** `npm run compile` clean, `npm test` 133/133, `npm run lint` 48 problems (baseline), `npm run format:check` 98 files (pre-codemod), `npm audit` 0 vulnerabilities, husky hook installed via `prepare`.
+
+**Merge:** merge commit `6d0522a`.
+
+**Docs:** `docs/issues/52-20260806-pr110-husky-eslint-toolchain-merge.md` (new).
+
+**Follow-up:** #114 (format codemod) merged back-to-back.
+
+---
+
+## ✅ PR #107 Review & Merge — Transient 5xx Gateway Retry — 2026-08-07
+
+**Action:** Reviewed and merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #107 (`feat/error-handling`) — transient 5xx retry with exponential backoff + jitter for the streaming request path.
+
+**Problem:** When the OpenCode gateway momentarily had no healthy backend for a model, it returned `502`/`503`/`504` or a `5xx` body naming `Router.Unavailable`. The extension surfaced the error on the first failure even though a retry a second later usually succeeded — flaky chat under gateway load, especially during multi-turn agent + parallel tool-call bursts.
+
+**Fix:** Two coordinated changes that extend the existing retry module:
+
+1. `isTransientServerError(status, errorDetail)` in `src/retry.ts` — classifies `502/503/504` as transient by definition, and other `5xx` as transient only when the compacted body matches `RouterUnavailable` (case-insensitive). Unknown `5xx` payloads stay permanent so real bugs surface.
+2. Transient retry loop in `src/streaming.ts` — up to `TRANSIENT_5XX_MAX_RETRIES = 2` retries with `Math.round(BASE * 2 ** (attempt - 1) + Math.random() * JITTER)` backoff (`TRANSIENT_5XX_RETRY_BASE_MS = 1000`, `TRANSIENT_5XX_RETRY_JITTER_MS = 250`). `sleepWithCancellation` aborts the backoff on user cancel. `fetchWithBody` helper collapses the three fetch sites. `describeRouterUnavailable` in `src/errors.ts` swaps raw JSON for an actionable hint.
+
+**Review notes:**
+
+- Requested **scope split** — original submission bundled husky + eslint + markdownlint + AGENTS.md + tsconfig. Split into PR #107 (4 source files) + PR [#110](https://github.com/ltmoerdani/opencode-copilot-chat/pull/110) (tooling stack).
+- Requested **jitter** to prevent thundering-herd on concurrent retries — landed as `+ Math.random() * 250`.
+- Confirmed the **400→5xx handoff** is intentional: worst case 4 fetches per request (initial + 1 patched 400 retry + 2 transient retries). `consumedErrorBody` is reset to `undefined` at the end of the 400 block and after each 5xx retry so the classifier reads a fresh body.
+- Dropped the standalone `AGENTS.md`; relevant guidance folded into `CONTRIBUTING.md` in PR #110.
+
+**Files:** `src/retry.ts`, `src/streaming.ts`, `src/errors.ts`, `src/test/retry.test.ts` (+167 / -34).
+
+**Verification:** `npm run compile` clean, `npm test` green, `npm run test-retry` green. Code grep on `main` confirms `TRANSIENT_5XX_RETRY_JITTER_MS`, `isTransientServerError`, `sleepWithCancellation`, `fetchWithBody`, `describeRouterUnavailable` all present. Live verification against a real `Router.Unavailable` burst not performed (classifier covered by unit tests).
+
+**Merge:** merge commit `6d519f7` (merge, not squash, to preserve contributor history). 2 contributor commits preserved.
+
+**Docs:** `docs/issues/51-20260807-pr107-transient-5xx-retry-merge.md` (new), `docs/features/07-20260615-model-validation-retry.md` (extended with the 5xx retry section), `CHANGELOG.md` Unreleased entry.
+
+**Follow-up:** PR #110 (husky/eslint/markdownlint stack) reviewed separately.
+
+---
+
+## ✅ PR #96 Merge — Usage Monitor SVG Width Fix (#85) — 2026-08-03
+
+**Action:** Reported by @gwynnbleiidd — usage monitor SVG card was too narrow at 330px/345px, causing the bottom statistics section (cost, requests, tokens per row) to be hard to read with values overlapping.
+
+**Root cause:** Hardcoded SVG dimensions and column positions in `buildUsageTooltipSvg()` were too tight. The bottom section crammed 6 values per line with gaps as small as 33px.
+
+**Fix:** Widened SVG card to 420px (440px with session data), adjusted all column positions proportionally. Progress bar width 256→340px, column spacing minimum 33→40px with most gaps at 80px. Tooltip image width 330→420px, webview max-width 480→560px.
+
+**Files:** `src/extension.ts` (buildUsageTooltipSvg, buildUsageTooltip, updateWebviewContent), `CHANGELOG.md`, `docs/issues/25-20260803-usage-monitor-ui-width-fix.md`.
+
+**Branch:** `fix/issue-85-usage-monitor-ui-width` (from main). Rebased onto main (CHANGELOG conflict resolved). Merge commit `c1a6dc6`.
+
+**Verification:** `npm run compile` clean, no TS errors. NoData SVG case automatically uses wider dimensions via shared `width` variable.
+
+**Merge:** PR #96 merged to main. Issue #85 auto-closed by `fixes #85` in commit message.
+
+---
+
+## ✅ PR #95 Merge — Top-Level Image Size Guard (#38) — 2026-08-03
+
+**Action:** First size guard for top-level (user paste/drag) image attachments. Closed the asymmetry with the tool-result path that had been bounded since PR #79.
+
+**Scope:** New constant `MAX_TOP_LEVEL_IMAGE_BYTES = 2_000_000` (2 MB raw bytes) in `src/extension.ts`. Top-level image branch in `convertMessage()` now checks `part.data.byteLength` before base64-encoding; oversized images are replaced with an actionable placeholder text part naming the byte count, the limit, and the suggested fix. Threshold intentionally more liberal than `MAX_TOOL_RESULT_IMAGE_BYTES` (1 MB) because top-level user images are typically larger than pre-compressed MCP screenshots.
+
+**Why not a regression:** `git log -L` confirmed the top-level image handler never had a size cap since first vision support (commit `dee9634`). The latent bug only surfaced because users started attaching larger images (4K screenshots, phone photos) that triggered `400 Upstream request failed` on the OpenCode Go gateway.
+
+**Why not auto-resize:** Considered and rejected at the time (sharp native binary impractical for VSIX, jimp too heavy, VS Code has no resize API). Upstream models auto-resize to a patch budget anyway, so a client-side resize layer was deemed not worth the complexity. This reasoning was later overturned by PR #102 (see above), which shipped a WASM-based normalizer that avoids native binaries entirely.
+
+**Verification:** `npm run compile` clean, 0 errors. Issue doc `docs/issues/38-20260725-top-level-image-size-guard.md` created with full evidence table.
+
+**Merge:** merge commit `8518a56` (NOT squash). Fix commit `eb3423b` (2026-07-25, rebased onto main). Merged 2026-08-03 01:21, five minutes before PR #96 above.
+
+**Post-merge:** Issue #38 auto-closed. Released in 0.4.4.
+
+**Superseded (2026-08-05):** This raw-byte guard was **removed** in PR #102 (issue #94, see entry above). The new `src/imageNormalizer.ts` resizes/re-encodes oversized images before any guard runs, so images the old guard would have dropped are now sent successfully after normalization. Issue doc `38-*` marked `⚠️ Deprecated`.
+
+---
+
+## ✅ PR #101 Merge — Non-agent Zen 0 Models Fix (#86) — 2026-08-03
+
+**Action:** Reported by @Witchcraft2k — non-agent `opencodezen` returned 0 models in `vscode.lm.selectChatModels({ vendor: "opencodezen" })` when the API key was stored via the extension command `OpenCode Go: Set API Key` instead of VS Code's native BYOK flow. `opencodezen-agent` worked (7 models), but `opencodezen` showed 0.
+
+**Root cause:** `provideLanguageModelChatInformation` had a guard `if (!apiKey && (this.definition.isAgentVariant || options.configuration))` that skipped the `SecretStorage` fallback for non-agent providers when `options.configuration` was `undefined`. VS Code passes exactly `undefined` when no native BYOK group is configured, so non-agent Zen never reached the secret-storage read and returned `[]`. The in-code comment claiming this was a transient "still resolving" state was incorrect; verified against `vscode.proposed.chatProvider.d.ts` and Copilot's own `AbstractLanguageModelChatProvider`.
+
+**Fix:** Dropped the guard so the fallback is unconditional (`if (!apiKey)`). Mirrors Copilot's own BYOK provider pattern. Also fixes the identical latent bug on non-agent `opencodego`.
+
+**Files:** `src/extension.ts` (guard + comment rewrite), `docs/issues/43-20260803-issue86-zen-nonagent-0-models.md`, `CHANGELOG.md`.
+
+**Branch:** `fix/issue86-zen-nonagent-0-models` (from main). Merge commit `40e5db5` (merge, not squash, to preserve history).
+
+**Verification:** `npm run compile` clean, no TS errors. Built and installed locally as 0.4.5; diagnostic commands (`OpenCode: Model Picker Diagnostics`, `OpenCode Zen: Diagnostics`) confirmed non-agent Zen now resolves models.
+
+**Merge:** PR #101 merged to main. Issue #86 auto-closed by `Closes #86` in commit + CHANGELOG. Released publicly in 0.5.0.
+
+**Follow-up:** Regression [#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106) — the unconditional fallback caused duplicate Zen models when a native BYOK group was also configured. Fixed in PR [#108](https://github.com/ltmoerdani/opencode-copilot-chat/pull/108) by tracking a per-vendor `hasConfiguredByokGroup` flag and silencing the groupless call when a group exists.
+
+---
+
+## ✅ PR #102 Merge — Image Normalization + Picker Enhancements (#87, #92, #94) — 2026-08-04
+
+**Action:** Wallacy's PR #102 (`fix/open-issues-87-92-94`) — three user-facing improvements shipped together in release 0.5.0.
+
+**Scope:**
+
+- **#94 (image normalization):** New `src/imageNormalizer.ts` using WASM `@silvia-odwyer/photon-node`. Resizes/re-encodes image attachments to 2000×2000 / 5MB base64 before the final payload guard, mirroring OpenCode CLI behavior. `convertMessage()` became `async` with inline `normalizeImagePart()`. Removed the obsolete `MAX_TOP_LEVEL_IMAGE_BYTES = 2_000_000` raw-byte guard from issue #38. `MAX_TOOL_RESULT_IMAGE_BYTES` (1MB raw) retained for MCP cumulative history bounding.
+- **#92 (provider prefix toggle):** New setting `opencodego.showProviderPrefix` (default `true`). Extracted `formatModelName` to `src/modelNames.ts`, added `providerModelDisplayName()`. Config listener fires `notifyModelInfoChanged()` on all 4 providers (Go, Zen, Agent Go, Agent Zen).
+- **#87 (Kimi context selector):** `getContextSizeOptionsForModel()` in `src/metadata.ts` exposes 256K + full window tiers for Kimi models (`/^(?:kimi-|k3(?:-|$))/i`) with `fullContextWindow > 262_144`. Defers to models.dev explicit tiers when available.
+
+**Review notes:** Initial concern about ordering (normalizer ran after the raw-byte guard, so oversized images were dropped to placeholders before normalization). Wallacy addressed in follow-up commit `4572a9f` — moved normalization inline into `convertMessage()`, deleted `MAX_TOP_LEVEL_IMAGE_BYTES`, shared `MAX_IMAGE_BASE64_BYTES` as single source of truth. Also rewrote `candidateSizes` from `reduce` to plain `while` loop per readability feedback.
+
+**Verification:** `npm run package` clean (133 tests pass), built VSIX (1.82MB, photon-node WASM included), installed locally as 0.5.0.
+
+**Merge:** merge commit `a273a1f` (NOT squash). Both contributor commits preserved: `e43c01b` (initial), `4572a9f` (follow-up).
+
+**Post-merge:** Issues #87, #92, #94 auto-closed. Released in 0.5.0 (commit `4fac469`).
+
+**Docs backfill (2026-08-08):** Created feature docs `docs/features/13-20260803-image-normalization.md` + `docs/features/14-20260803-model-picker-enhancements.md`. Updated issue docs #44/#45/#46 status from "Implemented on branch" to `✅ Solved` with PR/commit refs. Marked `docs/issues/38-*` as deprecated (superseded by #94).
 
 ---
 
@@ -47,6 +250,8 @@
 **Files:** `src/streaming.ts`, `src/toolCallAccumulator.ts` (new), `src/test/toolCallAccumulator.test.ts` (new), `CHANGELOG.md`, `docs/issues/42-20260803-premature-tool-call-flush.md`.
 
 **Verification:** `npm run compile`, `npm test`, `npm run test-retry` — all pass. Manual F5: deepseek-v4 (Zen) tool call emits full `<parameter>` ✅, tool loop resolved. ⚠️ gpt-5.6-luna (Go) NOT live-verified — China users cannot access GPT-series models via the gateway; the #93 end-of-stream path is covered by unit tests and the shared extractor code path, but a live check on gpt-5.6-luna remains recommended.
+
+**Review/Merge docs:** [`docs/issues/42-20260803-premature-tool-call-flush.md`](issues/42-20260803-premature-tool-call-flush.md) (root cause + fix), [`docs/issues/50-20260803-pr100-tool-call-flush-review-merge.md`](issues/50-20260803-pr100-tool-call-flush-review-merge.md) (PR #100 review cycle, 3 commits incl. version sync + naming consistency follow-ups).
 
 ---
 

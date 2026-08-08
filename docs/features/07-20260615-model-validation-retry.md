@@ -1,13 +1,14 @@
 **Status:** ✅ Implemented
 
-# Model Validation Suite & Runtime Retry for HTTP 400 Errors
+# Model Validation Suite & Runtime Retry for HTTP 400 + Transient 5xx Errors
 
-**Topic:** models / validation / retry / reliability
-**Updated:** 2026-06-15
-**Tags:** #models #validation #retry #http400 #models-dev #reliability
+**Topic:** models / validation / retry / reliability / streaming
+**Updated:** 2026-08-08
+**Tags:** #models #validation #retry #http400 #http5xx #transient #router-unavailable #models-dev #reliability
 **GitHub Issue:** [ltmoerdani/opencode-copilot-chat#24](https://github.com/ltmoerdani/opencode-copilot-chat/issues/24) (Zen HTTP 400 errors)
 **GitHub Issue:** [ltmoerdani/opencode-copilot-chat#25](https://github.com/ltmoerdani/opencode-copilot-chat/issues/25) (Kimi K2.7 constraints)
 **GitHub PR:** [#46](https://github.com/ltmoerdani/opencode-copilot-chat/pull/46) (Kimi K2.7 fix)
+**GitHub PR:** [#107](https://github.com/ltmoerdani/opencode-copilot-chat/pull/107) (Transient 5xx retry, by [@Fahad090NP](https://github.com/Fahad090NP))
 
 ---
 
@@ -36,7 +37,13 @@ The upstream OpenCode API serves 30+ models from different providers (Moonshot, 
 
 ## Solution
 
-### 1. Runtime Retry (`src/retry.ts`)
+The retry module (`src/retry.ts`) hosts two distinct retry families that chain in a single request lifecycle:
+
+```
+fetch → 400? → analyzeHttp400ForRetry → patch body → fetch → 5xx? → isTransientServerError → retry up to 2× (backoff + jitter) → surface error
+```
+
+### 1. Runtime Retry for HTTP 400 (`src/retry.ts`)
 
 When the upstream returns HTTP 400, the extension now:
 
@@ -58,12 +65,45 @@ When the upstream returns HTTP 400, the extension now:
 
 **Key constraints:**
 
-- At most **1 retry** per request (no infinite loops)
-- Only HTTP 400 is retried (not 401, 429, 5xx)
+- At most **1 retry** per 400 request (no infinite loops)
+- Only recoverable HTTP 400 patterns are patched; auth (401/403) and rate limits (429) are never retried
 - Each retry is logged to the Output panel for debugging
-- Auth errors (401/403) and rate limits (429) are never retried
 
-### 2. Validation Script (`scripts/validate-models.mts`)
+### 2. Transient 5xx Retry (`src/retry.ts` + `src/streaming.ts`) — added by PR #107
+
+When the gateway momentarily has no healthy backend for a model, it returns `502`/`503`/`504` or a `5xx` whose body names `Router.Unavailable`. The extension now retries these instead of failing on the first attempt.
+
+**Classifier (`isTransientServerError`):**
+
+| Status | Body | Retry? |
+| --- | --- | --- |
+| `502` / `503` / `504` | any | ✅ transient by definition |
+| other `5xx` | names `Router.Unavailable` (case-insensitive, non-letters stripped) | ✅ momentary condition |
+| other `5xx` | unrelated body (e.g. raw `Internal Server Error`) | ❌ permanent, surfaces real bugs |
+| non-5xx (`429`, `404`, etc.) | any | ❌ handled by their own paths |
+
+**Constants:**
+
+| Constant | Value | Purpose |
+| --- | --- | --- |
+| `TRANSIENT_5XX_MAX_RETRIES` | `2` | Hard cap before surfacing the error |
+| `TRANSIENT_5XX_RETRY_BASE_MS` | `1000` | Base backoff, doubles per attempt (1s, 2s) |
+| `TRANSIENT_5XX_RETRY_JITTER_MS` | `250` | Max random jitter to spread concurrent retries |
+
+**Backoff formula:** `Math.round(BASE * 2 ** (attempt - 1) + Math.random() * JITTER)` — exponential with jitter to avoid thundering-herd under concurrent agent / tool-call bursts.
+
+**Streaming integration (`src/streaming.ts`):**
+
+- `fetchWithBody(body)` helper collapses the three fetch sites (first attempt, 400 patched retry, transient retry) into one closure.
+- `sleepWithCancellation(ms, token)` waits for the backoff but aborts early on user cancel; listener is registered before `setTimeout`.
+- `consumedErrorBody` is reset to `undefined` at the end of the 400 block and after each 5xx retry so the classifier and final error handler always read a fresh body.
+- `describeRouterUnavailable` in `src/errors.ts` swaps raw gateway JSON for an actionable user-facing hint.
+
+**Worst case:** 4 fetches per user request (initial + 1 HTTP 400 patched retry + 2 transient retries). Intentional and confirmed during review.
+
+Full review and merge notes: [`docs/issues/51-20260807-pr107-transient-5xx-retry-merge.md`](../issues/51-20260807-pr107-transient-5xx-retry-merge.md).
+
+### 3. Validation Script (`scripts/validate-models.mts`)
 
 A standalone Node.js script that tests all models against the OpenCode API before release.
 
@@ -206,7 +246,7 @@ This means the extension re-fetches model metadata from models.dev every hour in
 
 ## Why No Retry Logs in Output Panel?
 
-The retry mechanism only triggers when the upstream API returns HTTP 400. If all models are working correctly (as validated), no 400 errors occur and no retry logs appear. This is expected behavior — the retry is a safety net for edge cases when providers change their API contracts.
+The retry mechanisms only trigger when the upstream returns a recoverable HTTP 400 or a transient 5xx. If all models are working correctly and the gateway is healthy, no retries occur and no retry logs appear. This is expected behavior — both retry paths are safety nets for edge cases (provider API contract changes or momentary gateway capacity churn).
 
 ---
 
