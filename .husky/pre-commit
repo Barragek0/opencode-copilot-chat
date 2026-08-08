@@ -1,4 +1,18 @@
 #!/usr/bin/env sh
+# Some commit UIs (IDE/GUI) run hooks with a stripped-down PATH that excludes
+# version-manager bin dirs (e.g. nvm), so node/npm/npx can be missing here.
+# Resolve them before running anything so the gate never silently skips.
+if ! command -v npx >/dev/null 2>&1; then
+  # Prefer the version nvm has selected, then the highest installed one.
+  node_bin="${NVM_BIN:-}"
+  if [ -z "$node_bin" ] || [ ! -x "$node_bin/npx" ]; then
+    node_bin="$(find "$HOME/.nvm/versions/node" -maxdepth 3 -type d -name bin 2>/dev/null | sort -V | tail -n 1)"
+  fi
+  if [ -n "$node_bin" ] && [ -x "$node_bin/npx" ]; then
+    export PATH="$node_bin:$PATH"
+  fi
+fi
+
 # Format ALL changed files (code + non-code) — prettier on everything it
 # supports, eslint --fix on JS/TS, markdownlint --fix on Markdown, and lint
 # of husky scripts. Fast path: only staged files.
