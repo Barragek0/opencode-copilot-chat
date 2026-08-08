@@ -140,7 +140,7 @@ We use **Major.Minor.Patch** (x.y.z) versioning. Here is guidance on when to inc
 
 ## Example Entry
 
-```
+```text
 ## [0.3.0] — 2026-07-01
 
 ### Added
