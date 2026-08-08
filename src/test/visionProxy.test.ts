@@ -1,6 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildStableModelCapabilities } from "../modelCapabilities";
+import {
+  clearImageDescriptionCache,
+  IMAGE_DESCRIPTION_CACHE_LIMIT,
+  imageDescriptionCache,
+  imageDescriptionKey,
+  lookupImageDescriptions,
+  storeImageDescriptions,
+} from "../visionProxyCache";
 
 /**
  * Vision proxy condition tests.
@@ -87,5 +95,79 @@ describe("modelCapabilities vision proxy flag", () => {
     assert.equal(capabilities.toolCalling, true);
     assert.equal(capabilities.supportsToolCalling, true);
     assert.equal("editTools" in capabilities, false);
+  });
+});
+
+describe("vision proxy image description cache", () => {
+  it("imageDescriptionKey is a stable sha-256 hash of the base64 bytes", () => {
+    const key = imageDescriptionKey("aGVsbG8=");
+
+    assert.equal(imageDescriptionKey("aGVsbG8="), key, "same bytes produce the same key");
+    assert.match(key, /^[0-9a-f]{64}$/, "key is a 64-char hex sha-256 digest");
+    assert.notEqual(imageDescriptionKey("aGVsbG8="), imageDescriptionKey("d29ybGQ="), "different bytes produce different keys");
+  });
+
+  it("lookupImageDescriptions returns undefined when nothing is cached", () => {
+    clearImageDescriptionCache();
+    assert.equal(lookupImageDescriptions([imageDescriptionKey("aGVsbG8=")]), undefined);
+  });
+
+  it("stores and looks up a description under every image hash", () => {
+    clearImageDescriptionCache();
+    const h1 = imageDescriptionKey("aGVsbG8=");
+    const h2 = imageDescriptionKey("d29ybGQ=");
+    const description = "A red circle on a blue background.";
+
+    storeImageDescriptions([h1, h2], description);
+
+    assert.equal(lookupImageDescriptions([h1]), description);
+    assert.equal(lookupImageDescriptions([h2]), description);
+    assert.equal(lookupImageDescriptions([h1, h2]), description);
+  });
+
+  it("lookupImageDescriptions returns undefined when only some hashes are cached", () => {
+    clearImageDescriptionCache();
+    const h1 = imageDescriptionKey("aGVsbG8=");
+    const h2 = imageDescriptionKey("d29ybGQ=");
+
+    storeImageDescriptions([h1], "Only one image was described.");
+
+    assert.equal(lookupImageDescriptions([h1, h2]), undefined);
+  });
+
+  it("reuses the cached description instead of re-describing (same image twice)", () => {
+    clearImageDescriptionCache();
+    const hash = imageDescriptionKey("cmV1c2UtbWU=");
+    const description = "Description cached on the first turn.";
+
+    // Simulates turn 1: not cached → described and stored.
+    assert.equal(lookupImageDescriptions([hash]), undefined);
+    storeImageDescriptions([hash], description);
+
+    // Simulates turn 2: same image → cached, so no model request is needed.
+    assert.equal(lookupImageDescriptions([hash]), description);
+    assert.equal(imageDescriptionCache.size, 1);
+  });
+
+  it("evicts the oldest entries once the cache exceeds its limit", () => {
+    clearImageDescriptionCache();
+    const firstKey = imageDescriptionKey("Zmlyc3Q=");
+
+    for (let i = 0; i <= IMAGE_DESCRIPTION_CACHE_LIMIT; i++) {
+      storeImageDescriptions([imageDescriptionKey(`aW1hZ2UtaW5kZXgt${i}`)], `description-${i}`);
+    }
+
+    assert.ok(imageDescriptionCache.size <= IMAGE_DESCRIPTION_CACHE_LIMIT, "cache size stays within the limit");
+    assert.equal(imageDescriptionCache.has(firstKey), false, "oldest entry is evicted");
+    assert.equal(imageDescriptionCache.has(imageDescriptionKey(`aW1hZ2UtaW5kZXgt${IMAGE_DESCRIPTION_CACHE_LIMIT}`)), true, "recent entry is kept");
+  });
+
+  it("clearImageDescriptionCache empties the cache", () => {
+    clearImageDescriptionCache();
+    storeImageDescriptions([imageDescriptionKey("aGVsbG8=")], "hello description");
+    assert.equal(imageDescriptionCache.size, 1);
+
+    clearImageDescriptionCache();
+    assert.equal(imageDescriptionCache.size, 0);
   });
 });
