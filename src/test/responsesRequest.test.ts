@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  buildResponsesRequestEnvelope,
-  responsesInputItemsFromMessage,
-} from "../responsesRequest.js";
+import { buildResponsesRequestEnvelope, responsesInputItemsFromMessage } from "../responsesRequest.js";
 
 describe("buildResponsesRequestEnvelope", () => {
   it("enables server-side input truncation for long Responses sessions", () => {

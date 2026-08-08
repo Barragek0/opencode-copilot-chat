@@ -8,7 +8,7 @@ const gitignore = readFileSync(new URL(".gitignore", import.meta.url), "utf8")
 
 export default tseslint.config(
   {
-    ignores: gitignore
+    ignores: gitignore,
   },
   ...tseslint.configs.recommended,
   {
@@ -18,15 +18,15 @@ export default tseslint.config(
         {
           argsIgnorePattern: "^_",
           caughtErrorsIgnorePattern: "^_",
-          varsIgnorePattern: "^_"
-        }
-      ]
-    }
+          varsIgnorePattern: "^_",
+        },
+      ],
+    },
   },
   {
     files: ["**/*.d.ts"],
     rules: {
-      "@typescript-eslint/no-explicit-any": "off"
-    }
-  }
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
 );
