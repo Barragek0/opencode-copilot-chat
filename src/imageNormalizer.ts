@@ -28,11 +28,11 @@ export function getImageDataUrlBase64Bytes(url: string): number | undefined {
   return parsed ? Buffer.byteLength(parsed.base64, "utf8") : undefined;
 }
 
-function candidateSizes(width: number, height: number): Array<{ width: number; height: number }> {
+function candidateSizes(width: number, height: number): { width: number; height: number }[] {
   const scale = Math.min(1, MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height);
   let nextWidth = Math.max(1, Math.round(width * scale));
   let nextHeight = Math.max(1, Math.round(height * scale));
-  const sizes: Array<{ width: number; height: number }> = [];
+  const sizes: { width: number; height: number }[] = [];
 
   while (sizes.length < 32) {
     if (sizes.some((size) => size.width === nextWidth && size.height === nextHeight)) {
@@ -91,7 +91,7 @@ export async function normalizeImageDataUrl(url: string): Promise<string> {
     for (const size of candidateSizes(width, height)) {
       const resized = photon.resize(decoded, size.width, size.height, photon.SamplingFilter.Lanczos3);
       try {
-        const candidates: Array<{ mime: string; bytes: Uint8Array }> = [
+        const candidates: { mime: string; bytes: Uint8Array }[] = [
           { mime: "image/png", bytes: resized.get_bytes() },
           ...JPEG_QUALITIES.map((quality) => ({
             mime: "image/jpeg",

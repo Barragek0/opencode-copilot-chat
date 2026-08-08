@@ -2,9 +2,9 @@
 
 # Zen Model Version Labels — Naming, Packaging, and Changelog Classification
 
-**Topic:** models / vscode / picker / packaging / changelog  
-**Updated:** 2026-05-17  
-**Tags:** #models #vscode #provider #zen #packaging #changelog  
+**Topic:** models / vscode / picker / packaging / changelog
+**Updated:** 2026-05-17
+**Tags:** #models #vscode #provider #zen #packaging #changelog
 **Supersedes:** -
 
 ---

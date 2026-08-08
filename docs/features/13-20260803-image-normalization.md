@@ -23,12 +23,12 @@ Prior to this feature, the extension forwarded raw `Uint8Array` image bytes as b
 
 ### Observed behavior
 
-| Image | Before fix | After fix |
-|-------|------------|-----------|
-| Small PNG, any dimensions (<1MB raw) | ✅ Sent as-is | ✅ Passed through unchanged (already in spec) |
-| Sub-2MB raw, dimensions >2000px | ✅ Sent as-is, but `400 Upstream request failed` on some models (e.g. `gpt-5.6-luna`, see issue #94 `payloadBytes=880950`) | ✅ Resized to ≤2000px, re-encoded, sent successfully |
-| >2MB raw, any dimensions | ❌ Replaced with placeholder text part (`MAX_TOP_LEVEL_IMAGE_BYTES`) | ✅ Resized + re-encoded; only dropped if normalized base64 still exceeds 5MB |
-| Tool-result image (MCP screenshot) | ✅ Subject to separate `MAX_TOOL_RESULT_IMAGE_BYTES = 1MB` raw guard | ✅ Normalized first, then same 1MB raw guard still applies for cumulative history bounding |
+| Image                                | Before fix                                                                                                                 | After fix                                                                                  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Small PNG, any dimensions (<1MB raw) | ✅ Sent as-is                                                                                                              | ✅ Passed through unchanged (already in spec)                                              |
+| Sub-2MB raw, dimensions >2000px      | ✅ Sent as-is, but `400 Upstream request failed` on some models (e.g. `gpt-5.6-luna`, see issue #94 `payloadBytes=880950`) | ✅ Resized to ≤2000px, re-encoded, sent successfully                                       |
+| >2MB raw, any dimensions             | ❌ Replaced with placeholder text part (`MAX_TOP_LEVEL_IMAGE_BYTES`)                                                       | ✅ Resized + re-encoded; only dropped if normalized base64 still exceeds 5MB               |
+| Tool-result image (MCP screenshot)   | ✅ Subject to separate `MAX_TOOL_RESULT_IMAGE_BYTES = 1MB` raw guard                                                       | ✅ Normalized first, then same 1MB raw guard still applies for cumulative history bounding |
 
 ### Why the raw-byte guard was not enough
 
@@ -89,13 +89,13 @@ No user-facing settings. Normalization is always on for image attachments. If th
 
 ## Files
 
-| File | Change |
-|------|--------|
-| `src/imageNormalizer.ts` | New module: `normalizeImageDataUrl`, `getImageDataUrlBase64Bytes`, `MAX_IMAGE_BASE64_BYTES` export |
-| `src/extension.ts` | `convertMessage()` → async, inline `normalizeImagePart`, delete `MAX_TOP_LEVEL_IMAGE_BYTES` + old `normalizeImagePartsInPlace` |
+| File                               | Change                                                                                                                                          |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/imageNormalizer.ts`           | New module: `normalizeImageDataUrl`, `getImageDataUrlBase64Bytes`, `MAX_IMAGE_BASE64_BYTES` export                                              |
+| `src/extension.ts`                 | `convertMessage()` → async, inline `normalizeImagePart`, delete `MAX_TOP_LEVEL_IMAGE_BYTES` + old `normalizeImagePartsInPlace`                  |
 | `src/test/imageNormalizer.test.ts` | New: small image pass-through, dimension-limit resize, non-data URL passthrough, malformed image passthrough, 2MB-raw-but-5MB-base64 regression |
-| `.vscodeignore` | Exception for `node_modules/@silvia-odwyer/photon-node/**` so WASM artifact ships in VSIX |
-| `package.json` | New runtime dependency `@silvia-odwyer/photon-node` ^0.3.4 |
+| `.vscodeignore`                    | Exception for `node_modules/@silvia-odwyer/photon-node/**` so WASM artifact ships in VSIX                                                       |
+| `package.json`                     | New runtime dependency `@silvia-odwyer/photon-node` ^0.3.4                                                                                      |
 
 ---
 

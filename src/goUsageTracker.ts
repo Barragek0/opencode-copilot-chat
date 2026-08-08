@@ -31,7 +31,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 // This table is a static snapshot kept as a last resort. The primary source
 // is the live models.dev metadata cache injected via CostResolver.
 
-const GO_MODEL_PRICING: Record<string, ModelCost> = {
+const GO_MODEL_PRICING: Record<string, ModelCost | undefined> = {
   "glm-5.1": { input: 1.4, output: 4.4, cache_read: 0.26 },
   "glm-5": { input: 1.0, output: 3.2, cache_read: 0.2 },
   "kimi-k2.6": { input: 0.95, output: 4.0, cache_read: 0.16 },
@@ -182,9 +182,10 @@ function buildMonthlyWindow(
   earliestMs?: number | null,
 ): { monthStartMs: number; monthEndMs: number } {
   // Priority 1: user-configured anchor (set via "Set spent targets")
-  const monthlyAnchor = baseline.monthly?.anchorDay;
-  if (monthlyAnchor && monthlyAnchor >= 1 && monthlyAnchor <= 31) {
-    const hour = baseline.monthly!.anchorHour ?? 0;
+  const monthly = baseline.monthly;
+  const monthlyAnchor = monthly?.anchorDay;
+  if (monthly && monthlyAnchor && monthlyAnchor >= 1 && monthlyAnchor <= 31) {
+    const hour = monthly.anchorHour ?? 0;
     const start = anchoredMonthStart(nowMs, monthlyAnchor, hour);
     const end = anchoredMonthEnd(start, monthlyAnchor, hour);
     return { monthStartMs: start, monthEndMs: end };
@@ -272,7 +273,7 @@ function readOpenCodeHistory(): HistoryRow[] | null {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const rows = JSON.parse(result);
+    const rows: unknown = JSON.parse(result);
     if (!Array.isArray(rows)) return null;
     return rows.filter((row): row is HistoryRow => {
       if (!row || typeof row !== "object") return false;
@@ -307,7 +308,7 @@ export class GoUsageTracker {
      * so multiple Go accounts can coexist. Empty string = legacy mode
      * (single account, shared key).
      */
-    private readonly storageKeySuffix: string = "",
+    private readonly storageKeySuffix = "",
   ) {
     this.log = log;
     this.costResolver = costResolver;
@@ -341,7 +342,7 @@ export class GoUsageTracker {
 
     // Migrate baseline
     const legacyBaseline = this.context.globalState.get<UsageBaseline>(BASELINE_STORAGE_KEY, {});
-    if (legacyBaseline && Object.keys(legacyBaseline).length > 0) {
+    if (Object.keys(legacyBaseline).length > 0) {
       const targetBase = this.storageKey(BASELINE_STORAGE_KEY);
       this.context.globalState.update(targetBase, legacyBaseline);
       this.context.globalState.update(BASELINE_STORAGE_KEY, {});
@@ -355,7 +356,7 @@ export class GoUsageTracker {
       this.context.globalState.update(targetSess, legacySessions);
       this.context.globalState.update(SESSION_COSTS_KEY, []);
       for (const s of legacySessions) {
-        if (s && typeof s.sessionId === "string" && typeof s.cost === "number") {
+        if (typeof s.sessionId === "string" && typeof s.cost === "number") {
           this.sessionCosts.set(s.sessionId, s);
         }
       }
@@ -378,7 +379,7 @@ export class GoUsageTracker {
     const cached = summary.cachedTokens ?? 0;
 
     if (prompt + completion === 0) {
-      this.log?.(`[go-tracker] SKIP: zero tokens (prompt=${prompt} completion=${completion}) for model=${summary.modelId}`);
+      this.log?.(`[go-tracker] SKIP: zero tokens (prompt=${String(prompt)} completion=${String(completion)}) for model=${summary.modelId}`);
       return;
     }
 
@@ -388,7 +389,7 @@ export class GoUsageTracker {
     const copilotCredits = cost * 100;
 
     this.log?.(
-      `[go-tracker] RECORD: model=${summary.modelId} prompt=${prompt} completion=${completion} cached=${cached} cost=$${cost.toFixed(6)} credits=${copilotCredits.toFixed(4)}`,
+      `[go-tracker] RECORD: model=${summary.modelId} prompt=${String(prompt)} completion=${String(completion)} cached=${String(cached)} cost=$${cost.toFixed(6)} credits=${copilotCredits.toFixed(4)}`,
     );
 
     this.entries.push({
@@ -828,7 +829,7 @@ export class GoUsageTracker {
     const entry = this.baseline[period];
     if (!entry) return 0;
     if (entry.expiresAt <= nowMs) {
-      delete this.baseline[period];
+      this.baseline[period] = undefined;
       this.persistBaseline();
       return 0;
     }
@@ -842,7 +843,7 @@ export class GoUsageTracker {
     }
 
     const baseline = this.context.globalState.get<UsageBaseline>(this.storageKey(BASELINE_STORAGE_KEY), {});
-    if (baseline && typeof baseline === "object") {
+    if (typeof baseline === "object") {
       this.baseline = baseline;
     }
 
@@ -850,7 +851,7 @@ export class GoUsageTracker {
     const storedSessions = this.context.globalState.get<SessionCostSummary[]>(this.storageKey(SESSION_COSTS_KEY), []);
     if (Array.isArray(storedSessions)) {
       for (const s of storedSessions) {
-        if (s && typeof s.sessionId === "string" && typeof s.cost === "number") {
+        if (typeof s.sessionId === "string" && typeof s.cost === "number") {
           this.sessionCosts.set(s.sessionId, s);
         }
       }
@@ -867,7 +868,7 @@ function fmtUsd(v: number): string {
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  if (n >= 1_000) return `${String(Math.round(n / 1_000))}k`;
   return String(n);
 }
 
@@ -882,9 +883,9 @@ function fmtRelativeTime(target: Date, from: Date = new Date()): string {
   const totalMinutes = Math.ceil(diffMs / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes}m`;
-  if (minutes === 0) return `${hours}h`;
-  return `${hours}h ${minutes}m`;
+  if (hours === 0) return `${String(minutes)}m`;
+  if (minutes === 0) return `${String(hours)}h`;
+  return `${String(hours)}h ${String(minutes)}m`;
 }
 
 function fmtDate(d: Date): string {
@@ -912,7 +913,7 @@ export function formatGoUsageStatusBarText(summary: UsageSummary): string {
   const w = summary.weekly.percent;
   const m = summary.monthly.percent;
   const warn = s >= 80 || w >= 80 || m >= 80 ? " $(warning)" : "";
-  return `Go: ${s}%·${w}%·${m}%${warn}`;
+  return `Go: ${String(s)}%·${String(w)}%·${String(m)}%${warn}`;
 }
 
 /** Multiline tooltip (VS Code renders newlines in tooltips as-is) */
@@ -933,18 +934,18 @@ export function formatGoUsageTooltip(summary: UsageSummary): vscode.MarkdownStri
     const resets = fmtRelativeTime(period.resetsAt);
     md.appendMarkdown(
       `${icon} **${label}**\n\n` +
-        `\`${bar}\` ${period.percent}% · ${fmtUsd(period.spent)} / ${fmtUsd(period.limit)} · resets in ${resets}\n\n`,
+        `\`${bar}\` ${String(period.percent)}% · ${fmtUsd(period.spent)} / ${fmtUsd(period.limit)} · resets in ${resets}\n\n`,
     );
   }
 
   md.appendMarkdown("---\n\n");
   md.appendMarkdown(
-    `$(history) **Today:** ${fmtUsd(summary.today.cost)} · ${fmtTokens(summary.today.tokens)} tokens · ${summary.today.requests} req\n\n`,
+    `$(history) **Today:** ${fmtUsd(summary.today.cost)} · ${fmtTokens(summary.today.tokens)} tokens · ${String(summary.today.requests)} req\n\n`,
   );
 
   if (summary.yesterday.requests > 0) {
     md.appendMarkdown(
-      `$(history) **Yesterday:** ${fmtUsd(summary.yesterday.cost)} · ${fmtTokens(summary.yesterday.tokens)} tokens · ${summary.yesterday.requests} req\n\n`,
+      `$(history) **Yesterday:** ${fmtUsd(summary.yesterday.cost)} · ${fmtTokens(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} req\n\n`,
     );
   }
 
@@ -957,19 +958,19 @@ export function formatGoUsageLanguageStatusDetail(summary: UsageSummary): string
   const now = new Date();
 
   const sessionLine = [
-    `Session ${summary.session.percent}%`,
+    `Session ${String(summary.session.percent)}%`,
     `${fmtUsd(summary.session.spent)} / ${fmtUsd(summary.session.limit)}`,
     `resets in ${fmtRelativeTime(summary.session.resetsAt, now)}`,
   ].join(" · ");
 
   const weeklyLine = [
-    `Weekly ${summary.weekly.percent}%`,
+    `Weekly ${String(summary.weekly.percent)}%`,
     `${fmtUsd(summary.weekly.spent)} / ${fmtUsd(summary.weekly.limit)}`,
     `resets in ${fmtRelativeTime(summary.weekly.resetsAt, now)}`,
   ].join(" · ");
 
   const monthlyLine = [
-    `Monthly ${summary.monthly.percent}%`,
+    `Monthly ${String(summary.monthly.percent)}%`,
     `${fmtUsd(summary.monthly.spent)} / ${fmtUsd(summary.monthly.limit)}`,
     `resets in ${fmtRelativeTime(summary.monthly.resetsAt, now)}`,
   ].join(" · ");
@@ -977,7 +978,7 @@ export function formatGoUsageLanguageStatusDetail(summary: UsageSummary): string
   const todayLine = [
     `Today ${fmtUsd(summary.today.cost)}`,
     `${fmtTokens(summary.today.tokens)} tokens`,
-    `${summary.today.requests} req`,
+    `${String(summary.today.requests)} req`,
   ].join(" · ");
 
   return [sessionLine, weeklyLine, monthlyLine, todayLine].join("\n");
@@ -995,7 +996,7 @@ export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPic
     const resets = fmtRelativeTime(period.resetsAt, now);
     return {
       label: `${icon} ${label}`,
-      description: `${bar} ${period.percent}%`,
+      description: `${bar} ${String(period.percent)}%`,
       detail: `${spent} / ${limit} used · resets in ${resets} (${resetLabel})`,
       alwaysShow: true,
     };
@@ -1035,7 +1036,7 @@ export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPic
   items.push({
     label: `$(history) Today`,
     description: fmtUsd(summary.today.cost),
-    detail: `${fmtTokens(summary.today.tokens)} tokens · ${summary.today.requests} requests`,
+    detail: `${fmtTokens(summary.today.tokens)} tokens · ${String(summary.today.requests)} requests`,
     alwaysShow: true,
   });
 
@@ -1043,7 +1044,7 @@ export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPic
     items.push({
       label: `$(history) Yesterday`,
       description: fmtUsd(summary.yesterday.cost),
-      detail: `${fmtTokens(summary.yesterday.tokens)} tokens · ${summary.yesterday.requests} requests`,
+      detail: `${fmtTokens(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} requests`,
       alwaysShow: true,
     });
   }

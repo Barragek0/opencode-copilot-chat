@@ -2,9 +2,9 @@
 
 # Vision Image Requests — Attachment Capability, Encoding, Qwen Budget, and v0.1.5 Release
 
-**Topic:** vision / image-input / provider / qwen / models / packaging / release  
-**Updated:** 2026-05-20  
-**Tags:** #vision #image-input #provider #qwen #models #vscode #packaging #thinking #release  
+**Topic:** vision / image-input / provider / qwen / models / packaging / release
+**Updated:** 2026-05-20
+**Tags:** #vision #image-input #provider #qwen #models #vscode #packaging #thinking #release
 **Supersedes:** —
 
 ---

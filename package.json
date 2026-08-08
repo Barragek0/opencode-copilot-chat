@@ -330,12 +330,16 @@
     ]
   },
   "scripts": {
-    "lint": "npm run lint:js && npm run lint:md",
-    "lint:js": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "lint:md": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\" \"#docs/**\"",
-    "lint:md:all": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\"",
-    "format": "npx prettier --write .",
+    "lint": "npm run lint:js && npm run lint:md && npm run lint:sh && npm run lint:hygiene && npm run lint:ts && npm run format:check",
+    "lint:js": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix --max-warnings 0",
+    "lint:md": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\"",
+    "lint:sh": "shellcheck .husky/pre-commit",
+    "lint:hygiene": "editorconfig-checker",
+    "lint:ts": "tsc -p tsconfig.check.json",
+    "format": "npm run format:prettier && npm run format:js",
+    "format:js": "eslint . --fix --max-warnings 0",
+    "format:prettier": "npx prettier --write .",
     "format:check": "npx prettier --check .",
     "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
     "compile": "npm run clean && tsc -p ./",
@@ -349,20 +353,24 @@
     "prepare": "husky"
   },
   "lint-staged": {
-    "*.{js,mjs,cjs,ts,mts,cts}": [
-      "eslint --fix --max-warnings 0"
-    ],
-    "*.{json,jsonc,yml,yaml,css,scss,less,html,svg}": "prettier --write"
+    "*": "prettier --write --ignore-unknown",
+    "*.{js,mjs,cjs,ts,mts,cts}": "eslint --fix --max-warnings 0",
+    "*.md": "markdownlint-cli2 --config .markdownlint.json --fix",
+    ".husky/*": "shellcheck"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
     "@types/vscode": "^1.125.0",
     "@vscode/vsce": "^3.9.2",
+    "editorconfig-checker": "^6.1.1",
     "eslint": "^10.8.0",
+    "eslint-plugin-jsonc": "^3.4.1",
+    "eslint-plugin-yml": "^3.8.1",
     "husky": "^9.1.7",
     "lint-staged": "^17.3.0",
     "markdownlint-cli2": "^0.23.2",
     "prettier": "^3.9.6",
+    "shellcheck": "^4.1.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.66.0"
   },

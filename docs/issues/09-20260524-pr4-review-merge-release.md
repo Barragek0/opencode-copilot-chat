@@ -2,9 +2,9 @@
 
 # PR #4 Review, Merge, and v0.1.6 Marketplace Release
 
-**Topic:** routing / models / provider / release  
-**Updated:** 2026-05-24  
-**Tags:** #routing #models #provider #release #pr-review #vision  
+**Topic:** routing / models / provider / release
+**Updated:** 2026-05-24
+**Tags:** #routing #models #provider #release #pr-review #vision
 **Supersedes:** —
 
 ---

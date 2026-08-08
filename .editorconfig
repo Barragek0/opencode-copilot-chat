@@ -1,0 +1,38 @@
+# https://editorconfig.org
+# Universal style enforcement for EVERY file type in the repo.
+# editorconfig-checker verifies all of these rules and fails on any violation.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Shell scripts (husky hooks) — POSIX sh, 2-space indent
+[.husky/*]
+indent_style = space
+indent_size = 2
+
+# GitHub Actions YAML uses 2-space indentation
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Binary media files must be left untouched
+[*.{png,gif,jpg,jpeg,ico}]
+insert_final_newline = false
+trim_trailing_whitespace = false
+
+# Markdown: no trailing whitespace, final newline required.
+# Indentation is NOT enforced here: markdown leading whitespace is content
+# (ASCII-art diagrams, nested-list alignment), not code style — markdownlint
+# governs markdown formatting instead.
+[*.md]
+indent_style = unset
+indent_size = unset
+trim_trailing_whitespace = true
+insert_final_newline = true

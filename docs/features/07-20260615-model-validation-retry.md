@@ -39,7 +39,7 @@ The upstream OpenCode API serves 30+ models from different providers (Moonshot, 
 
 The retry module (`src/retry.ts`) hosts two distinct retry families that chain in a single request lifecycle:
 
-```
+```text
 fetch → 400? → analyzeHttp400ForRetry → patch body → fetch → 5xx? → isTransientServerError → retry up to 2× (backoff + jitter) → surface error
 ```
 
@@ -75,20 +75,20 @@ When the gateway momentarily has no healthy backend for a model, it returns `502
 
 **Classifier (`isTransientServerError`):**
 
-| Status | Body | Retry? |
-| --- | --- | --- |
-| `502` / `503` / `504` | any | ✅ transient by definition |
-| other `5xx` | names `Router.Unavailable` (case-insensitive, non-letters stripped) | ✅ momentary condition |
-| other `5xx` | unrelated body (e.g. raw `Internal Server Error`) | ❌ permanent, surfaces real bugs |
-| non-5xx (`429`, `404`, etc.) | any | ❌ handled by their own paths |
+| Status                       | Body                                                                | Retry?                           |
+| ---------------------------- | ------------------------------------------------------------------- | -------------------------------- |
+| `502` / `503` / `504`        | any                                                                 | ✅ transient by definition       |
+| other `5xx`                  | names `Router.Unavailable` (case-insensitive, non-letters stripped) | ✅ momentary condition           |
+| other `5xx`                  | unrelated body (e.g. raw `Internal Server Error`)                   | ❌ permanent, surfaces real bugs |
+| non-5xx (`429`, `404`, etc.) | any                                                                 | ❌ handled by their own paths    |
 
 **Constants:**
 
-| Constant | Value | Purpose |
-| --- | --- | --- |
-| `TRANSIENT_5XX_MAX_RETRIES` | `2` | Hard cap before surfacing the error |
-| `TRANSIENT_5XX_RETRY_BASE_MS` | `1000` | Base backoff, doubles per attempt (1s, 2s) |
-| `TRANSIENT_5XX_RETRY_JITTER_MS` | `250` | Max random jitter to spread concurrent retries |
+| Constant                        | Value  | Purpose                                        |
+| ------------------------------- | ------ | ---------------------------------------------- |
+| `TRANSIENT_5XX_MAX_RETRIES`     | `2`    | Hard cap before surfacing the error            |
+| `TRANSIENT_5XX_RETRY_BASE_MS`   | `1000` | Base backoff, doubles per attempt (1s, 2s)     |
+| `TRANSIENT_5XX_RETRY_JITTER_MS` | `250`  | Max random jitter to spread concurrent retries |
 
 **Backoff formula:** `Math.round(BASE * 2 ** (attempt - 1) + Math.random() * JITTER)` — exponential with jitter to avoid thundering-herd under concurrent agent / tool-call bursts.
 

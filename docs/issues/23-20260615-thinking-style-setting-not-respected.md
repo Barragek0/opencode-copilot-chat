@@ -6,12 +6,12 @@
 
 # `chat.agent.thinkingStyle` Not Respected — Reasoning Always Expanded
 
-**Topic:** thinking / reasoning / vscode / byok / copilot-chat  
-**Updated:** 2026-06-15  
-**Tags:** #thinking #reasoning #vscode #byok #copilot-chat  
-**GitHub Issue:** [#22](https://github.com/ltmoerdani/opencode-copilot-chat/issues/22)  
-**Upstream Blocker:** [microsoft/vscode#318211](https://github.com/microsoft/vscode/issues/318211)  
-**Reporter:** [@hu3bi](https://github.com/hu3bi)  
+**Topic:** thinking / reasoning / vscode / byok / copilot-chat
+**Updated:** 2026-06-15
+**Tags:** #thinking #reasoning #vscode #byok #copilot-chat
+**GitHub Issue:** [#22](https://github.com/ltmoerdani/opencode-copilot-chat/issues/22)
+**Upstream Blocker:** [microsoft/vscode#318211](https://github.com/microsoft/vscode/issues/318211)
+**Reporter:** [@hu3bi](https://github.com/hu3bi)
 **Participants:** [@hu3bi](https://github.com/hu3bi), [@Wallacy](https://github.com/Wallacy), [@sublimode](https://github.com/sublimode)
 
 ---

@@ -17,6 +17,11 @@ const result = spawnSync(process.execPath, ["--test", ...testFiles], {
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);
 
+/**
+ * Recursively collect compiled `*.test.js` files under a directory.
+ * @param {string} directory
+ * @returns {string[]}
+ */
 function collectTests(directory) {
   return readdirSync(directory, { withFileTypes: true })
     .sort((left, right) => left.name.localeCompare(right.name))

@@ -2,8 +2,8 @@
 
 # MiMo 2.5 — Thinking Loops + Go Gateway Reasoning Leak (#36)
 
-**Topic:** thinking / mimo / streaming / gateway / workaround  
-**Reported:** 2026-07-23  
+**Topic:** thinking / mimo / streaming / gateway / workaround
+**Reported:** 2026-07-23
 **Tags:** #thinking #mimo #streaming #gateway #workaround #bug
 
 ---
@@ -48,7 +48,7 @@ POST https://opencode.ai/zen/go/v1/chat/completions
 → Non-streaming endpoint returns `content` correctly (only streaming affected)
 ```
 
-**Affected:** ALL opencode-go models (deepseek, kimi, glm, mimo, minimax, qwen, grok).  
+**Affected:** ALL opencode-go models (deepseek, kimi, glm, mimo, minimax, qwen, grok).
 **Not affected:** Zen gateway (`/zen/v1/`).
 
 Related upstream issues:

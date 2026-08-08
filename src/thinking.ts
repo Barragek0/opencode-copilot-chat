@@ -65,8 +65,8 @@ export function buildFamilyThinkingSchema(
   if (opts && opts.length > 0) {
     // Collect unique effort values across all effort-type options
     const effortValues = opts
-      .filter((o) => o.type === "effort" && Array.isArray(o.values) && o.values.length > 0)
-      .flatMap((o) => o.values!)
+      .filter((o): o is { type: "effort"; values: string[] } => o.type === "effort" && Array.isArray(o.values) && o.values.length > 0)
+      .flatMap((o) => o.values)
       .filter((v, i, a) => a.indexOf(v) === i);
 
     // Check if a toggle-type option exists
@@ -471,7 +471,7 @@ export function buildThinkingPayload(modelId: string, thinking: ThinkingSettings
     if (thinking.mimo === "off") {
       return {};
     }
-    const mimoBudgetMap: Record<string, number> = {
+    const mimoBudgetMap: Record<string, number | undefined> = {
       low: 8192,
       medium: 16384,
       high: 32768,

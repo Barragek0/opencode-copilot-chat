@@ -2,12 +2,12 @@
 
 # Inline Code Suggestions (Ghost Text) — FIM Endpoint Research & Execution Options
 
-**Topic:** inline-completions / fim / autocomplete / ghost-text / deepseek / qwen-coder / ollama / byok  
-**Updated:** 2026-06-17  
-**Tags:** #inline-completions #fim #autocomplete #ghost-text #deepseek #qwen-coder #ollama #byok #research #feature-request  
-**GitHub Issue:** [#49](https://github.com/ltmoerdani/opencode-copilot-chat/issues/49) — _[FEATURE] Add inline code suggestions with selectable AI model (Copilot-like experience)_  
-**Related Branch (external):** [`Wallacy/opencode-copilot-chat@feat/persistent-autocomplete`](https://github.com/Wallacy/opencode-copilot-chat/tree/feat/persistent-autocomplete)  
-**Reporter (issue):** [@lorelore789](https://github.com/lorelore789)  
+**Topic:** inline-completions / fim / autocomplete / ghost-text / deepseek / qwen-coder / ollama / byok
+**Updated:** 2026-06-17
+**Tags:** #inline-completions #fim #autocomplete #ghost-text #deepseek #qwen-coder #ollama #byok #research #feature-request
+**GitHub Issue:** [#49](https://github.com/ltmoerdani/opencode-copilot-chat/issues/49) — _[FEATURE] Add inline code suggestions with selectable AI model (Copilot-like experience)_
+**Related Branch (external):** [`Wallacy/opencode-copilot-chat@feat/persistent-autocomplete`](https://github.com/Wallacy/opencode-copilot-chat/tree/feat/persistent-autocomplete)
+**Reporter (issue):** [@lorelore789](https://github.com/lorelore789)
 **Prior Art (comment):** [@Wallacy](https://github.com/Wallacy) — explored implementation, blocked on latency
 
 ---

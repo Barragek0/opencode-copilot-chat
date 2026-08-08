@@ -17,15 +17,31 @@ import { analyzeHttp400ForRetry } from "../src/retry.js";
 // Mock OpenCode API server
 // ---------------------------------------------------------------------------
 
+interface MockRequestBody {
+  model?: unknown;
+  thinking?: { type?: unknown };
+  temperature?: unknown;
+  reasoning_effort?: unknown;
+}
+
+/** JSON.parse returns `any`; shape it into a minimal, typed view of the body. */
+function parseMockBody(body: string): MockRequestBody {
+  const parsed: unknown = JSON.parse(body);
+  if (typeof parsed !== "object" || parsed === null) {
+    return {};
+  }
+  return parsed;
+}
+
 function createMockServer() {
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
     });
     req.on("end", () => {
       try {
-        const parsed = JSON.parse(body);
+        const parsed = parseMockBody(body);
         const model = parsed.model as string;
 
         // Kimi K2.5: reject thinking.type "disabled"
@@ -177,7 +193,7 @@ async function runTest(tc: TestCase, baseUrl: string): Promise<boolean> {
   }
 
   if (res.status !== 400) {
-    console.log(`❌ Expected 400 or 200, got ${res.status}`);
+    console.log(`❌ Expected 400 or 200, got ${String(res.status)}`);
     return false;
   }
   console.log(`HTTP 400 ✓`);
@@ -204,9 +220,14 @@ async function runTest(tc: TestCase, baseUrl: string): Promise<boolean> {
 
   // Step 4: Retry with patched body
   process.stdout.write(`   Step 4: Retry with patched body… `);
-  const retryRes = await sendRequest(`${baseUrl}/chat/completions`, patch.body!);
+  const retryBody = patch.body;
+  if (!retryBody) {
+    console.log(`❌ Patch produced no body`);
+    return false;
+  }
+  const retryRes = await sendRequest(`${baseUrl}/chat/completions`, retryBody);
   if (retryRes.status !== 200) {
-    console.log(`❌ Got ${retryRes.status}: ${retryRes.body.slice(0, 100)}`);
+    console.log(`❌ Got ${String(retryRes.status)}: ${retryRes.body.slice(0, 100)}`);
     return false;
   }
   console.log(`HTTP 200 ✓`);
@@ -230,7 +251,7 @@ async function main() {
     console.error("Failed to start mock server");
     process.exit(1);
   }
-  const baseUrl = `http://127.0.0.1:${addr.port}`;
+  const baseUrl = `http://127.0.0.1:${String(addr.port)}`;
   console.log(`Mock server: ${baseUrl}\n`);
 
   let passed = 0;
@@ -250,7 +271,7 @@ async function main() {
   server.close();
 
   console.log("═══════════════════════════════════════════════════════");
-  console.log(`  Results: ${passed} passed, ${failed} failed`);
+  console.log(`  Results: ${String(passed)} passed, ${String(failed)} failed`);
   console.log("═══════════════════════════════════════════════════════\n");
 
   if (failed > 0) {
@@ -260,7 +281,7 @@ async function main() {
   console.log("✅ All tests passed. Retry mechanism works end-to-end.");
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error("Fatal:", err);
   process.exit(1);
 });

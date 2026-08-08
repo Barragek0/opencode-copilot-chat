@@ -39,8 +39,8 @@ const argsChunk1 = deltaChunk([{ index: 0, function: { arguments: '{"query":' } 
 
 const argsChunk2 = deltaChunk([{ index: 0, function: { arguments: '"search"}' } }]);
 
-describe("ToolCallAccumulator — no premature flush on intermediate chunks (#98)", () => {
-  it("does not flush while finish_reason is null, even with pending tool calls", () => {
+void describe("ToolCallAccumulator — no premature flush on intermediate chunks (#98)", () => {
+  void it("does not flush while finish_reason is null, even with pending tool calls", () => {
     const acc = new ToolCallAccumulator();
     acc.collect(nameChunk);
     acc.collect(argsChunk1);
@@ -54,7 +54,7 @@ describe("ToolCallAccumulator — no premature flush on intermediate chunks (#98
     assert.equal(ToolCallAccumulator.shouldFlushOnFinishReason(undefined), false);
   });
 
-  it("flushes exactly ONE complete tool call when finish_reason is 'tool_calls'", () => {
+  void it("flushes exactly ONE complete tool call when finish_reason is 'tool_calls'", () => {
     const acc = new ToolCallAccumulator();
     acc.collect(nameChunk);
     acc.collect(argsChunk1);
@@ -74,7 +74,7 @@ describe("ToolCallAccumulator — no premature flush on intermediate chunks (#98
     assert.deepEqual(acc.flush(), []);
   });
 
-  it("is a no-op when nothing was collected", () => {
+  void it("is a no-op when nothing was collected", () => {
     const acc = new ToolCallAccumulator();
     assert.deepEqual(acc.flush(), []);
     assert.deepEqual(acc.flushRemainingToolCalls(), []);
@@ -82,8 +82,8 @@ describe("ToolCallAccumulator — no premature flush on intermediate chunks (#98
   });
 });
 
-describe("ToolCallAccumulator — end-of-stream flush for gateways omitting finish_reason (#93)", () => {
-  it("flushRemainingToolCalls emits the complete call when the gateway never sends 'tool_calls'", () => {
+void describe("ToolCallAccumulator — end-of-stream flush for gateways omitting finish_reason (#93)", () => {
+  void it("flushRemainingToolCalls emits the complete call when the gateway never sends 'tool_calls'", () => {
     const acc = new ToolCallAccumulator();
     acc.collect(nameChunk);
     acc.collect(argsChunk1);
@@ -99,7 +99,7 @@ describe("ToolCallAccumulator — end-of-stream flush for gateways omitting fini
     assert.equal(acc.size, 0);
   });
 
-  it("flushRemainingToolCalls is a no-op after a normal finish_reason flush", () => {
+  void it("flushRemainingToolCalls is a no-op after a normal finish_reason flush", () => {
     const acc = new ToolCallAccumulator();
     acc.collect(nameChunk);
     acc.collect(argsChunk1);
@@ -109,8 +109,8 @@ describe("ToolCallAccumulator — end-of-stream flush for gateways omitting fini
   });
 });
 
-describe("ToolCallAccumulator — delta handling edge cases", () => {
-  it("ignores non-array and non-record deltas", () => {
+void describe("ToolCallAccumulator — delta handling edge cases", () => {
+  void it("ignores non-array and non-record deltas", () => {
     const acc = new ToolCallAccumulator();
     acc.collect(undefined);
     acc.collect("not an array");
@@ -118,7 +118,7 @@ describe("ToolCallAccumulator — delta handling edge cases", () => {
     assert.equal(acc.size, 0);
   });
 
-  it("filters out arguments-only deltas that never supplied a name", () => {
+  void it("filters out arguments-only deltas that never supplied a name", () => {
     const acc = new ToolCallAccumulator();
     acc.collect([{ index: 0, function: { arguments: '{"a":1}' } }]);
     assert.equal(acc.size, 1);
@@ -127,7 +127,7 @@ describe("ToolCallAccumulator — delta handling edge cases", () => {
     assert.deepEqual(flushed, []);
   });
 
-  it("accumulates multiple tool calls independently by index", () => {
+  void it("accumulates multiple tool calls independently by index", () => {
     const acc = new ToolCallAccumulator();
     acc.collect([
       { index: 0, id: "a", function: { name: "read_file", arguments: '{"path":' } },
@@ -146,7 +146,7 @@ describe("ToolCallAccumulator — delta handling edge cases", () => {
     assert.deepEqual(flushed[1].input, { query: "foo" });
   });
 
-  it("appends name fragments (name split across chunks)", () => {
+  void it("appends name fragments (name split across chunks)", () => {
     const acc = new ToolCallAccumulator();
     acc.collect([{ index: 0, function: { name: "read_" } }]);
     acc.collect([{ index: 0, function: { name: "file" } }]);
@@ -155,28 +155,28 @@ describe("ToolCallAccumulator — delta handling edge cases", () => {
   });
 });
 
-describe("parseToolInput", () => {
-  it("returns {} for empty or whitespace-only input", () => {
+void describe("parseToolInput", () => {
+  void it("returns {} for empty or whitespace-only input", () => {
     assert.deepEqual(parseToolInput(""), {});
     assert.deepEqual(parseToolInput("   "), {});
   });
 
-  it("returns {} for partial / invalid JSON", () => {
+  void it("returns {} for partial / invalid JSON", () => {
     assert.deepEqual(parseToolInput('{"a":'), {});
     assert.deepEqual(parseToolInput("not json"), {});
   });
 
-  it("parses valid JSON objects", () => {
+  void it("parses valid JSON objects", () => {
     assert.deepEqual(parseToolInput('{"a":1}'), { a: 1 });
     assert.deepEqual(parseToolInput("{}"), {});
   });
 
-  it("returns {} for non-object JSON scalars (strings, numbers)", () => {
+  void it("returns {} for non-object JSON scalars (strings, numbers)", () => {
     assert.deepEqual(parseToolInput('"str"'), {});
     assert.deepEqual(parseToolInput("42"), {});
   });
 
-  it("passes through JSON arrays (isRecord treats arrays as objects — original semantics)", () => {
+  void it("passes through JSON arrays (isRecord treats arrays as objects — original semantics)", () => {
     assert.deepEqual(parseToolInput("[1,2]"), [1, 2]);
   });
 });

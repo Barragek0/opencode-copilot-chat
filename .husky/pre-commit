@@ -1,1 +1,11 @@
+#!/usr/bin/env sh
+# Format ALL changed files (code + non-code) — prettier on everything it
+# supports, eslint --fix on JS/TS, markdownlint --fix on Markdown, and lint
+# of husky scripts. Fast path: only staged files.
 npx lint-staged
+
+# Zero-tolerance gate: full-repo lint (eslint, markdownlint, shellcheck,
+# editorconfig-checker, tsc type-check incl. scripts/) plus prettier format
+# check. A commit is BLOCKED if ANY file in the codebase has any error,
+# warning, info-level diagnostic, type error, or formatting drift.
+npm run lint

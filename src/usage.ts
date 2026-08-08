@@ -43,7 +43,7 @@ export function formatCompactTokenCount(value: number | undefined): string {
   }
 
   if (value >= 10000) {
-    return `${Math.round(value / 1000)}k`;
+    return `${String(Math.round(value / 1000))}k`;
   }
 
   if (value >= 1000) {
@@ -84,13 +84,13 @@ export function formatUsageStatusBarTooltip(providerDisplayName: string, modelId
   const lines = [
     `Provider: ${providerDisplayName}`,
     `Model: ${modelId}`,
-    `Prompt: ${normalized.promptTokens ?? "n/a"} tokens`,
-    `Output: ${normalized.completionTokens ?? "n/a"} tokens`,
-    `Total: ${normalized.totalTokens ?? "n/a"} tokens`,
+    `Prompt: ${String(normalized.promptTokens ?? "n/a")} tokens`,
+    `Output: ${String(normalized.completionTokens ?? "n/a")} tokens`,
+    `Total: ${String(normalized.totalTokens ?? "n/a")} tokens`,
   ];
 
   if (normalized.cachedTokens !== undefined) {
-    lines.push(`Cached input: ${normalized.cachedTokens} tokens`);
+    lines.push(`Cached input: ${String(normalized.cachedTokens)} tokens`);
   }
 
   const ratio = formatCacheHitRatio(normalized);
@@ -112,13 +112,13 @@ export function formatUsageLogLine(usage: UsageSnapshot): string | undefined {
   }
 
   const parts = [
-    `prompt=${normalized.promptTokens ?? "n/a"}`,
-    `completion=${normalized.completionTokens ?? "n/a"}`,
-    `total=${normalized.totalTokens ?? "n/a"}`,
+    `prompt=${String(normalized.promptTokens ?? "n/a")}`,
+    `completion=${String(normalized.completionTokens ?? "n/a")}`,
+    `total=${String(normalized.totalTokens ?? "n/a")}`,
   ];
 
   if (normalized.cachedTokens !== undefined) {
-    parts.push(`cached=${normalized.cachedTokens}`);
+    parts.push(`cached=${String(normalized.cachedTokens)}`);
   }
 
   const ratio = formatCacheHitRatio(normalized);

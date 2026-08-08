@@ -2,9 +2,9 @@
 
 # MiniMax M3 `<think>` Tag Leak — Reimplementation
 
-**Topic:** streaming / models / thinking / provider  
-**Updated:** 2026-06-13  
-**Tags:** #streaming #models #minimax #thinking #bugfix  
+**Topic:** streaming / models / thinking / provider
+**Updated:** 2026-06-13
+**Tags:** #streaming #models #minimax #thinking #bugfix
 **Supersedes:** —
 
 ---

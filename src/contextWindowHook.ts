@@ -4,16 +4,16 @@ import type { UsageSnapshot } from "./usage";
 
 type HandleProgressChunkFn = (requestId: string, chunks: unknown[]) => Promise<void>;
 
-type CapturedProxy = {
+interface CapturedProxy {
   proxyTarget: Record<string, unknown>;
   originalHandleProgressChunk: HandleProgressChunkFn;
-};
+}
 
-type ContextWindowUsage = {
+interface ContextWindowUsage {
   promptTokens: number;
   completionTokens: number;
   outputBuffer?: number;
-};
+}
 
 type SetAddFn = typeof Set.prototype.add;
 type SetDeleteFn = typeof Set.prototype.delete;
@@ -143,14 +143,24 @@ function cleanupVsCodeRequest(requestId: string): void {
 }
 
 async function captureProxy(logDiagnostic?: (message: string) => void): Promise<CapturedProxy | null> {
-  const originalMapSet = Map.prototype.set;
-  const probeId = `_opencode_probe_${Date.now()}`;
-  let found = false;
-  let capturedProxyTarget: Record<string, unknown> | null = null;
-  let capturedHandleProgressChunk: HandleProgressChunkFn | null = null;
+  // Wrapper keeps `this` bound to the real Map instance at call time (extracting
+  // the raw method would trip unbound-method, while `.bind()` would freeze the
+  // receiver to Map.prototype and break the call).
+  const originalMapSet = function (this: Map<unknown, unknown>, key: unknown, value: unknown): Map<unknown, unknown> {
+    return Map.prototype.set.call(this, key, value);
+  };
+  const probeId = `_opencode_probe_${String(Date.now())}`;
+  // Capture state lives in an object so the type checker does not narrow the
+  // fields to their initial literals — the monkey-patched `Map.prototype.set`
+  // below mutates them at runtime.
+  const captureState: {
+    found: boolean;
+    proxyTarget: Record<string, unknown> | null;
+    handleProgressChunk: HandleProgressChunkFn | null;
+  } = { found: false, proxyTarget: null, handleProgressChunk: null };
 
   Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
-    if (!found && isRecord(value)) {
+    if (!captureState.found && isRecord(value)) {
       const candidate = isRecord(value._proxy) ? value._proxy : undefined;
       const handleProgressChunk = candidate?.$handleProgressChunk;
       if (
@@ -158,9 +168,9 @@ async function captureProxy(logDiagnostic?: (message: string) => void): Promise<
         typeof handleProgressChunk === "function" &&
         (value.id === probeId || value.label === probeId || value.name === probeId)
       ) {
-        capturedProxyTarget = candidate;
-        capturedHandleProgressChunk = handleProgressChunk as HandleProgressChunkFn;
-        found = true;
+        captureState.proxyTarget = candidate;
+        captureState.handleProgressChunk = handleProgressChunk as HandleProgressChunkFn;
+        captureState.found = true;
       }
     }
 
@@ -179,13 +189,13 @@ async function captureProxy(logDiagnostic?: (message: string) => void): Promise<
     Map.prototype.set = originalMapSet;
   }
 
-  if (!found || !capturedProxyTarget || !capturedHandleProgressChunk) {
+  if (!captureState.found || !captureState.proxyTarget || !captureState.handleProgressChunk) {
     return null;
   }
 
   return {
-    proxyTarget: capturedProxyTarget,
-    originalHandleProgressChunk: capturedHandleProgressChunk,
+    proxyTarget: captureState.proxyTarget,
+    originalHandleProgressChunk: captureState.handleProgressChunk,
   };
 }
 
@@ -207,8 +217,7 @@ function patchProxy(captured: CapturedProxy): void {
 
     const stored = pendingUsage.get(requestId);
     if (stored) {
-      for (let index = 0; index < chunks.length; index += 1) {
-        const raw = chunks[index];
+      for (const raw of chunks) {
         const chunk = (Array.isArray(raw) ? raw[0] : raw) as Record<string, unknown> | undefined;
         if (chunk?.kind === "usage") {
           chunk.promptTokens = stored.promptTokens;
@@ -251,15 +260,21 @@ function installRequestTracking(): void {
     return;
   }
 
-  const capturedOriginalAdd = Set.prototype.add;
-  const capturedOriginalDelete = Set.prototype.delete;
+  // Wrappers preserve the dynamic `this` receiver while avoiding raw prototype
+  // method extraction (unbound-method).
+  const capturedOriginalAdd = function <T>(this: Set<T>, value: T): Set<T> {
+    return Set.prototype.add.call(this, value) as Set<T>;
+  };
+  const capturedOriginalDelete = function <T>(this: Set<T>, value: T): boolean {
+    return Set.prototype.delete.call(this, value);
+  };
 
   const nextPatchedAdd: SetAddFn = function <T>(this: Set<T>, value: T): Set<T> {
     if (isRecord(value) && typeof value.requestId === "string" && "extRequest" in value) {
       inFlightRequestIds.set(value.requestId, true);
     }
 
-    return capturedOriginalAdd.call(this, value);
+    return capturedOriginalAdd.call(this, value) as Set<T>;
   };
 
   const nextPatchedDelete: SetDeleteFn = function <T>(this: Set<T>, value: T): boolean {

@@ -1,13 +1,13 @@
 # 11 — Vision Proxy for Text-Only Models
 
-**Status:** 🟢 Active  
-**Author:** Wallacy (Wallacy Freitas)  
-**Reviewer:** ltmoerdani  
-**PR:** [#76](https://github.com/ltmoerdani/opencode-copilot-chat/pull/76)  
-**Issues:** [#74](https://github.com/ltmoerdani/opencode-copilot-chat/issues/74) (vision proxy), [#67](https://github.com/ltmoerdani/opencode-copilot-chat/issues/67) (output pane focus steal), [#68](https://github.com/ltmoerdani/opencode-copilot-chat/issues/68) (context overflow safety)  
-**Merged:** 2026-07-15  
-**Merge commit:** `d2fcbe4` (merge commit, NOT squash)  
-**Commits preserved:** 4 (`69902bb`, `4a36009`, `a17f91e`, `8a0d813`)  
+**Status:** 🟢 Active
+**Author:** Wallacy (Wallacy Freitas)
+**Reviewer:** ltmoerdani
+**PR:** [#76](https://github.com/ltmoerdani/opencode-copilot-chat/pull/76)
+**Issues:** [#74](https://github.com/ltmoerdani/opencode-copilot-chat/issues/74) (vision proxy), [#67](https://github.com/ltmoerdani/opencode-copilot-chat/issues/67) (output pane focus steal), [#68](https://github.com/ltmoerdani/opencode-copilot-chat/issues/68) (context overflow safety)
+**Merged:** 2026-07-15
+**Merge commit:** `d2fcbe4` (merge commit, NOT squash)
+**Commits preserved:** 4 (`69902bb`, `4a36009`, `a17f91e`, `8a0d813`)
 **Released:** `v0.4.1`
 
 ---

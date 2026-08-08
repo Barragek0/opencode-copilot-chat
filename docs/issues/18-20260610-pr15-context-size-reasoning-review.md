@@ -2,9 +2,9 @@
 
 # PR #15 Review — Context-Size Tiers, Models.dev Reasoning Options, and Richer Thinking Efforts
 
-**Topic:** models / thinking / provider / metadata  
-**Updated:** 2026-06-13  
-**Tags:** #models #thinking #reasoning #modelsdev #community-pr #context-size #pricing  
+**Topic:** models / thinking / provider / metadata
+**Updated:** 2026-06-13
+**Tags:** #models #thinking #reasoning #modelsdev #community-pr #context-size #pricing
 **Supersedes:** —
 
 ---
@@ -13,9 +13,9 @@
 
 Full review of community contributor PR #15 by [Wallacy](https://github.com/Wallacy), which adds three tightly related features: **Context Size selector** for tiered-pricing models, **dynamic reasoning options** from models.dev, and **richer thinking effort levels** for DeepSeek/Mimo/MiniMax families. Includes code analysis, risk assessment, and review feedback posted to GitHub.
 
-**PR:** [ltmoerdani/opencode-copilot-chat#15](https://github.com/ltmoerdani/opencode-copilot-chat/pull/15)  
-**Branch:** `feature/mimo-think` → `main`  
-**Author:** Wallacy Freitas  
+**PR:** [ltmoerdani/opencode-copilot-chat#15](https://github.com/ltmoerdani/opencode-copilot-chat/pull/15)
+**Branch:** `feature/mimo-think` → `main`
+**Author:** Wallacy Freitas
 **Files changed:** 5 (+487 / −57)
 
 ---
@@ -184,8 +184,8 @@ export interface ContextSizeOption {
 
 Review performed by reading the full diff (38KB) via `gh pr diff 15`. No local build or install was performed — PR is still OPEN awaiting merge.
 
-**CI Status:** ✅ GitGuardian Security Checks — No secrets detected.  
-**Mergeable:** ✅ Yes  
+**CI Status:** ✅ GitGuardian Security Checks — No secrets detected.
+**Mergeable:** ✅ Yes
 **Reviews:** None yet (review feedback to be posted by maintainer)
 
 ---

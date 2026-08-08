@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildResponsesRequestEnvelope, responsesInputItemsFromMessage } from "../responsesRequest.js";
 
-describe("buildResponsesRequestEnvelope", () => {
-  it("enables server-side input truncation for long Responses sessions", () => {
+void describe("buildResponsesRequestEnvelope", () => {
+  void it("enables server-side input truncation for long Responses sessions", () => {
     const body = buildResponsesRequestEnvelope({
       model: "gpt-5.6-luna",
       input: [{ role: "user", content: "hello" }],
@@ -14,7 +14,7 @@ describe("buildResponsesRequestEnvelope", () => {
     assert.equal(body.max_output_tokens, 4096);
   });
 
-  it("does not force an unsupported text verbosity option", () => {
+  void it("does not force an unsupported text verbosity option", () => {
     const body = buildResponsesRequestEnvelope({
       model: "gpt-5.6-luna",
       input: [],
@@ -24,7 +24,7 @@ describe("buildResponsesRequestEnvelope", () => {
     assert.ok(!("text" in body));
   });
 
-  it("only includes optional temperature and tool fields when provided", () => {
+  void it("only includes optional temperature and tool fields when provided", () => {
     const body = buildResponsesRequestEnvelope({
       model: "gpt-5.6-luna",
       input: [],
@@ -42,8 +42,8 @@ describe("buildResponsesRequestEnvelope", () => {
   });
 });
 
-describe("responsesInputItemsFromMessage", () => {
-  it("emits user image as input_image with image_url as a plain STRING", () => {
+void describe("responsesInputItemsFromMessage", () => {
+  void it("emits user image as input_image with image_url as a plain STRING", () => {
     // Regression: the Responses API expects `input_image.image_url` to be a
     // string (URL or base64 data URL), NOT the `{ url }` object shape used by
     // Chat Completions. The nested object made the gateway reject the request
@@ -64,12 +64,12 @@ describe("responsesInputItemsFromMessage", () => {
     ]);
   });
 
-  it("drops an empty string user message", () => {
+  void it("drops an empty string user message", () => {
     const items = responsesInputItemsFromMessage({ role: "user", content: "" });
     assert.deepEqual(items, []);
   });
 
-  it("emits assistant text as output_text and tool calls as function_call", () => {
+  void it("emits assistant text as output_text and tool calls as function_call", () => {
     const items = responsesInputItemsFromMessage({
       role: "assistant",
       content: [{ type: "text", text: "let me check" }],
@@ -94,7 +94,7 @@ describe("responsesInputItemsFromMessage", () => {
     ]);
   });
 
-  it("degrades tool results with images to a text note", () => {
+  void it("degrades tool results with images to a text note", () => {
     const items = responsesInputItemsFromMessage({
       role: "tool",
       tool_call_id: "call_1",
@@ -110,7 +110,7 @@ describe("responsesInputItemsFromMessage", () => {
     assert.match(output, /Responses API does not support images in tool output/);
   });
 
-  it("returns no items for unsupported roles", () => {
+  void it("returns no items for unsupported roles", () => {
     const items = responsesInputItemsFromMessage({
       role: "system",
       content: "be helpful",

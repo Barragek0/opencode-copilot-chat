@@ -2,73 +2,73 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { analyzeHttp400ForRetry, isTransientServerError } from "../retry.js";
 
-describe("analyzeHttp400ForRetry — thinking errors", () => {
-  it("patches 'only type=enabled is allowed' to force thinking.type='enabled'", () => {
+void describe("analyzeHttp400ForRetry — thinking errors", () => {
+  void it("patches 'only type=enabled is allowed' to force thinking.type='enabled'", () => {
     const body = { model: "kimi-k2.5", thinking: { type: "disabled" } };
     const result = analyzeHttp400ForRetry("invalid thinking: only type=enabled is allowed for this model", body);
     assert.ok(result, "should be recoverable");
-    assert.deepEqual(result!.body, { model: "kimi-k2.5", thinking: { type: "enabled" } });
-    assert.match(result!.reason, /thinking/i);
+    assert.deepEqual(result.body, { model: "kimi-k2.5", thinking: { type: "enabled" } });
+    assert.match(result.reason, /thinking/i);
   });
 
-  it("patches 'only type=disabled is allowed' by removing thinking", () => {
+  void it("patches 'only type=disabled is allowed' by removing thinking", () => {
     const body = { model: "some-model", thinking: { type: "enabled" } };
     const result = analyzeHttp400ForRetry("invalid thinking: only type=disabled is allowed", body);
     assert.ok(result, "should be recoverable");
-    assert.deepEqual(result!.body, { model: "some-model" });
+    assert.deepEqual(result.body, { model: "some-model" });
   });
 
-  it("patches generic 'invalid thinking' by removing thinking field", () => {
+  void it("patches generic 'invalid thinking' by removing thinking field", () => {
     const body = { model: "test", thinking: { type: "disabled" }, temperature: 0.2 };
     const result = analyzeHttp400ForRetry("invalid thinking parameter", body);
     assert.ok(result, "should be recoverable");
-    assert.deepEqual(result!.body, { model: "test", temperature: 0.2 });
+    assert.deepEqual(result.body, { model: "test", temperature: 0.2 });
   });
 });
 
-describe("analyzeHttp400ForRetry — temperature errors", () => {
-  it("patches 'invalid temperature: only 1 is allowed' by removing temperature", () => {
+void describe("analyzeHttp400ForRetry — temperature errors", () => {
+  void it("patches 'invalid temperature: only 1 is allowed' by removing temperature", () => {
     const body = { model: "kimi-k2.7-code", temperature: 0.2 };
     const result = analyzeHttp400ForRetry("invalid temperature: only 1 is allowed for this model", body);
     assert.ok(result, "should be recoverable");
-    assert.deepEqual(result!.body, { model: "kimi-k2.7-code" });
+    assert.deepEqual(result.body, { model: "kimi-k2.7-code" });
   });
 });
 
-describe("analyzeHttp400ForRetry — enable_thinking errors", () => {
-  it("patches 'Extra inputs are not permitted, field: enable_thinking'", () => {
+void describe("analyzeHttp400ForRetry — enable_thinking errors", () => {
+  void it("patches 'Extra inputs are not permitted, field: enable_thinking'", () => {
     const body = { model: "kimi-k2.5", enable_thinking: false };
     const result = analyzeHttp400ForRetry("Extra inputs are not permitted, field: 'enable_thinking', value: False", body);
     assert.ok(result, "should be recoverable");
-    assert.deepEqual(result!.body, { model: "kimi-k2.5" });
+    assert.deepEqual(result.body, { model: "kimi-k2.5" });
   });
 });
 
-describe("analyzeHttp400ForRetry — reasoning_effort errors", () => {
-  it("patches reasoning_effort rejection", () => {
+void describe("analyzeHttp400ForRetry — reasoning_effort errors", () => {
+  void it("patches reasoning_effort rejection", () => {
     const body = { model: "minimax-m2.7", reasoning_effort: "high" };
     const result = analyzeHttp400ForRetry("MiniMax M2 only accepts string reasoning_effort values ('low', 'medium', 'high')", body);
     assert.ok(result, "should be recoverable");
-    assert.deepEqual(result!.body, { model: "minimax-m2.7" });
+    assert.deepEqual(result.body, { model: "minimax-m2.7" });
   });
 });
 
-describe("analyzeHttp400ForRetry — non-recoverable errors", () => {
-  it("returns undefined for auth errors", () => {
+void describe("analyzeHttp400ForRetry — non-recoverable errors", () => {
+  void it("returns undefined for auth errors", () => {
     const body = { model: "test" };
     const result = analyzeHttp400ForRetry("unauthorized", body);
     assert.equal(result, undefined);
   });
 
-  it("returns undefined for unrelated errors", () => {
+  void it("returns undefined for unrelated errors", () => {
     const body = { model: "test" };
     const result = analyzeHttp400ForRetry("model not found", body);
     assert.equal(result, undefined);
   });
 });
 
-describe("analyzeHttp400ForRetry — context overflow", () => {
-  it("reduces max_tokens using the authoritative counts from issue #109", () => {
+void describe("analyzeHttp400ForRetry — context overflow", () => {
+  void it("reduces max_tokens using the authoritative counts from issue #109", () => {
     const body = { model: "deepseek-v4-flash", max_tokens: 384_000 };
     const result = analyzeHttp400ForRetry(
       "This model's maximum context length is 1048576 tokens. However, you requested 1050237 tokens (666237 in the messages, 384000 in the completion).",
@@ -80,7 +80,7 @@ describe("analyzeHttp400ForRetry — context overflow", () => {
     assert.match(result.reason, /upstream context counts/i);
   });
 
-  it("supports Responses-style max_output_tokens and formatted counts", () => {
+  void it("supports Responses-style max_output_tokens and formatted counts", () => {
     const body = { model: "gpt-test", max_output_tokens: 32_000 };
     const result = analyzeHttp400ForRetry(
       "Maximum context length is 128,000 tokens; you requested 130,000 tokens (98,000 in the input, 32,000 in the output).",
@@ -91,7 +91,7 @@ describe("analyzeHttp400ForRetry — context overflow", () => {
     assert.equal(result.body?.max_output_tokens, 29_744);
   });
 
-  it("patches the nested Google output budget", () => {
+  void it("patches the nested Google output budget", () => {
     const body = { model: "gemini-test", generationConfig: { maxOutputTokens: 32_000, temperature: 0.2 } };
     const result = analyzeHttp400ForRetry(
       "Maximum context length is 128,000 tokens; you requested 130,000 tokens (98,000 in the input, 32,000 in the output).",
@@ -102,7 +102,7 @@ describe("analyzeHttp400ForRetry — context overflow", () => {
     assert.deepEqual(result.body?.generationConfig, { maxOutputTokens: 29_744, temperature: 0.2 });
   });
 
-  it("does not retry when reducing completion cannot fit the prompt", () => {
+  void it("does not retry when reducing completion cannot fit the prompt", () => {
     const result = analyzeHttp400ForRetry(
       "Maximum context length is 1,000 tokens. You requested 1,500 tokens (1,400 in the messages, 100 in the completion).",
       { model: "test", max_tokens: 100 },
@@ -112,26 +112,26 @@ describe("analyzeHttp400ForRetry — context overflow", () => {
   });
 });
 
-describe("isTransientServerError", () => {
-  it("flags 502/503/504 as transient", () => {
+void describe("isTransientServerError", () => {
+  void it("flags 502/503/504 as transient", () => {
     assert.equal(isTransientServerError(502, "Bad Gateway"), true);
     assert.equal(isTransientServerError(503, "Service Unavailable"), true);
     assert.equal(isTransientServerError(504, "Gateway Timeout"), true);
   });
 
-  it("flags a 500 whose body names Router.Unavailable as transient", () => {
+  void it("flags a 500 whose body names Router.Unavailable as transient", () => {
     assert.equal(isTransientServerError(500, '{"error":{"type":"Router.Unavailable"}}'), true);
   });
 
-  it("treats 500 with unrelated body as permanent", () => {
+  void it("treats 500 with unrelated body as permanent", () => {
     assert.equal(isTransientServerError(500, "Internal Server Error"), false);
   });
 
-  it("treats non-5xx statuses as permanent", () => {
+  void it("treats non-5xx statuses as permanent", () => {
     assert.equal(isTransientServerError(429, "Too Many Requests"), false);
   });
 
-  it("matches Router.Unavailable case-insensitively", () => {
+  void it("matches Router.Unavailable case-insensitively", () => {
     assert.equal(isTransientServerError(500, "type: router.unavailable"), true);
   });
 });

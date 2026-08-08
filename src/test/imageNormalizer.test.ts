@@ -5,13 +5,13 @@ import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataU
 
 const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-describe("normalizeImageDataUrl", () => {
-  it("keeps a small image unchanged", async () => {
+void describe("normalizeImageDataUrl", () => {
+  void it("keeps a small image unchanged", async () => {
     const url = `data:image/png;base64,${ONE_PIXEL_PNG}`;
     assert.equal(await normalizeImageDataUrl(url), url);
   });
 
-  it("resizes an image that exceeds the CLI dimension limit", async () => {
+  void it("resizes an image that exceeds the CLI dimension limit", async () => {
     const image = new PhotonImage(new Uint8Array(2_001 * 4).fill(255), 2_001, 1);
     try {
       const url = `data:image/png;base64,${Buffer.from(image.get_bytes()).toString("base64")}`;
@@ -24,7 +24,7 @@ describe("normalizeImageDataUrl", () => {
     }
   });
 
-  it("does not reject a large raw image when its normalized base64 payload fits", async () => {
+  void it("does not reject a large raw image when its normalized base64 payload fits", async () => {
     const width = 750;
     const height = 1_000;
     const pixels = new Uint8Array(width * height * 4);
@@ -42,18 +42,20 @@ describe("normalizeImageDataUrl", () => {
       const normalized = await normalizeImageDataUrl(url);
 
       assert.equal(normalized, url);
-      assert.ok(getImageDataUrlBase64Bytes(normalized)! <= MAX_IMAGE_BASE64_BYTES);
+      const dataBytes = getImageDataUrlBase64Bytes(normalized);
+      assert.ok(dataBytes !== undefined);
+      assert.ok(dataBytes <= MAX_IMAGE_BASE64_BYTES);
     } finally {
       image.free();
     }
   });
 
-  it("passes non-data URLs through unchanged", async () => {
+  void it("passes non-data URLs through unchanged", async () => {
     const url = "https://example.com/image.png";
     assert.equal(await normalizeImageDataUrl(url), url);
   });
 
-  it("passes malformed image data through unchanged", async () => {
+  void it("passes malformed image data through unchanged", async () => {
     const url = "data:image/png;base64,not-an-image";
     assert.equal(await normalizeImageDataUrl(url), url);
   });

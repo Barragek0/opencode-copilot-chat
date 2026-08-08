@@ -59,14 +59,14 @@ export function buildResponsesRequestEnvelope(options: ResponsesRequestEnvelopeO
  * Convert one internal `ApiMessage` into the Responses API `input` items.
  * Returns an empty array for unsupported roles / empty user content.
  */
-export function responsesInputItemsFromMessage(message: ResponsesApiMessage): Array<Record<string, unknown>> {
+export function responsesInputItemsFromMessage(message: ResponsesApiMessage): Record<string, unknown>[] {
   if (message.role === "user") {
     const content = responsesUserContent(message.content);
     return content.length ? [{ role: "user", content }] : [];
   }
 
   if (message.role === "assistant") {
-    const items: Array<Record<string, unknown>> = [];
+    const items: Record<string, unknown>[] = [];
     const text = responsesAssistantText(message.content);
     if (text) {
       items.push({ role: "assistant", content: [{ type: "output_text", text }] });
@@ -95,7 +95,7 @@ export function responsesInputItemsFromMessage(message: ResponsesApiMessage): Ar
     return [
       {
         type: "function_call_output",
-        call_id: message.tool_call_id ?? `tool-${Date.now()}`,
+        call_id: message.tool_call_id ?? `tool-${String(Date.now())}`,
         output,
       },
     ];
@@ -104,16 +104,21 @@ export function responsesInputItemsFromMessage(message: ResponsesApiMessage): Ar
   return [];
 }
 
-function responsesUserContent(content: ResponsesApiMessage["content"]): Array<Record<string, unknown>> {
+/** Narrow a union value to a content-part array without falling back to `any[]`. */
+function isContentPartArray(value: unknown): value is readonly ResponsesApiContentPart[] {
+  return Array.isArray(value);
+}
+
+function responsesUserContent(content: ResponsesApiMessage["content"]): Record<string, unknown>[] {
   if (typeof content === "string") {
     return content ? [{ type: "input_text", text: content }] : [];
   }
 
-  if (!Array.isArray(content)) {
+  if (!isContentPartArray(content)) {
     return [];
   }
 
-  return content.flatMap((part): Array<Record<string, unknown>> => {
+  return content.flatMap((part): Record<string, unknown>[] => {
     if (part.type === "text" && typeof part.text === "string") {
       return [{ type: "input_text", text: part.text }];
     }
@@ -142,7 +147,7 @@ function responsesAssistantText(content: ResponsesApiMessage["content"]): string
 // image was present. The note is intentionally brief (not a data URI) so it
 // doesn't bloat the payload; the model is told the image was omitted.
 function responsesToolOutput(content: ResponsesApiMessage["content"]): string {
-  if (!Array.isArray(content)) {
+  if (!isContentPartArray(content)) {
     return JSON.stringify(content ?? "");
   }
 
@@ -164,12 +169,12 @@ export function joinedTextContent(content: string | null | readonly { type: stri
     return content;
   }
 
-  if (!Array.isArray(content)) {
+  if (!isContentPartArray(content)) {
     return "";
   }
 
   return content
-    .filter((part): part is { type: string; text: string } => part.type === "text" && typeof part.text === "string")
+    .filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
     .map((part) => part.text)
     .join(separator);
 }

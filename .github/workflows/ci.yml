@@ -32,6 +32,9 @@ jobs:
       - name: 🔎 Lint source and maintenance docs
         run: npm run lint
 
+      - name: 🎨 Check formatting
+        run: npm run format:check
+
       - name: 🧪 Run tests
         run: npm test
 

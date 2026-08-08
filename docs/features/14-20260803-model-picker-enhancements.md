@@ -75,14 +75,14 @@ New function `getContextSizeOptionsForModel(modelId, cost, fullContextWindow)` i
 
 ## Files
 
-| File | Change |
-|------|--------|
-| `src/modelNames.ts` | New: `formatModelName` (extracted), `providerModelDisplayName` |
-| `src/metadata.ts` | New: `getContextSizeOptionsForModel` (Kimi-aware tier synthesis) |
-| `src/extension.ts` | Import `getContextSizeOptionsForModel` + `providerModelDisplayName`; `modelInfoProviders` array for setting-change refresh; config listener for `showProviderPrefix` |
-| `package.json` | New setting `opencodego.showProviderPrefix` |
-| `src/test/modelNames.test.ts` | New: numeric version formatting, prefix on/off |
-| `src/test/metadata.test.ts` | New: Kimi tier synthesis, `k3` short id, 256K-boundary skip, models.dev precedence |
+| File                          | Change                                                                                                                                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/modelNames.ts`           | New: `formatModelName` (extracted), `providerModelDisplayName`                                                                                                       |
+| `src/metadata.ts`             | New: `getContextSizeOptionsForModel` (Kimi-aware tier synthesis)                                                                                                     |
+| `src/extension.ts`            | Import `getContextSizeOptionsForModel` + `providerModelDisplayName`; `modelInfoProviders` array for setting-change refresh; config listener for `showProviderPrefix` |
+| `package.json`                | New setting `opencodego.showProviderPrefix`                                                                                                                          |
+| `src/test/modelNames.test.ts` | New: numeric version formatting, prefix on/off                                                                                                                       |
+| `src/test/metadata.test.ts`   | New: Kimi tier synthesis, `k3` short id, 256K-boundary skip, models.dev precedence                                                                                   |
 
 ---
 

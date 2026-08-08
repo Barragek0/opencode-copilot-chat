@@ -2,9 +2,9 @@
 
 # PR #13 Review, Merge, and v0.2.2 Release
 
-**Topic:** streaming / models / provider  
-**Updated:** 2026-06-08  
-**Tags:** #streaming #models #minimax #thinking #community-pr  
+**Topic:** streaming / models / provider
+**Updated:** 2026-06-08
+**Tags:** #streaming #models #minimax #thinking #community-pr
 **Supersedes:** —
 
 ---

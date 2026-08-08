@@ -2,9 +2,9 @@
 
 # PR #53 — Model Picker Crash & Duplication on VS Code ≥1.126
 
-**Topic:** models / provider / byok / vscode  
-**Updated:** 2026-06-23  
-**Tags:** #models #provider #byok #vscode #bugfix #community  
+**Topic:** models / provider / byok / vscode
+**Updated:** 2026-06-23
+**Tags:** #models #provider #byok #vscode #bugfix #community
 **Supersedes:** —
 
 ---
@@ -20,8 +20,8 @@ The crash blocked all model selection on 1.126. The duplication made the picker 
 
 This document covers the root cause of both regressions, the two iterations the contributor (@Wallacy) went through, and the final approach that shipped.
 
-**Documented:** 2026-06-23  
-**Fixed in:** v0.3.4 (PR [#53](https://github.com/ltmoerdani/opencode-copilot-chat/pull/53))  
+**Documented:** 2026-06-23
+**Fixed in:** v0.3.4 (PR [#53](https://github.com/ltmoerdani/opencode-copilot-chat/pull/53))
 **Issue report:** [#51](https://github.com/ltmoerdani/opencode-copilot-chat/issues/51)
 
 ---

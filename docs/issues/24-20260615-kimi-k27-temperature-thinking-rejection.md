@@ -2,11 +2,11 @@
 
 # Kimi K2.7-Code Rejects `temperature` and `thinking.type: "disabled"` — Dual 400 Errors
 
-**Topic:** models / thinking / temperature / provider / kimi  
-**Updated:** 2026-06-15  
-**Tags:** #models #thinking #kimi #temperature #breaking-change #bugfix  
-**GitHub Issue:** [#25](https://github.com/ltmoerdani/opencode-copilot-chat/issues/25)  
-**Related:** [#20](./20-20260611-pr18-kimi-thinking-format-review.md) (Kimi thinking format fix for K2.6/K2.5)  
+**Topic:** models / thinking / temperature / provider / kimi
+**Updated:** 2026-06-15
+**Tags:** #models #thinking #kimi #temperature #breaking-change #bugfix
+**GitHub Issue:** [#25](https://github.com/ltmoerdani/opencode-copilot-chat/issues/25)
+**Related:** [#20](./20-20260611-pr18-kimi-thinking-format-review.md) (Kimi thinking format fix for K2.6/K2.5)
 **Reporters:** [@JacksApps](https://github.com/JacksApps), [@Tynamix](https://github.com/Tynamix)
 
 ---

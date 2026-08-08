@@ -2,11 +2,11 @@
 
 # Thinking Effort "Off" Missing for models.dev Effort-Only Schemas
 
-**Topic:** thinking / reasoning / models.dev / ui  
-**Updated:** 2026-06-14  
-**Tags:** #thinking #reasoning #models-dev #ui #bug  
-**GitHub Issue:** [#35](https://github.com/ltmoerdani/opencode-copilot-chat/issues/35)  
-**GitHub PR:** [#38](https://github.com/ltmoerdani/opencode-copilot-chat/pull/38)  
+**Topic:** thinking / reasoning / models.dev / ui
+**Updated:** 2026-06-14
+**Tags:** #thinking #reasoning #models-dev #ui #bug
+**GitHub Issue:** [#35](https://github.com/ltmoerdani/opencode-copilot-chat/issues/35)
+**GitHub PR:** [#38](https://github.com/ltmoerdani/opencode-copilot-chat/pull/38)
 **Reporter/Fixer:** [@sublimode](https://github.com/sublimode)
 
 ---

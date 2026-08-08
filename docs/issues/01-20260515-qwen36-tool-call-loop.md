@@ -2,9 +2,9 @@
 
 # Qwen 3.6 Plus Free — Tool-Call Loop Investigation
 
-**Topic:** streaming / tool-calling / routing / models / provider  
-**Updated:** 2026-06-13  
-**Tags:** #streaming #tool-calling #routing #models #qwen #anthropic-bridge #zen  
+**Topic:** streaming / tool-calling / routing / models / provider
+**Updated:** 2026-06-13
+**Tags:** #streaming #tool-calling #routing #models #qwen #anthropic-bridge #zen
 **Supersedes:** —
 
 ---
