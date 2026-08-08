@@ -120,7 +120,8 @@ const RECOVERABLE_ERROR_PATTERNS: Array<{
   // --- Reasoning effort errors ---
   // "MiniMax M2 only accepts string reasoning_effort values"
   {
-    pattern: /reasoning_effort|reasoning_effort.*(?:string|only accepts|invalid|unsupported)|(?:string|only accepts|invalid|unsupported).*reasoning_effort/i,
+    pattern:
+      /reasoning_effort|reasoning_effort.*(?:string|only accepts|invalid|unsupported)|(?:string|only accepts|invalid|unsupported).*reasoning_effort/i,
     patch: (body) => {
       const next = { ...body };
       delete next.reasoning_effort;
@@ -183,10 +184,7 @@ const RECOVERABLE_ERROR_PATTERNS: Array<{
  * @param body The original request body (will not be mutated)
  * @returns RetryPatch if recoverable, undefined otherwise
  */
-export function analyzeHttp400ForRetry(
-  errorMessage: string,
-  body: Record<string, unknown>,
-): RetryPatch | undefined {
+export function analyzeHttp400ForRetry(errorMessage: string, body: Record<string, unknown>): RetryPatch | undefined {
   const contextPatch = patchContextOverflow(errorMessage, body);
   if (contextPatch) return contextPatch;
 
@@ -213,9 +211,7 @@ function patchContextOverflow(errorMessage: string, body: Record<string, unknown
 
   const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveInteger(body[key]) !== undefined);
   const generationConfig = recordValue(body.generationConfig);
-  const configuredOutput = outputKey
-    ? positiveInteger(body[outputKey])
-    : positiveInteger(generationConfig?.maxOutputTokens);
+  const configuredOutput = outputKey ? positiveInteger(body[outputKey]) : positiveInteger(generationConfig?.maxOutputTokens);
   if (configuredOutput === undefined) return undefined;
 
   const reportedOutput = parseTokenCount(errorMessage.match(/([\d,]+)\s+in the (?:completion|output)/i)?.[1]);
@@ -250,9 +246,7 @@ function positiveInteger(value: unknown): number | undefined {
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 /**
@@ -264,16 +258,11 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
  *   reports it when no healthy backend is currently reachable for a model).
  * - Anything else (including 500s with unrelated bodies) is permanent.
  */
-export function isTransientServerError(
-  status: number,
-  errorDetail: string,
-): boolean {
+export function isTransientServerError(status: number, errorDetail: string): boolean {
   if (status === 502 || status === 503 || status === 504) {
     return true;
   }
-  return (
-    status >= 500 && /RouterUnavailable/i.test(compactErrorCode(errorDetail))
-  );
+  return status >= 500 && /RouterUnavailable/i.test(compactErrorCode(errorDetail));
 }
 
 function compactErrorCode(value: string): string {

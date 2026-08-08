@@ -6,9 +6,7 @@ export interface StableModelCapabilities {
 }
 
 /** Build model capabilities that are safe for regular Marketplace installs. */
-export function buildStableModelCapabilities(
-  supportsVision: boolean,
-): StableModelCapabilities {
+export function buildStableModelCapabilities(supportsVision: boolean): StableModelCapabilities {
   return {
     imageInput: supportsVision,
     toolCalling: true,

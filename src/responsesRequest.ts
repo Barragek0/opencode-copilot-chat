@@ -91,14 +91,14 @@ export function responsesInputItemsFromMessage(message: ResponsesApiMessage): Ar
     // represented natively here, so we degrade to the joined text payload.
     // Vision-capable OpenAI/Anthropic/Google transports handle images in tool
     // results natively via their respective request builders.
-    const output = typeof message.content === "string"
-      ? message.content
-      : responsesToolOutput(message.content);
-    return [{
-      type: "function_call_output",
-      call_id: message.tool_call_id ?? `tool-${Date.now()}`,
-      output,
-    }];
+    const output = typeof message.content === "string" ? message.content : responsesToolOutput(message.content);
+    return [
+      {
+        type: "function_call_output",
+        call_id: message.tool_call_id ?? `tool-${Date.now()}`,
+        output,
+      },
+    ];
   }
 
   return [];
@@ -152,19 +152,14 @@ function responsesToolOutput(content: ResponsesApiMessage["content"]): string {
     return text || "";
   }
 
-  return [text, "[Image attachment omitted — Responses API does not support images in tool output]"]
-    .filter(Boolean)
-    .join("\n\n");
+  return [text, "[Image attachment omitted — Responses API does not support images in tool output]"].filter(Boolean).join("\n\n");
 }
 
 /**
  * Join the text parts of a content array (or return a plain string as-is).
  * Shared by the Responses, Anthropic, and Google request builders.
  */
-export function joinedTextContent(
-  content: string | null | readonly { type: string; text?: string }[],
-  separator = "",
-): string {
+export function joinedTextContent(content: string | null | readonly { type: string; text?: string }[], separator = ""): string {
   if (typeof content === "string") {
     return content;
   }

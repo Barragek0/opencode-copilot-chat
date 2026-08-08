@@ -88,10 +88,7 @@ OpenAI explicitly recommends `"auto"` for stateless multi-turn usage. This alone
 
 ```ts
 const remainingContext = Math.max(1, contextWindow - promptReserve);
-const maxOutputTokens = Math.max(
-  1,
-  Math.min(configuredMaxOutputTokens, remainingContext),
-);
+const maxOutputTokens = Math.max(1, Math.min(configuredMaxOutputTokens, remainingContext));
 ```
 
 The previous 4,096-token floor could exceed the remaining context and recreate the 400. Request-time limits now use a strict floor of one token; `truncation: "auto"` remains the fallback when the input itself exceeds the window. Estimation runs after vision proxying and old-image trimming, so it reflects the actual payload.
@@ -111,9 +108,9 @@ The `text` field was removed from the shared Responses request envelope. It is n
 
 - Automated: compile, lint, all 145 unit tests, and clean VSIX packaging pass.
 - Live gateway verification remains for three scenarios:
-    - Short session, 1–3 turns. Confirm no regression.
-    - Long session, 10+ turns with code output and MCP tool results. Confirm no 400.
-    - Image input. Confirm vision still works. Caveat: with `truncation: "auto"`, the earliest image will be dropped first on overflow.
+  - Short session, 1–3 turns. Confirm no regression.
+  - Long session, 10+ turns with code output and MCP tool results. Confirm no 400.
+  - Image input. Confirm vision still works. Caveat: with `truncation: "auto"`, the earliest image will be dropped first on overflow.
 - Inspect the Output Channel during that run. The `[request]` log should show payload size and a 200 response.
 
 ## Resolution
@@ -122,11 +119,11 @@ Merged via **PR #113** (merge commit `268059f`, 2026-08-07) into `main`. All 4 c
 
 ## Risk assessment
 
-| Fix | Risk | Mitigation |
-|-----|------|------------|
-| `truncation: "auto"` | Drops early conversation turns when overflow occurs | It activates only when needed; preserving a response is preferable to a hard 400. |
-| Cap `max_output_tokens` | Output may come back shorter than expected | The budget is bounded to the measured remaining context, with server-side truncation as the overflow fallback. |
-| Remove `text.verbosity` | Output becomes slightly more verbose by default | Negligible. |
+| Fix                     | Risk                                                | Mitigation                                                                                                     |
+| ----------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `truncation: "auto"`    | Drops early conversation turns when overflow occurs | It activates only when needed; preserving a response is preferable to a hard 400.                              |
+| Cap `max_output_tokens` | Output may come back shorter than expected          | The budget is bounded to the measured remaining context, with server-side truncation as the overflow fallback. |
+| Remove `text.verbosity` | Output becomes slightly more verbose by default     | Negligible.                                                                                                    |
 
 ## Scope note
 
