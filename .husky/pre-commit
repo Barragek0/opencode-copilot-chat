@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
-# Some commit UIs (IDE/GUI) run hooks with a stripped-down PATH that excludes
-# version-manager bin dirs (e.g. nvm), so node/npm/npx can be missing here.
-# Resolve them before running anything so the gate never silently skips.
+# Fail fast: a failing step aborts the commit so the formatter can't mask a lint error.
+set -e
+
+# Some commit UIs run hooks with a stripped PATH that omits nvm's bin dir, so
+# npx/npm can be missing here. Resolve them so the gate never silently skips.
 if ! command -v npx >/dev/null 2>&1; then
-  # Prefer the version nvm has selected, then the highest installed one.
   node_bin="${NVM_BIN:-}"
   if [ -z "$node_bin" ] || [ ! -x "$node_bin/npx" ]; then
     node_bin="$(find "$HOME/.nvm/versions/node" -maxdepth 3 -type d -name bin 2>/dev/null | sort -V | tail -n 1)"
@@ -13,13 +14,10 @@ if ! command -v npx >/dev/null 2>&1; then
   fi
 fi
 
-# Format ALL changed files (code + non-code) — prettier on everything it
-# supports, eslint --fix on JS/TS, markdownlint --fix on Markdown, and lint
-# of husky scripts. Fast path: only staged files.
-npx lint-staged
-
-# Zero-tolerance gate: full-repo lint (eslint, markdownlint, shellcheck,
-# editorconfig-checker, tsc type-check incl. scripts/) plus prettier format
-# check. A commit is BLOCKED if ANY file in the codebase has any error,
-# warning, info-level diagnostic, type error, or formatting drift.
+# Zero-tolerance gate FIRST, on raw content: block the commit if any file has
+# any error, warning, info diagnostic, type error, or formatting drift.
+# Linting before formatting ensures the linter sees the file as written.
 npm run lint
+
+# Format changed files (code + non-code) after linting passes.
+npx lint-staged
