@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * validate-models.mts — Comprehensive model parameter validation suite.
+ * validate-models.ts — Comprehensive model parameter validation suite.
  *
  * Reuses the EXACT same logic as the extension:
  * - buildThinkingPayload() from thinking.ts
@@ -11,8 +11,8 @@
  * the live OpenCode API to verify what actually works.
  *
  * Usage:
- *   npx tsx scripts/validate-models.mts --api-key YOUR_KEY
- *   OPENCODE_API_KEY=... npx tsx scripts/validate-models.mts
+ *   npx tsx scripts/validate-models.ts --api-key YOUR_KEY
+ *   OPENCODE_API_KEY=... npx tsx scripts/validate-models.ts
  */
 
 import { parseArgs } from "node:util";
@@ -42,12 +42,12 @@ const { values: args } = parseArgs({
 
 if (args.help) {
   console.log(`
-Usage: npx tsx scripts/validate-models.mts [options]
+Usage: npx tsx scripts/validate-models.ts [options]
 
 Examples:
-  npx tsx scripts/validate-models.mts --api-key YOUR_KEY
-  npx tsx scripts/validate-models.mts --api-key YOUR_KEY --families deepseek,kimi
-  npx tsx scripts/validate-models.mts --dry-run
+  npx tsx scripts/validate-models.ts --api-key YOUR_KEY
+  npx tsx scripts/validate-models.ts --api-key YOUR_KEY --families deepseek,kimi
+  npx tsx scripts/validate-models.ts --dry-run
 `);
   process.exit(0);
 }

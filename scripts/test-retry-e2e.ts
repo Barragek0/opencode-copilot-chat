@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * test-retry-e2e.mts — End-to-end retry integration test with mock server.
+ * test-retry-e2e.ts — End-to-end retry integration test with mock server.
  *
  * Proves the full retry flow works WITHOUT a real API key:
  * 1. Starts a local HTTP server simulating OpenCode API
  * 2. Server returns 400 for invalid params, 200 for valid params
  * 3. Sends request → gets 400 → analyzeHttp400ForRetry() → retries → gets 200
  *
- * Usage: npx tsx scripts/test-retry-e2e.mts
+ * Usage: npx tsx scripts/test-retry-e2e.ts
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";

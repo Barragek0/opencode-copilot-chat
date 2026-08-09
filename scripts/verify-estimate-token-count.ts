@@ -4,7 +4,7 @@
  * Simulates JSON-serialized chat messages at various sizes and checks
  * that the safeOutputBudget does not collapse to 1.
  *
- * Run: npx tsx scripts/verify-estimate-token-count.mts
+ * Run: npx tsx scripts/verify-estimate-token-count.ts
  */
 
 // ── Heuristic under test (same logic as extension.ts after fix) ──────────────
