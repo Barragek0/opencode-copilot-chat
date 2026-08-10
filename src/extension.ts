@@ -84,6 +84,28 @@ const SECRET_KEY = "opencodego.apiKey";
 const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
 const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
 
+/**
+ * VS Code core settings the extension manages (auto-configures and reverts)
+ * so OpenCode models work in the Agents window (issue #122):
+ *
+ * - `chat.agentHost.byokModels.enabled`: wires the agent-host BYOK bridge
+ *   (VS Code 1.129+); off by default, so extension-provided BYOK models never
+ *   reach agent-host sessions until it is flipped on.
+ * - `extensions.supportAgentsWindow.<id>`: the ONLY way a code extension is
+ *   allowed to run in the Agents window (sessions window) process. Without
+ *   it the extension is disabled there, its `languageModelChatProviders`
+ *   vendors are not registered, and neither the model picker nor the
+ *   "+ Add Models" list knows OpenCode Go/Zen.
+ */
+const AGENT_HOST_BYOK_ENABLED_SETTING = "byokModels.enabled";
+const SUPPORT_AGENTS_WINDOW_SETTING = "supportAgentsWindow";
+const EXTENSION_ID = "ltmoerdani.opencode-copilot-chat";
+/** How many VS Code versions old the agent-host BYOK bridge goes back to. */
+const AGENT_HOST_BYOK_MINOR_VERSION = 129;
+/** globalState keys tracking that the extension enabled each setting itself. */
+const AGENTS_BYOK_BRIDGE_STATE_KEY = "opencode.agentsByokBridge.v1";
+const SUPPORT_AGENTS_WINDOW_STATE_KEY = "opencode.supportAgentsWindow.v1";
+
 let usageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
 /** Singleton tracker — the first/legacy account. Used for backward compat until first migration. */
@@ -876,6 +898,11 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider),
       vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider),
     );
+    // On VS Code 1.129+ the Agents window runs in the agent host process,
+    // where extension BYOK models are only reachable through VS Code's BYOK
+    // language-model bridge — which is off by default. Make sure it is on so
+    // OpenCode models actually show up there (issue #122).
+    void ensureAgentsWindowSupport(context);
   }
 
   context.subscriptions.push(...subscriptions);
@@ -890,6 +917,18 @@ export function activate(context: vscode.ExtensionContext) {
           provider.notifyModelInfoChanged();
         }
       }
+      if (event.affectsConfiguration("opencodego.agentsWindow") || event.affectsConfiguration("opencodego.autoEnableAgentsWindow")) {
+        const agentsWindowEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
+        const autoEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("autoEnableAgentsWindow", true);
+        if (agentsWindowEnabled && autoEnabled) {
+          void ensureAgentsWindowSupport(context);
+        } else if (!agentsWindowEnabled) {
+          // We may have enabled core settings for the Agents window; revert
+          // them when the user turns the feature off so the user's global
+          // configuration is restored.
+          void revertAgentsWindowSupport(context);
+        }
+      }
     }),
   );
 
@@ -901,6 +940,111 @@ async function configureUtilityModels(): Promise<void> {
     "workbench.action.openSettings",
     "@id:chat.byokUtilityModelDefault @id:chat.utilityModel @id:chat.utilitySmallModel",
   );
+}
+
+/**
+ * Whether this VS Code has the modern agent-host BYOK bridge (1.129+).
+ *
+ * From VS Code 1.129 the Agents window runs in a separate agent host
+ * process. Extension-provided BYOK models (isBYOK, no `targetChatSessionType`)
+ * are mirrored into agent-host sessions exclusively through the BYOK
+ * language-model bridge, which VS Code keeps OFF by default
+ * (`chat.agentHost.byokModels.enabled`, experimental). On older versions the
+ * extension's own agent-host providers (`targetChatSessionType: "copilotcli"`)
+ * are the only path, which is why they stay registered.
+ */
+function isModernAgentHostVscode(): boolean {
+  const [major = 1, minor = 0] = (vscode.version ?? "").split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= AGENT_HOST_BYOK_MINOR_VERSION);
+}
+
+/**
+ * Ensure the VS Code core settings that make OpenCode Go/Zen models usable in
+ * the Agents window are enabled (issue #122):
+ *
+ * 1. `extensions.supportAgentsWindow.<id>` — the only way a code extension is
+ *    allowed to run in the Agents window (sessions window) process. VS Code
+ *    disables any extension with a `main` entry there by default, so without
+ *    this setting the extension's `languageModelChatProviders` vendors are
+ *    not registered in that window: neither the model picker nor the
+ *    "+ Add Models" list can show OpenCode Go/Zen.
+ * 2. `chat.agentHost.byokModels.enabled` (VS Code 1.129+) — the BYOK
+ *    language-model bridge that mirrors extension BYOK models into
+ *    agent-host sessions. Off by default and experimental.
+ *
+ * CONTRACT:
+ * - Only writes the settings while the user keeps `opencodego.agentsWindow`
+ *   and `opencodego.autoEnableAgentsWindow` on; the settings are merged with
+ *   existing user values (never clobbering unrelated entries).
+ * - Records in globalState which settings the extension flipped itself, so
+ *   {@link revertAgentsWindowSupport} can restore them when the user disables
+ *   the Agents feature.
+ * - Both settings take effect after a window reload (extension host /
+ *   agent host restart) — surface an actionable notification the first time
+ *   anything was changed.
+ */
+async function ensureAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
+  const opencodeCfg = vscode.workspace.getConfiguration("opencodego");
+  if (!opencodeCfg.get<boolean>("agentsWindow", true) || !opencodeCfg.get<boolean>("autoEnableAgentsWindow", true)) {
+    return;
+  }
+
+  let changed = false;
+  const extensionCfg = vscode.workspace.getConfiguration("extensions");
+  const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
+  if (!support[EXTENSION_ID]) {
+    await extensionCfg.update(SUPPORT_AGENTS_WINDOW_SETTING, { ...support, [EXTENSION_ID]: true }, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, true);
+    changed = true;
+  }
+
+  if (isModernAgentHostVscode()) {
+    const agentHostCfg = vscode.workspace.getConfiguration("chat.agentHost");
+    if (!agentHostCfg.get<boolean>(AGENT_HOST_BYOK_ENABLED_SETTING, false)) {
+      await agentHostCfg.update(AGENT_HOST_BYOK_ENABLED_SETTING, true, vscode.ConfigurationTarget.Global);
+      await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, true);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    const reload = await vscode.window.showInformationMessage(
+      "OpenCode: enabled VS Code's Agents window support so OpenCode Go/Zen models can run in the Agents window. Reload the window for it to take effect.",
+      "Reload Now",
+    );
+    if (reload === "Reload Now") {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    }
+  }
+}
+
+/**
+ * Revert the core settings that {@link ensureAgentsWindowSupport} enabled on
+ * this machine (and only those — settings the user configured manually are
+ * left untouched).
+ */
+async function revertAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
+  const extensionCfg = vscode.workspace.getConfiguration("extensions");
+  if (context.globalState.get<boolean>(SUPPORT_AGENTS_WINDOW_STATE_KEY)) {
+    const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
+    if (support[EXTENSION_ID]) {
+      const next = { ...support };
+      delete next[EXTENSION_ID];
+      await extensionCfg.update(
+        SUPPORT_AGENTS_WINDOW_SETTING,
+        Object.keys(next).length > 0 ? next : undefined,
+        vscode.ConfigurationTarget.Global,
+      );
+    }
+    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, undefined);
+  }
+
+  if (context.globalState.get<boolean>(AGENTS_BYOK_BRIDGE_STATE_KEY)) {
+    await vscode.workspace
+      .getConfiguration("chat.agentHost")
+      .update(AGENT_HOST_BYOK_ENABLED_SETTING, false, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, undefined);
+  }
 }
 
 async function warmModelPickerMetadata(): Promise<void> {

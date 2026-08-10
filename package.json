@@ -189,7 +189,12 @@
         "opencodego.agentsWindow": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Register separate agent-host providers for the Copilot Agents window. Disable to hide the Agents section entirely. Requires a window reload to take effect."
+          "markdownDescription": "Enable OpenCode models in the VS Code Agents window. On VS Code 1.129+ this enables VS Code's BYOK model bridge (`chat.agentHost.byokModels.enabled`) so OpenCode Go/Zen models run in agent-host sessions; on all versions it also opts the extension in to run in the Agents window process (`extensions.supportAgentsWindow`) so OpenCode Go/Zen appear in the Agents window's '+ Add Models' list. Both core settings are auto-managed (see `#opencodego.autoEnableAgentsWindow#`). Disable to hide the Agents section entirely and revert the auto-managed settings. Requires a window reload to take effect."
+        },
+        "opencodego.autoEnableAgentsWindow": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When `#opencodego.agentsWindow#` is on, automatically enable the VS Code core settings the Agents window support depends on: `chat.agentHost.byokModels.enabled` (BYOK model bridge, experimental, off by default) and `extensions.supportAgentsWindow: { \"ltmoerdani.opencode-copilot-chat\": true }` (without this the extension is disabled in the Agents window process and its providers, including the '+ Add Models' vendors, are missing). The extension records the values it flips and reverts them when `agentsWindow` is disabled. A window reload is required after the first auto-enable. Disable to manage those settings manually."
         },
         "opencodego.showAgentModelsInManagePanel": {
           "type": "boolean",
