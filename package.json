@@ -285,7 +285,6 @@
       {
         "vendor": "opencodego",
         "displayName": "OpenCode Go",
-        "managementCommand": "opencodego.manage",
         "configuration": {
           "type": "object",
           "required": [
@@ -304,7 +303,6 @@
       {
         "vendor": "opencodezen",
         "displayName": "OpenCode Zen",
-        "managementCommand": "opencodezen.manage",
         "configuration": {
           "type": "object",
           "required": [
@@ -323,13 +321,11 @@
       {
         "vendor": "opencodego-agent",
         "displayName": "OpenCode Go (Agents)",
-        "managementCommand": "opencodego.manage",
         "when": "config.opencodego.showAgentModelsInManagePanel"
       },
       {
         "vendor": "opencodezen-agent",
         "displayName": "OpenCode Zen (Agents)",
-        "managementCommand": "opencodezen.manage",
         "when": "config.opencodego.showAgentModelsInManagePanel"
       }
     ]
