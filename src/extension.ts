@@ -3198,6 +3198,7 @@ async function convertMessage(
 ): Promise<ConvertedMessageResult> {
   const role = message.role === vscode.LanguageModelChatMessageRole.Assistant ? "assistant" : "user";
   const textParts: string[] = [];
+  const thinkingTextParts: string[] = [];
   const imageParts: OpenAiContentPart[] = [];
   const toolCalls: OpenAiToolCall[] = [];
   const toolResults: ApiMessage[] = [];
@@ -3343,6 +3344,14 @@ async function convertMessage(
       continue;
     }
 
+    if (part instanceof vscode.LanguageModelThinkingPart) {
+      const thinking = thinkingPartText(part);
+      if (thinking) {
+        thinkingTextParts.push(thinking);
+      }
+      continue;
+    }
+
     const text = partToText(part);
     if (text) {
       textParts.push(text);
@@ -3352,6 +3361,14 @@ async function convertMessage(
   // Build content: use multimodal array if images present, otherwise plain string
   const hasImages = imageParts.length > 0;
   const textContent = textParts.join("\n");
+
+  // Thinking parts from the conversation history. Models like DeepSeek V4
+  // (OpenAI-compatible chat-completions) REQUIRE the previously emitted
+  // reasoning_content to be passed back unchanged on multi-turn requests —
+  // omitting it yields HTTP 400 "The reasoning_content in the thinking mode
+  // must be passed back to the API". This also enables cross-turn reasoning
+  // continuity for other families (Kimi, GLM, Qwen, MiniMax, Gemini).
+  const thinkingText = thinkingTextParts.length ? thinkingTextParts.join("\n").trim() : undefined;
 
   let content: string | null | OpenAiContentPart[] = textContent;
   if (hasImages) {
@@ -3383,7 +3400,9 @@ async function convertMessage(
       {
         role,
         content: typeof content === "string" ? content || null : content,
-        reasoning_content: shouldOmitReasoningEcho ? undefined : reasoningForToolCalls(toolCalls, reasoningContentByToolCallId),
+        reasoning_content: shouldOmitReasoningEcho
+          ? undefined
+          : (reasoningForToolCalls(toolCalls, reasoningContentByToolCallId) ?? thinkingText),
         tool_calls: toolCalls,
       },
     ]);
@@ -3391,6 +3410,16 @@ async function convertMessage(
 
   if (toolResults.length) {
     return finish(content ? [{ role, content }, ...toolResults] : toolResults);
+  }
+
+  if (role === "assistant") {
+    return finish([
+      {
+        role,
+        content: typeof content === "string" ? content || null : content,
+        reasoning_content: shouldEchoThinkingHistory(rawModelId) ? thinkingText : undefined,
+      },
+    ]);
   }
 
   return finish([{ role, content }]);
@@ -3420,6 +3449,46 @@ function reasoningForToolCalls(toolCalls: OpenAiToolCall[], reasoningContentByTo
     .filter((value): value is string => Boolean(value?.trim()));
 
   return reasoning.length ? reasoning.join("\n") : undefined;
+}
+
+/**
+ * Extract the raw thinking text from a history `LanguageModelThinkingPart`.
+ * `LanguageModelThinkingPart` is a proposed VS Code API available at runtime
+ * on all hosts we target (^1.125.0); `partToText` intentionally ignores it so
+ * the thinking text never leaks into the visible assistant `content`.
+ */
+function thinkingPartText(part: unknown): string {
+  if (!(part instanceof vscode.LanguageModelThinkingPart)) {
+    return "";
+  }
+  const value: string | string[] = part.value;
+  return Array.isArray(value) ? value.filter((chunk): chunk is string => typeof chunk === "string").join("\n") : value;
+}
+
+/**
+ * Whether the CURRENT model accepts `reasoning_content` echoed on assistant
+ * history messages.
+ *
+ * CONTRACT:
+ * - DeepSeek V4 (and other OpenAI-compatible reasoning models) REQUIRE the
+ *   previous `reasoning_content` to be passed back unchanged on multi-turn
+ *   requests; omitting it 400s (upstream DeepSeek V4 issue #36354, same class
+ *   of error as MiMo's validator in issue #38).
+ * - Gemini maps it to `thought: true` parts and needs the echo too.
+ * - GLM / Kimi / Qwen / MiniMax tolerate the echo (see processAssistantMessage
+ *   CONTRACT above) and benefit from cross-turn reasoning continuity.
+ * - Excluded families reject or ignore the field:
+ *   - MiMo: strict Pydantic-style validator rejects `reasoning_content` (issue #38).
+ *   - GPT: OpenAI Responses API — messages carry no `reasoning_content` field.
+ *   - Claude: Anthropic Messages API — no `reasoning_content` field.
+ * - Unknown families are left untouched (no echo).
+ */
+function shouldEchoThinkingHistory(rawModelId: string | undefined): boolean {
+  if (rawModelId === undefined) return false;
+  if (/^mimo-/i.test(rawModelId)) return false;
+  if (/^gpt-/i.test(rawModelId)) return false;
+  if (/^claude-/i.test(rawModelId)) return false;
+  return thinkingFamily(rawModelId) !== null || /^gemini-/i.test(rawModelId);
 }
 
 function messageText(message: vscode.LanguageModelChatRequestMessage): string {
