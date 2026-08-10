@@ -46,6 +46,7 @@ import {
 } from "./providerTypes";
 import { isInternalDataPart } from "./chatParts";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
+import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
 import { providerModelDisplayName } from "./modelNames";
 import { buildStableModelCapabilities } from "./modelCapabilities";
 import { calculateModelLimits, type ModelLimits } from "./modelLimits";
@@ -2020,11 +2021,25 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const convertedMessages = await Promise.all(
       messages.map((message) => convertMessage(message, this.reasoningContentByToolCallId, rawModelId)),
     );
-    const apiMessages = normalizeMessages(convertedMessages.flatMap((result) => result.messages));
     const normalizedImageCount = convertedMessages.map((result) => result.normalizedImageCount).reduce((total, count) => total + count, 0);
     if (normalizedImageCount > 0) {
       this.log(`[vision] Normalized ${normalizedImageCount} image attachment(s) to provider-safe dimensions/encoding.`);
     }
+
+    // Flatten the converted messages, tracking which original message produced
+    // each apiMessage. The vision proxy returns per-message descriptions keyed
+    // by the original message index, so this mapping lets us apply the correct
+    // description to the right apiMessage (convertMessage can emit several
+    // messages per input — e.g. tool results — which shifts indices).
+    const flatMessages: ApiMessage[] = [];
+    const flatSourceIndex: number[] = [];
+    for (let i = 0; i < convertedMessages.length; i++) {
+      for (const msg of convertedMessages[i].messages) {
+        flatMessages.push(msg);
+        flatSourceIndex.push(i);
+      }
+    }
+
     const baseSettings = getSettings();
     // Apply per-request Thinking selection (from Copilot Chat submenu) on top
     // of the workspace default. The override only affects the current model
@@ -2040,35 +2055,48 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const metadata = this.resolveModelMetadata(rawModelId, metadataSnapshot);
     const routing = resolveModelRouting(rawModelId, this.definition);
 
-    const hasImageInput = messagesHaveImages(apiMessages);
+    // `hasImageInput` is computed from the flattened (pre-normalize) messages:
+    // normalization never creates or drops image parts, so this matches the
+    // previous `messagesHaveImages(apiMessages)` result.
+    const hasImageInput = messagesHaveImages(flatMessages);
     const actuallySupportsVision = metadata.supportsVision; // cached before capabilities override
 
     // Vision proxy: when a text-only model receives images, relay them
     // through a configured vision-capable Copilot model, then replace
-    // the image parts with the text description.
+    // the image parts with the text description. Descriptions are cached
+    // per image (`imageDescriptionCache`), so already-described images are
+    // reused on future turns without calling the vision model again.
     const visionProxyModelId = isVisionProxyEnabled() ? this.context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "") || "" : "";
     if (hasImageInput && !actuallySupportsVision && visionProxyModelId) {
       const visionProxyPrompt = this.context.globalState.get<string>(VISION_PROXY_PROMPT_KEY, "") || DEFAULT_VISION_PROXY_PROMPT;
+      // When `opencodego.visionProxyWholeConversation` is on, describe the whole
+      // conversation instead of only the message with a new image, so descriptions
+      // keep conversation context (at the cost of more tokens).
+      const describeWholeConversation = vscode.workspace.getConfiguration("opencodego").get<boolean>("visionProxyWholeConversation", false);
       let imagesHandled = false;
       try {
-        this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}`);
-        const description = await proxyVision(messages, visionProxyModelId, visionProxyPrompt, token);
-        if (description) {
-          for (let i = 0; i < apiMessages.length; i++) {
-            const msg = apiMessages[i];
+        this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}${describeWholeConversation ? " (whole conversation)" : ""}`);
+        const { descriptions, cacheHits, cacheMisses } = await proxyVision(messages, visionProxyModelId, visionProxyPrompt, describeWholeConversation, token);
+        if (descriptions.size > 0) {
+          const fallbackDescription = descriptions.values().next().value ?? "";
+          for (let i = 0; i < flatMessages.length; i++) {
+            const msg = flatMessages[i];
             if (!Array.isArray(msg.content)) continue;
-            if (msg.content.some((p) => p.type === "image_url")) {
-              const textParts = msg.content
-                .filter((p): p is OpenAiContentPart & { text: string } => p.type === "text" && typeof p.text === "string")
-                .map((p) => p.text);
-              msg.content = [{ type: "text", text: `[Image described by vision proxy]: ${description}` }];
-              if (textParts.length > 0) {
-                msg.content.push({ type: "text", text: textParts.join("\n") });
-              }
-              imagesHandled = true;
+            if (!msg.content.some((p) => p.type === "image_url")) continue;
+            const textParts = msg.content
+              .filter((p): p is OpenAiContentPart & { text: string } => p.type === "text" && typeof p.text === "string")
+              .map((p) => p.text);
+            // Tool-result images are not described by the proxy, so they fall
+            // back to the first available description (matching the previous
+            // single-description behavior).
+            const description = descriptions.get(flatSourceIndex[i]) ?? fallbackDescription;
+            msg.content = [{ type: "text", text: `[Image described by vision proxy]: ${description}` }];
+            if (textParts.length > 0) {
+              msg.content.push({ type: "text", text: textParts.join("\n") });
             }
+            imagesHandled = true;
           }
-          this.log(`[vision-proxy] Replaced images using vision proxy model`);
+          this.log(`[vision-proxy] Replaced images using vision proxy model (${cacheHits} from cache, ${cacheMisses} newly described)`);
         }
       } catch (err) {
         this.log(`[vision-proxy] Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -2078,8 +2106,8 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       // model not found), strip them anyway so the non-vision model
       // doesn't receive image data it can't process (fixes 400 errors).
       if (!imagesHandled) {
-        for (let i = 0; i < apiMessages.length; i++) {
-          const msg = apiMessages[i];
+        for (let i = 0; i < flatMessages.length; i++) {
+          const msg = flatMessages[i];
           if (!Array.isArray(msg.content)) continue;
           if (msg.content.some((p) => p.type === "image_url")) {
             const textParts = msg.content
@@ -2094,6 +2122,8 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         this.log(`[vision-proxy] Stripped images (proxy unavailable), prevented 400`);
       }
     }
+
+    const apiMessages = normalizeMessages(flatMessages);
 
     // Trim old images from conversation history to bound cumulative payload
     // weight. MCP screenshot loops (chrome-devtools-mcp, playwright-mcp) can
@@ -3798,60 +3828,79 @@ function isFreeModel(modelId: string): boolean {
   return FREE_ZEN_MODEL_IDS.has(modelId) || modelId.endsWith("-free");
 }
 
-/**
- * Vision proxy: relay image messages through a vision-capable Copilot model
- * and return the text description. This lets text-only models "see" images
- * transparently (issue #74).
- */
-async function proxyVision(
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
-  visionModelId: string,
-  visionPrompt: string,
-  token: vscode.CancellationToken,
-): Promise<string | undefined> {
-  // Find the vision model by trying several matching strategies:
-  // 1. Exact id match (full internal model id)
-  // 2. Vendor:id partial (e.g. "opencodego:mimo-v2.5")
-  // 3. Name or id substring (e.g. "mimo-v2.5" or "Mimo V2.5")
-  // Filter out agent-host variants — they use a different transport and
-  // don't have vision support. Prefer non-agent models.
-  const nonAgent = (models: readonly vscode.LanguageModelChat[]) => models.filter((m) => !m.id.includes("-agent:"));
+/** Result of a vision-proxy pass: per-message descriptions plus cache stats. */
+type VisionProxyResult = {
+  /** Original message index → text description (only for messages with images). */
+  descriptions: ReadonlyMap<number, string>;
+  /** Messages whose images were already cached — no vision model request was made. */
+  cacheHits: number;
+  /** Messages that required a new vision-model request. */
+  cacheMisses: number;
+};
 
-  let visionModels = nonAgent(await vscode.lm.selectChatModels({ id: visionModelId }));
-  if (!visionModels || visionModels.length === 0) {
-    // Try matching by name substring across all providers
-    const allVisible = nonAgent(await vscode.lm.selectChatModels({}));
-    visionModels = allVisible.filter(
-      (m) =>
-        m.id.toLowerCase().includes(visionModelId.toLowerCase()) ||
-        m.name.toLowerCase().includes(visionModelId.toLowerCase()) ||
-        m.family.toLowerCase().includes(visionModelId.toLowerCase()),
+/**
+ * Collect the parts of a single message that the vision proxy should see:
+ * image parts plus text parts, dropping tool parts.
+ */
+function collectRequestParts(
+  msg: vscode.LanguageModelChatRequestMessage,
+): Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> {
+  const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
+  for (const part of msg.content) {
+    if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
+      parts.push(part);
+    } else if (part instanceof vscode.LanguageModelTextPart) {
+      parts.push(part);
+    } else if (typeof part === "object" && part !== null && "value" in part) {
+      const valuePart = part as { value: unknown };
+      parts.push(new vscode.LanguageModelTextPart(String(valuePart.value)));
+    }
+  }
+  return parts;
+}
+
+/**
+ * Build a vision-model request for a single message: keep its image parts and
+ * text parts (dropping tool parts), then append the vision prompt. This lets
+ * the proxy describe ONLY the message that contains a new image, instead of
+ * re-sending the whole conversation on every turn.
+ */
+function buildVisionRequestMessage(
+  msg: vscode.LanguageModelChatRequestMessage,
+  visionPrompt: string,
+): vscode.LanguageModelChatMessage[] {
+  const requestMessages: vscode.LanguageModelChatMessage[] = [];
+  const parts = collectRequestParts(msg);
+  if (parts.length > 0) {
+    requestMessages.push(
+      new vscode.LanguageModelChatMessage(
+        msg.role === vscode.LanguageModelChatMessageRole.Assistant
+          ? vscode.LanguageModelChatMessageRole.Assistant
+          : vscode.LanguageModelChatMessageRole.User,
+        parts,
+      ),
     );
   }
-  if (!visionModels || visionModels.length === 0) {
-    throw new Error(`Vision model "${visionModelId}" not found. ` + `Run "OpenCode Go: Configure Vision Proxy" to see available models.`);
+  // Append the vision prompt
+  if (visionPrompt) {
+    requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
   }
+  return requestMessages;
+}
 
-  // All models that matched are candidates. `selectChatModels` returns
-  // `LanguageModelChat` which does not expose capabilities in the stable
-  // API, so we just use the first match. Most vision models handle image
-  // input gracefully — models without vision will report the error.
-  const model = visionModels[0];
-
-  // Build a request preserving images and text from the original messages
+/**
+ * Build a vision-model request over the WHOLE conversation: keep image and
+ * text parts from every message (dropping tool parts), then append the vision
+ * prompt. Used when `opencodego.visionProxyWholeConversation` is enabled, so
+ * descriptions carry full conversation context (at the cost of more tokens).
+ */
+function buildWholeConversationRequest(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  visionPrompt: string,
+): vscode.LanguageModelChatMessage[] {
   const requestMessages: vscode.LanguageModelChatMessage[] = [];
   for (const msg of messages) {
-    const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
-    for (const part of msg.content) {
-      if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
-        parts.push(part);
-      } else if (part instanceof vscode.LanguageModelTextPart) {
-        parts.push(part);
-      } else if (typeof part === "object" && part !== null && "value" in part) {
-        const valuePart = part as { value: unknown };
-        parts.push(new vscode.LanguageModelTextPart(String(valuePart.value)));
-      }
-    }
+    const parts = collectRequestParts(msg);
     if (parts.length > 0) {
       requestMessages.push(
         new vscode.LanguageModelChatMessage(
@@ -3863,18 +3912,149 @@ async function proxyVision(
       );
     }
   }
-
   // Append the vision prompt
   if (visionPrompt) {
     requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
   }
+  return requestMessages;
+}
 
-  const response = await model.sendRequest(requestMessages, {}, token);
-  let fullDescription = "";
-  for await (const part of response.text) {
-    fullDescription += part;
+/**
+ * Vision proxy: relay image messages through a vision-capable Copilot model
+ * and return the text description. This lets text-only models "see" images
+ * transparently (issue #74).
+ *
+ * By default (`describeWholeConversation` false), descriptions are cached per
+ * image (`imageDescriptionCache`). A message whose images are ALL already
+ * cached is reused without contacting the vision model; only messages that
+ * contain at least one new image trigger a `sendRequest()` - for that single
+ * message + prompt - and the result is stored in the cache for future turns.
+ *
+ * When `describeWholeConversation` is true (setting
+ * `opencodego.visionProxyWholeConversation`), the proxy sends ONE request over
+ * the whole conversation so descriptions keep full context; the combined
+ * description is still stored under every image hash.
+ */
+async function proxyVision(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  visionModelId: string,
+  visionPrompt: string,
+  describeWholeConversation: boolean,
+  token: vscode.CancellationToken,
+): Promise<VisionProxyResult> {
+  const descriptions = new Map<number, string>();
+  let cacheHits = 0;
+  let cacheMisses = 0;
+
+  // Find the vision model lazily — only when a message actually needs a new
+  // description. When every image is already cached we never call
+  // `vscode.lm.selectChatModels()` or `model.sendRequest()`.
+  let visionModel: vscode.LanguageModelChat | undefined;
+  const resolveVisionModel = async (): Promise<vscode.LanguageModelChat> => {
+    if (visionModel) {
+      return visionModel;
+    }
+    // Matching strategies:
+    // 1. Exact id match (full internal model id)
+    // 2. Vendor:id partial (e.g. "opencodego:mimo-v2.5")
+    // 3. Name or id substring (e.g. "mimo-v2.5" or "Mimo V2.5")
+    // Filter out agent-host variants — they use a different transport and
+    // don't have vision support. Prefer non-agent models.
+    const nonAgent = (models: readonly vscode.LanguageModelChat[]) => models.filter((m) => !m.id.includes("-agent:"));
+
+    let visionModels = nonAgent(await vscode.lm.selectChatModels({ id: visionModelId }));
+    if (!visionModels || visionModels.length === 0) {
+      // Try matching by name substring across all providers
+      const allVisible = nonAgent(await vscode.lm.selectChatModels({}));
+      visionModels = allVisible.filter(
+        (m) =>
+          m.id.toLowerCase().includes(visionModelId.toLowerCase()) ||
+          m.name.toLowerCase().includes(visionModelId.toLowerCase()) ||
+          m.family.toLowerCase().includes(visionModelId.toLowerCase()),
+      );
+    }
+    if (!visionModels || visionModels.length === 0) {
+      throw new Error(`Vision model "${visionModelId}" not found. ` + `Run "OpenCode Go: Configure Vision Proxy" to see available models.`);
+    }
+
+    // All models that matched are candidates. `selectChatModels` returns
+    // `LanguageModelChat` which does not expose capabilities in the stable
+    // API, so we just use the first match. Most vision models handle image
+    // input gracefully — models without vision will report the error.
+    visionModel = visionModels[0];
+    return visionModel;
+  };
+
+  // Whole-conversation mode (opencodego.visionProxyWholeConversation): one
+  // request over all messages, so descriptions carry full conversation context.
+  if (describeWholeConversation) {
+    const imageIndices: number[] = [];
+    const allHashes: string[] = [];
+    for (let index = 0; index < messages.length; index++) {
+      const msg = messages[index];
+      const imageParts = msg.content.filter(
+        (part): part is vscode.LanguageModelDataPart =>
+          part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+      );
+      if (imageParts.length === 0) {
+        continue;
+      }
+      imageIndices.push(index);
+      allHashes.push(...imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data))));
+    }
+    if (imageIndices.length > 0) {
+      cacheMisses++;
+      const model = await resolveVisionModel();
+      const response = await model.sendRequest(buildWholeConversationRequest(messages, visionPrompt), {}, token);
+      let fullDescription = "";
+      for await (const part of response.text) {
+        fullDescription += part;
+      }
+      if (fullDescription) {
+        storeImageDescriptions(allHashes, fullDescription);
+        for (const index of imageIndices) {
+          descriptions.set(index, fullDescription);
+        }
+      }
+    }
+    return { descriptions, cacheHits, cacheMisses };
   }
-  return fullDescription.length > 0 ? fullDescription : undefined;
+
+  for (let index = 0; index < messages.length; index++) {
+    const msg = messages[index];
+    const imageParts = msg.content.filter(
+      (part): part is vscode.LanguageModelDataPart =>
+        part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+    );
+    if (imageParts.length === 0) {
+      continue;
+    }
+    const hashes = imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data)));
+
+    // All images already described → reuse the cached text, no model request.
+    const cachedDescription = lookupImageDescriptions(hashes);
+    if (cachedDescription !== undefined) {
+      cacheHits++;
+      descriptions.set(index, cachedDescription);
+      continue;
+    }
+
+    // At least one new image → describe only this message and cache the result.
+    cacheMisses++;
+    const model = await resolveVisionModel();
+    const response = await model.sendRequest(buildVisionRequestMessage(msg, visionPrompt), {}, token);
+    let fullDescription = "";
+    for await (const part of response.text) {
+      fullDescription += part;
+    }
+    if (!fullDescription) {
+      continue;
+    }
+    storeImageDescriptions(hashes, fullDescription);
+    descriptions.set(index, fullDescription);
+  }
+
+  return { descriptions, cacheHits, cacheMisses };
 }
 
 // ---------------------------------------------------------------------------
