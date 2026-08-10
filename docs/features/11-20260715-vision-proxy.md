@@ -79,6 +79,20 @@ Storage keys (in extension `globalState`):
 - `opencodego.visionProxyModelId` — target Copilot model ID (e.g. `copilot:gpt-5.5`)
 - `opencodego.visionProxyPrompt` — description instruction sent to the vision model
 
+### Description Cache & Whole-Conversation Mode
+
+Descriptions produced by the proxy are cached per image (SHA-256 of its bytes), so
+images already described in earlier turns are reused without calling the vision model
+again - saving Copilot quota and latency in multi-turn conversations (issue #119).
+
+A boolean setting controls how much context each description gets:
+
+- `opencodego.visionProxyWholeConversation` (default `false`). Off: the proxy
+  describes only the message that contains a new image and reuses cached
+  descriptions, keeping token usage low. On: the proxy sends the whole
+  conversation to the vision model so descriptions carry full context, at the
+  cost of more tokens. Descriptions are still cached in both modes.
+
 ### Graceful Fallback
 
 If the proxy fails (model not found, API error, empty description), images are stripped with a placeholder `[Image unavailable — vision proxy unavailable]` instead of forwarding raw image data to a text-only model (which would 400). Original text parts are preserved.

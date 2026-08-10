@@ -2069,10 +2069,14 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const visionProxyModelId = isVisionProxyEnabled() ? this.context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "") || "" : "";
     if (hasImageInput && !actuallySupportsVision && visionProxyModelId) {
       const visionProxyPrompt = this.context.globalState.get<string>(VISION_PROXY_PROMPT_KEY, "") || DEFAULT_VISION_PROXY_PROMPT;
+      // When `opencodego.visionProxyWholeConversation` is on, describe the whole
+      // conversation instead of only the message with a new image, so descriptions
+      // keep conversation context (at the cost of more tokens).
+      const describeWholeConversation = vscode.workspace.getConfiguration("opencodego").get<boolean>("visionProxyWholeConversation", false);
       let imagesHandled = false;
       try {
-        this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}`);
-        const { descriptions, cacheHits, cacheMisses } = await proxyVision(messages, visionProxyModelId, visionProxyPrompt, token);
+        this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}${describeWholeConversation ? " (whole conversation)" : ""}`);
+        const { descriptions, cacheHits, cacheMisses } = await proxyVision(messages, visionProxyModelId, visionProxyPrompt, describeWholeConversation, token);
         if (descriptions.size > 0) {
           const fallbackDescription = descriptions.values().next().value ?? "";
           for (let i = 0; i < flatMessages.length; i++) {
@@ -3835,15 +3839,12 @@ type VisionProxyResult = {
 };
 
 /**
- * Build a vision-model request for a single message: keep its image parts and
- * text parts (dropping tool parts), then append the vision prompt. This lets
- * the proxy describe ONLY the message that contains a new image, instead of
- * re-sending the whole conversation on every turn.
+ * Collect the parts of a single message that the vision proxy should see:
+ * image parts plus text parts, dropping tool parts.
  */
-function buildVisionRequestMessage(
+function collectRequestParts(
   msg: vscode.LanguageModelChatRequestMessage,
-  visionPrompt: string,
-): vscode.LanguageModelChatMessage[] {
+): Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> {
   const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
   for (const part of msg.content) {
     if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
@@ -3855,7 +3856,21 @@ function buildVisionRequestMessage(
       parts.push(new vscode.LanguageModelTextPart(String(valuePart.value)));
     }
   }
+  return parts;
+}
+
+/**
+ * Build a vision-model request for a single message: keep its image parts and
+ * text parts (dropping tool parts), then append the vision prompt. This lets
+ * the proxy describe ONLY the message that contains a new image, instead of
+ * re-sending the whole conversation on every turn.
+ */
+function buildVisionRequestMessage(
+  msg: vscode.LanguageModelChatRequestMessage,
+  visionPrompt: string,
+): vscode.LanguageModelChatMessage[] {
   const requestMessages: vscode.LanguageModelChatMessage[] = [];
+  const parts = collectRequestParts(msg);
   if (parts.length > 0) {
     requestMessages.push(
       new vscode.LanguageModelChatMessage(
@@ -3874,20 +3889,57 @@ function buildVisionRequestMessage(
 }
 
 /**
+ * Build a vision-model request over the WHOLE conversation: keep image and
+ * text parts from every message (dropping tool parts), then append the vision
+ * prompt. Used when `opencodego.visionProxyWholeConversation` is enabled, so
+ * descriptions carry full conversation context (at the cost of more tokens).
+ */
+function buildWholeConversationRequest(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  visionPrompt: string,
+): vscode.LanguageModelChatMessage[] {
+  const requestMessages: vscode.LanguageModelChatMessage[] = [];
+  for (const msg of messages) {
+    const parts = collectRequestParts(msg);
+    if (parts.length > 0) {
+      requestMessages.push(
+        new vscode.LanguageModelChatMessage(
+          msg.role === vscode.LanguageModelChatMessageRole.Assistant
+            ? vscode.LanguageModelChatMessageRole.Assistant
+            : vscode.LanguageModelChatMessageRole.User,
+          parts,
+        ),
+      );
+    }
+  }
+  // Append the vision prompt
+  if (visionPrompt) {
+    requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
+  }
+  return requestMessages;
+}
+
+/**
  * Vision proxy: relay image messages through a vision-capable Copilot model
  * and return the text description. This lets text-only models "see" images
  * transparently (issue #74).
  *
- * Descriptions are cached per image (`imageDescriptionCache`). On each call,
- * a message whose images are ALL already cached is reused without contacting
- * the vision model; only messages that contain at least one new image trigger a
- * `sendRequest()` — for that single message + prompt — and the result is stored
- * in the cache for future turns.
+ * By default (`describeWholeConversation` false), descriptions are cached per
+ * image (`imageDescriptionCache`). A message whose images are ALL already
+ * cached is reused without contacting the vision model; only messages that
+ * contain at least one new image trigger a `sendRequest()` - for that single
+ * message + prompt - and the result is stored in the cache for future turns.
+ *
+ * When `describeWholeConversation` is true (setting
+ * `opencodego.visionProxyWholeConversation`), the proxy sends ONE request over
+ * the whole conversation so descriptions keep full context; the combined
+ * description is still stored under every image hash.
  */
 async function proxyVision(
   messages: readonly vscode.LanguageModelChatRequestMessage[],
   visionModelId: string,
   visionPrompt: string,
+  describeWholeConversation: boolean,
   token: vscode.CancellationToken,
 ): Promise<VisionProxyResult> {
   const descriptions = new Map<number, string>();
@@ -3932,6 +3984,41 @@ async function proxyVision(
     visionModel = visionModels[0];
     return visionModel;
   };
+
+  // Whole-conversation mode (opencodego.visionProxyWholeConversation): one
+  // request over all messages, so descriptions carry full conversation context.
+  if (describeWholeConversation) {
+    const imageIndices: number[] = [];
+    const allHashes: string[] = [];
+    for (let index = 0; index < messages.length; index++) {
+      const msg = messages[index];
+      const imageParts = msg.content.filter(
+        (part): part is vscode.LanguageModelDataPart =>
+          part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+      );
+      if (imageParts.length === 0) {
+        continue;
+      }
+      imageIndices.push(index);
+      allHashes.push(...imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data))));
+    }
+    if (imageIndices.length > 0) {
+      cacheMisses++;
+      const model = await resolveVisionModel();
+      const response = await model.sendRequest(buildWholeConversationRequest(messages, visionPrompt), {}, token);
+      let fullDescription = "";
+      for await (const part of response.text) {
+        fullDescription += part;
+      }
+      if (fullDescription) {
+        storeImageDescriptions(allHashes, fullDescription);
+        for (const index of imageIndices) {
+          descriptions.set(index, fullDescription);
+        }
+      }
+    }
+    return { descriptions, cacheHits, cacheMisses };
+  }
 
   for (let index = 0; index < messages.length; index++) {
     const msg = messages[index];

@@ -339,6 +339,7 @@ Provider diagnostics also include the VS Code/extension versions, extension host
 | `opencodego.streamIdleTimeoutSeconds`     | `120`    | Cancel if stream goes idle                                                       |
 | `opencodego.showUsageStatusBar`           | `true`   | Show usage summary in status bar                                                 |
 | `opencodego.showProviderPrefix`           | `true`   | Include `OpenCode Go` / `OpenCode Zen` in model names                            |
+| `opencodego.visionProxyWholeConversation` | `false`  | Vision proxy: describe the whole conversation instead of only the message with a new image (more context, more tokens) |
 | `opencodego.freeOnly`                     | `true`   | Zen: free models only. `false` = include paid                                    |
 | `opencodego.agentsWindow`                 | `true`   | Expose agent-host model variants (`targetChatSessionType`) for the Agents window |
 | `opencodego.showAgentModelsInManagePanel` | `false`  | Show agent vendors in Manage Language Models panel                               |

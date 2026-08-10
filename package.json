@@ -176,6 +176,11 @@
           "default": true,
           "description": "Show the OpenCode Go or OpenCode Zen provider prefix in model names."
         },
+        "opencodego.visionProxyWholeConversation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Off (default): describe only the message with a new image and reuse cached image descriptions to save quota. On: describe the whole conversation for richer context (uses more tokens; descriptions are still cached)."
+        },
         "opencodego.freeOnly": {
           "type": "boolean",
           "default": true,
