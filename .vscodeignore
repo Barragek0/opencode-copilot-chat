@@ -1,7 +1,7 @@
 .gitignore
 .github/**
 .husky/**
-.markdownlint.json
+.markdownlint-cli2.jsonc
 .prettierrc.json
 .vscode/**
 .vscode-test/**
