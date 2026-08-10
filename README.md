@@ -305,6 +305,23 @@ To manage agent API keys separately or see agent vendors in the Manage panel, en
 "opencodego.showAgentModelsInManagePanel": true
 ```
 
+#### ❌ Removing a provider from Language Models
+
+Like deleting a provider in GitHub Copilot's Manage Language Models, you can
+remove **OpenCode Go** or **OpenCode Zen** from the Language Models list and
+every model picker:
+
+- **Command Palette** — `OpenCode Go: Remove/Re-add Provider in Language
+Models` (same for Zen), or use **Manage Provider → Remove from Language
+  Models**.
+- **Settings** — set `opencodego.enabled` / `opencodezen.enabled` to `false`.
+
+The provider's vendor row and models disappear from the Manage Language
+Models view, the `+ Add Models` list, the Chat picker, and the Agents window.
+Your API key and BYOK group settings are kept, so re-enabling (or the
+`Re-add to Language Models` action) restores everything. A window reload is
+required after toggling.
+
 ### 🛠️ Smart Routing & Reliability
 
 - **Native endpoint routing** per family (see [Models](#-models) table)

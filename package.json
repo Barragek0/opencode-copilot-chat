@@ -71,6 +71,10 @@
         "title": "OpenCode Go: Set API Key"
       },
       {
+        "command": "opencodego.toggleProvider",
+        "title": "OpenCode Go: Remove/Re-add Provider in Language Models"
+      },
+      {
         "command": "opencodego.refreshModels",
         "title": "OpenCode Go: Refresh Models"
       },
@@ -89,6 +93,10 @@
       {
         "command": "opencodezen.manage",
         "title": "OpenCode Zen: Manage Provider"
+      },
+      {
+        "command": "opencodezen.toggleProvider",
+        "title": "OpenCode Zen: Remove/Re-add Provider in Language Models"
       },
       {
         "command": "opencodezen.refreshModels",
@@ -185,6 +193,16 @@
           "type": "boolean",
           "default": true,
           "description": "When enabled, only free OpenCode Zen models are shown in the Copilot model selector. Disable to include paid Zen models as well."
+        },
+        "opencodego.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Register the OpenCode Go provider. Set to `false` to remove OpenCode Go from the Language Models list and all model pickers (like deleting the provider in GitHub Copilot's Manage Language Models). Models you previously configured stay in your language-models config so they come back if you re-enable. Requires a window reload to take effect."
+        },
+        "opencodezen.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Register the OpenCode Zen provider. Set to `false` to remove OpenCode Zen from the Language Models list and all model pickers (like deleting the provider in GitHub Copilot's Manage Language Models). Models you previously configured stay in your language-models config so they come back if you re-enable. Requires a window reload to take effect."
         },
         "opencodego.agentsWindow": {
           "type": "boolean",
@@ -290,6 +308,7 @@
       {
         "vendor": "opencodego",
         "displayName": "OpenCode Go",
+        "when": "config.opencodego.enabled",
         "configuration": {
           "type": "object",
           "required": [
@@ -308,6 +327,7 @@
       {
         "vendor": "opencodezen",
         "displayName": "OpenCode Zen",
+        "when": "config.opencodezen.enabled",
         "configuration": {
           "type": "object",
           "required": [

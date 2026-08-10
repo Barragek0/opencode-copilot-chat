@@ -718,21 +718,31 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
+  const opencodeCfg = vscode.workspace.getConfiguration("opencodego");
+  const goProviderEnabled = opencodeCfg.get<boolean>("enabled", true);
+  const zenProviderEnabled = opencodeCfg.get<boolean>("opencodezen.enabled", true);
   const goProvider = new OpenCodeProvider(context, PROVIDERS[GO_VENDOR]);
   const zenProvider = new OpenCodeProvider(context, PROVIDERS[ZEN_VENDOR]);
   const modelInfoProviders: OpenCodeProvider[] = [goProvider, zenProvider];
 
   const subscriptions: vscode.Disposable[] = [
-    vscode.lm.registerLanguageModelChatProvider(GO_VENDOR, goProvider),
-    vscode.lm.registerLanguageModelChatProvider(ZEN_VENDOR, zenProvider),
+    // Register the chat providers only while the matching `opencodego.enabled`
+    // / `opencodezen.enabled` setting is on, so a disabled provider disappears
+    // from the Language Models list and every model picker (its vendor
+    // contribution carries the same `when` clause). The provider instances are
+    // still created so the management commands keep working for re-enabling.
+    ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(GO_VENDOR, goProvider)] : []),
+    ...(zenProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(ZEN_VENDOR, zenProvider)] : []),
     vscode.commands.registerCommand("opencodego.manage", () => goProvider.manage()),
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
     vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
+    vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled("opencodego", "OpenCode Go")),
     vscode.commands.registerCommand("opencodego.configureUtilityModels", () => configureUtilityModels()),
     vscode.commands.registerCommand("opencodezen.diagnostics", () => zenProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodezen.manage", () => zenProvider.manage()),
     vscode.commands.registerCommand("opencodezen.refreshModels", () => zenProvider.refreshModels()),
+    vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled("opencodezen", "OpenCode Zen")),
     vscode.commands.registerCommand("opencodego.modelPickerDiagnostics", () => showModelPickerDiagnostics()),
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => showUsageWebview(context)),
@@ -890,13 +900,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Agent-host providers for the Copilot Agents window (opt-in via config).
   const enableAgents = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
-  if (enableAgents) {
+  if (enableAgents && (goProviderEnabled || zenProviderEnabled)) {
     const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
     const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
     modelInfoProviders.push(agentGoProvider, agentZenProvider);
     subscriptions.push(
-      vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider),
-      vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider),
+      ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider)] : []),
+      ...(zenProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider)] : []),
     );
     // On VS Code 1.129+ the Agents window runs in the agent host process,
     // where extension BYOK models are only reachable through VS Code's BYOK
@@ -940,6 +950,34 @@ async function configureUtilityModels(): Promise<void> {
     "workbench.action.openSettings",
     "@id:chat.byokUtilityModelDefault @id:chat.utilityModel @id:chat.utilitySmallModel",
   );
+}
+
+/**
+ * Toggle whether a provider (`opencodego` / `opencodezen`) is registered at
+ * all. Disabling removes the provider from the Language Models list and every
+ * model picker — the provider's vendor contribution is gated by the same
+ * `when` clause (`config.<vendor>.enabled`) and its runtime registration is
+ * skipped. Previously configured BYOK groups and API keys are kept, so
+ * re-enabling restores the provider exactly as it was.
+ *
+ * Provider registration happens at startup, so a window reload is required
+ * for the change to take effect.
+ */
+async function toggleProviderEnabled(vendor: string, displayName: string): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration(vendor);
+  const current = cfg.get<boolean>("enabled", true);
+  const next = !current;
+  await cfg.update("enabled", next, vscode.ConfigurationTarget.Global);
+
+  const reload = await vscode.window.showInformationMessage(
+    next
+      ? `${displayName} re-enabled. Reload the window for the provider to appear in Language Models again.`
+      : `${displayName} removed from Language Models. Reload the window for it to disappear from the model picker and the manage list. Your API key and group settings are kept.`,
+    "Reload Now",
+  );
+  if (reload === "Reload Now") {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
 }
 
 /**
@@ -1048,8 +1086,12 @@ async function revertAgentsWindowSupport(context: vscode.ExtensionContext): Prom
 }
 
 async function warmModelPickerMetadata(): Promise<void> {
-  const vendors: string[] = [GO_VENDOR, ZEN_VENDOR];
-  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true)) {
+  const cfg = vscode.workspace.getConfiguration("opencodego");
+  const vendors: string[] = [
+    ...(cfg.get<boolean>("enabled", true) ? [GO_VENDOR] : []),
+    ...(cfg.get<boolean>("opencodezen.enabled", true) ? [ZEN_VENDOR] : []),
+  ];
+  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true) && vendors.length > 0) {
     vendors.push(AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
   }
   await Promise.allSettled(vendors.map((v) => vscode.lm.selectChatModels({ vendor: v })));
@@ -1769,13 +1811,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   async manage(): Promise<void> {
-    const apiKey = await this.context.secrets.get(SECRET_KEY);
-
-    if (!apiKey) {
-      await this.setApiKey();
-      return;
-    }
-
+    const providerEnabled = vscode.workspace.getConfiguration(this.definition.vendor).get<boolean>("enabled", true);
     const choice = await vscode.window.showQuickPick(
       [
         { label: "Set API Key", action: "set" as const },
@@ -1784,6 +1820,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         { label: "Refresh Models", action: "refresh" as const },
         { label: "Configure Utility Models", action: "utility" as const },
         { label: "Open Diagnostics", action: "diagnostics" as const },
+        ...(providerEnabled
+          ? [{ label: "Remove from Language Models", action: "remove" as const }]
+          : [{ label: "Re-add to Language Models", action: "remove" as const }]),
       ],
       {
         title: `Manage ${this.definition.displayName}`,
@@ -1792,6 +1831,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     );
 
     if (!choice) {
+      return;
+    }
+
+    if (choice.action === "remove") {
+      await toggleProviderEnabled(this.definition.vendor, this.definition.displayName);
       return;
     }
 
