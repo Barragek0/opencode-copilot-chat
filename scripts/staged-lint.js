@@ -1,0 +1,186 @@
+#!/usr/bin/env node
+// Intelligent pre-commit lint gate.
+//
+// Instead of linting the whole tree on every commit (slow), lint only what a
+// change can actually affect:
+//   - ESLint runs on the staged JS/TS files PLUS their direct dependents
+//     (files that import a staged file), so changing a module can never leave
+//     type-aware errors behind in its consumers.
+//   - markdownlint runs on staged Markdown files.
+//   - editorconfig-checker runs on staged files.
+//   - shellcheck runs on staged .husky scripts.
+//   - Type-checking (tsc -p tsconfig.check.json) and unit tests are
+//     whole-project by nature and only run when src/ or scripts/ changed.
+//
+// Formatting (prettier --write, eslint --fix, markdownlint --fix) is left to
+// lint-staged, which runs after this gate. The full-tree lint (including
+// tests) stays available as `npm run lint` and is enforced in CI.
+
+import { spawnSync } from "node:child_process";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import pc from "picocolors";
+
+const root = path.resolve(import.meta.dirname, "..");
+
+/** @param {string} name @returns {string} */
+const bin = (name) => path.join(root, "node_modules", ".bin", name);
+
+const SRC_DIRS = ["src", "scripts"];
+const TS_EXT = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".mts", ".cts"]);
+const IMPORT_RE = /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'](\.[^"']+)["']/g;
+
+/** @param {string} text @returns {string} */
+function indent(text) {
+  return text
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+}
+
+/** @param {string} cmd @param {string[]} args @returns {{status: number|null, output: string}} */
+function run(cmd, args) {
+  const res = /** @type {import("node:child_process").SpawnSyncReturns<string>} */ (spawnSync(cmd, args, { cwd: root, encoding: "utf8" }));
+  return { status: res.status, output: `${res.stdout}${res.stderr}`.trim() };
+}
+
+/** Staged (added/copied/modified) file paths relative to the repo root. @returns {string[]} */
+function stagedFiles() {
+  const res = run("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACM"]);
+  if (res.status !== 0) {
+    return [];
+  }
+  return res.output.split("\0").filter(Boolean);
+}
+
+/** Every TS/JS source file under src/ and scripts/. @returns {string[]} */
+function collectSourceFiles() {
+  /** @type {string[]} */
+  const out = [];
+  for (const dir of SRC_DIRS) {
+    /** @param {string} dirPath */
+    const walk = (dirPath) => {
+      for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          walk(path.join(dirPath, entry.name));
+        } else if (TS_EXT.has(path.extname(entry.name))) {
+          out.push(path.join(dirPath, entry.name));
+        }
+      }
+    };
+    walk(dir);
+  }
+  return out;
+}
+
+/** Resolve a relative import specifier to an existing file, if any.
+ * @param {string} fromFile
+ * @param {string} spec
+ * @returns {string | undefined}
+ */
+function resolveImport(fromFile, spec) {
+  const base = path.resolve(path.dirname(fromFile), spec);
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    `${base}.mjs`,
+    `${base}.mts`,
+    path.join(base, "index.ts"),
+    path.join(base, "index.js"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      statSync(candidate);
+      return candidate;
+    } catch {
+      // keep trying
+    }
+  }
+  return undefined;
+}
+
+/** resolved file path → set of source files importing it (one level deep). @returns {Map<string, Set<string>>} */
+function buildImporters() {
+  /** @type {Map<string, Set<string>>} */
+  const importers = new Map();
+  for (const file of collectSourceFiles()) {
+    const text = readFileSync(file, "utf8");
+    for (const match of text.matchAll(IMPORT_RE)) {
+      const resolved = resolveImport(file, match[1]);
+      if (!resolved) {
+        continue;
+      }
+      let set = importers.get(resolved);
+      if (!set) {
+        set = new Set();
+        importers.set(resolved, set);
+      }
+      set.add(file);
+    }
+  }
+  return importers;
+}
+
+/**
+ * Files related to the staged ones: their direct dependents within src/ and
+ * scripts/, so changing a module's contract also lints its consumers.
+ * @param {string[]} changedFiles
+ * @returns {string[]}
+ */
+function relatedFiles(changedFiles) {
+  const importers = buildImporters();
+  /** @type {Set<string>} */
+  const related = new Set();
+  for (const file of changedFiles) {
+    for (const importer of importers.get(file) ?? []) {
+      related.add(importer);
+    }
+  }
+  return [...related];
+}
+
+const staged = stagedFiles();
+if (staged.length === 0) {
+  console.log(pc.green("No staged files — nothing to lint."));
+  process.exit(0);
+}
+
+const jsTsFiles = staged.filter((file) => TS_EXT.has(path.extname(file)));
+const mdFiles = staged.filter((file) => file.endsWith(".md"));
+const huskyFiles = staged.filter((file) => file.startsWith(".husky/"));
+const sourceChanged = staged.some((file) => SRC_DIRS.some((dir) => file.startsWith(`${dir}/`)));
+
+const eslintTargets = [...new Set([...jsTsFiles, ...relatedFiles(jsTsFiles)])];
+
+/** @type {Array<{label: string, cmd: string, args: string[], run: boolean}>} */
+const steps = [
+  { label: "ESLint", cmd: bin("eslint"), args: ["--max-warnings", "0", ...eslintTargets], run: eslintTargets.length > 0 },
+  { label: "Markdown", cmd: bin("markdownlint-cli2"), args: ["--config", ".markdownlint-cli2.jsonc", ...mdFiles], run: mdFiles.length > 0 },
+  { label: "Editorconfig", cmd: bin("editorconfig-checker"), args: [...staged], run: true },
+  { label: "Shell", cmd: bin("shellcheck"), args: [...huskyFiles], run: huskyFiles.length > 0 },
+  { label: "TypeScript", cmd: bin("tsc"), args: ["-p", "tsconfig.check.json"], run: sourceChanged },
+  { label: "Tests", cmd: "npm", args: ["test"], run: sourceChanged },
+];
+
+console.log(pc.bold("Lint (staged)"));
+let failed = false;
+for (const step of steps) {
+  if (!step.run) {
+    console.log(`  ${pc.dim("-")} ${step.label} (nothing affected)`);
+    continue;
+  }
+  const { status, output } = run(step.cmd, step.args);
+  if (status === 0) {
+    console.log(`  ${pc.green("✔")} ${step.label}`);
+  } else {
+    failed = true;
+    console.log(`  ${pc.red("✖")} ${step.label}`);
+    if (output) {
+      console.log(indent(output));
+    }
+  }
+}
+console.log(failed ? pc.red("Failed") : pc.green("Passed"));
+process.exit(failed ? 1 : 0);
