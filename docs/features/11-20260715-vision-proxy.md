@@ -8,7 +8,8 @@
 **Merged:** 2026-07-15  
 **Merge commit:** `d2fcbe4` (merge commit, NOT squash)  
 **Commits preserved:** 4 (`69902bb`, `4a36009`, `a17f91e`, `8a0d813`)  
-**Released:** `v0.4.1`
+**Released:** `v0.4.1`  
+**Enhancement (PR #120, 2026-08-10):** description cache + whole-conversation mode (issue #119) — see [`docs/issues/56-20260811-pr120-vision-proxy-description-cache.md`](../issues/56-20260811-pr120-vision-proxy-description-cache.md)
 
 ---
 
@@ -134,7 +135,10 @@ Removed `.show(true)` from the empty-response warning in `streamChatCompletions(
 | Concern                                       | Location                                                               |
 | --------------------------------------------- | ---------------------------------------------------------------------- |
 | Proxy condition + image replacement           | `src/extension.ts` `provideLanguageModelChatResponse()` (~L1818–L1860) |
-| `proxyVision()` function                      | `src/extension.ts` (~L3345)                                            |
+| `proxyVision()` function (cache + whole-conversation) | `src/extension.ts` (~L4178)                                     |
+| Request builders (`collectRequestParts`, `buildVisionRequestMessage`, `buildWholeConversationRequest`) | `src/extension.ts` (L4088 / L4111 / L4137)                     |
+| Image description cache                       | `src/visionProxyCache.ts` (`imageDescriptionKey` L32, `lookupImageDescriptions` L42, `storeImageDescriptions` L63, 200-entry FIFO L25) |
+| `visionProxyWholeConversation` setting read   | `src/extension.ts` (~L2265)                                         |
 | `showVisionProxyPicker()` QuickPick           | `src/extension.ts` (~L3380)                                            |
 | `isVisionProxyEnabled()` + storage keys       | `src/extension.ts` (~L3520)                                            |
 | `modelCapabilities()` proxy override          | `src/extension.ts` (~L3283)                                            |
@@ -214,4 +218,5 @@ Merged via **regular merge commit** (`d2fcbe4`) to preserve all 4 of Wallacy's c
 
 - `docs/features/01-20260514-vision-image-input.md` — native vision support (the foundation this proxy builds on)
 - `docs/issues/08-20260520-vision-image-request-fixes.md` — earlier vision fixes
+- `docs/issues/56-20260811-pr120-vision-proxy-description-cache.md` — PR #120 description cache + whole-conversation mode review & merge
 - `CHANGELOG.md` `[0.4.1]` section
