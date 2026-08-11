@@ -44,6 +44,7 @@ import {
   type AllProviderVendor,
   type ProviderVendor,
 } from "./providerTypes";
+import { providerEnabledSetting } from "./providerEnablement";
 import { isInternalDataPart } from "./chatParts";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
@@ -718,9 +719,11 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
-  const opencodeCfg = vscode.workspace.getConfiguration("opencodego");
-  const goProviderEnabled = opencodeCfg.get<boolean>("enabled", true);
-  const zenProviderEnabled = opencodeCfg.get<boolean>("opencodezen.enabled", true);
+  // Read from the root configuration with the FULL setting key: section-scoped
+  // reads (getConfiguration("opencodego")) resolve keys relative to the
+  // section, which would misread the Zen flag as opencodego.opencodezen.enabled.
+  const goProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true);
+  const zenProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true);
   const goProvider = new OpenCodeProvider(context, PROVIDERS[GO_VENDOR]);
   const zenProvider = new OpenCodeProvider(context, PROVIDERS[ZEN_VENDOR]);
   const modelInfoProviders: OpenCodeProvider[] = [goProvider, zenProvider];
@@ -1086,10 +1089,9 @@ async function revertAgentsWindowSupport(context: vscode.ExtensionContext): Prom
 }
 
 async function warmModelPickerMetadata(): Promise<void> {
-  const cfg = vscode.workspace.getConfiguration("opencodego");
   const vendors: string[] = [
-    ...(cfg.get<boolean>("enabled", true) ? [GO_VENDOR] : []),
-    ...(cfg.get<boolean>("opencodezen.enabled", true) ? [ZEN_VENDOR] : []),
+    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true) ? [GO_VENDOR] : []),
+    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true) ? [ZEN_VENDOR] : []),
   ];
   if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true) && vendors.length > 0) {
     vendors.push(AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
@@ -1811,7 +1813,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   async manage(): Promise<void> {
-    const providerEnabled = vscode.workspace.getConfiguration(this.definition.vendor).get<boolean>("enabled", true);
+    // Read via the base-vendor full key so agent variants (opencodego-agent,
+    // opencodezen-agent) follow the same switch as the vendor they mirror.
+    const providerEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(this.definition.vendor), true);
     const choice = await vscode.window.showQuickPick(
       [
         { label: "Set API Key", action: "set" as const },
@@ -2264,7 +2268,13 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       let imagesHandled = false;
       try {
         this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}${describeWholeConversation ? " (whole conversation)" : ""}`);
-        const { descriptions, cacheHits, cacheMisses } = await proxyVision(messages, visionProxyModelId, visionProxyPrompt, describeWholeConversation, token);
+        const { descriptions, cacheHits, cacheMisses } = await proxyVision(
+          messages,
+          visionProxyModelId,
+          visionProxyPrompt,
+          describeWholeConversation,
+          token,
+        );
         if (descriptions.size > 0) {
           const fallbackDescription = descriptions.values().next().value ?? "";
           for (let i = 0; i < flatMessages.length; i++) {
@@ -4122,10 +4132,7 @@ function collectRequestParts(
  * the proxy describe ONLY the message that contains a new image, instead of
  * re-sending the whole conversation on every turn.
  */
-function buildVisionRequestMessage(
-  msg: vscode.LanguageModelChatRequestMessage,
-  visionPrompt: string,
-): vscode.LanguageModelChatMessage[] {
+function buildVisionRequestMessage(msg: vscode.LanguageModelChatRequestMessage, visionPrompt: string): vscode.LanguageModelChatMessage[] {
   const requestMessages: vscode.LanguageModelChatMessage[] = [];
   const parts = collectRequestParts(msg);
   if (parts.length > 0) {
@@ -4250,8 +4257,7 @@ async function proxyVision(
     for (let index = 0; index < messages.length; index++) {
       const msg = messages[index];
       const imageParts = msg.content.filter(
-        (part): part is vscode.LanguageModelDataPart =>
-          part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+        (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
       );
       if (imageParts.length === 0) {
         continue;
@@ -4280,8 +4286,7 @@ async function proxyVision(
   for (let index = 0; index < messages.length; index++) {
     const msg = messages[index];
     const imageParts = msg.content.filter(
-      (part): part is vscode.LanguageModelDataPart =>
-        part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+      (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
     );
     if (imageParts.length === 0) {
       continue;
