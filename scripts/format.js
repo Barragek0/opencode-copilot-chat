@@ -14,7 +14,7 @@ const bin = (name) => path.join(root, "node_modules", ".bin", name);
 /** @type {Array<{label: string, cmd: string, args: string[]}>} */
 const steps = [
   { label: "ESLint", cmd: bin("eslint"), args: [".", "--fix", "--max-warnings", "0"] },
-  { label: "Prettier", cmd: bin("prettier"), args: ["--write", "--log-level", "warn", "."] },
+  { label: "Prettier", cmd: bin("prettier"), args: ["--write", "--log-level", "warn", ".", "--ignore-path", ".gitignore"] },
 ];
 
 console.log(pc.bold("Format"));

@@ -27,6 +27,7 @@ import {
   thinkingFamily,
   type ThinkingSettings,
 } from "./thinking";
+import { shouldEchoThinkingHistory, thinkingTextFromValue } from "./reasoningHistory";
 import { buildOpenCodeGatewayAuthHeaders } from "./openCodeAuth";
 import {
   streamAnthropicMessages as runStreamAnthropicMessages,
@@ -44,8 +45,10 @@ import {
   type AllProviderVendor,
   type ProviderVendor,
 } from "./providerTypes";
+import { providerEnabledSetting } from "./providerEnablement";
 import { isInternalDataPart } from "./chatParts";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
+import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
 import { providerModelDisplayName } from "./modelNames";
 import { buildStableModelCapabilities } from "./modelCapabilities";
 import { calculateModelLimits, type ModelLimits } from "./modelLimits";
@@ -82,6 +85,28 @@ import {
 const SECRET_KEY = "opencodego.apiKey";
 const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
 const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
+
+/**
+ * VS Code core settings the extension manages (auto-configures and reverts)
+ * so OpenCode models work in the Agents window (issue #122):
+ *
+ * - `chat.agentHost.byokModels.enabled`: wires the agent-host BYOK bridge
+ *   (VS Code 1.129+); off by default, so extension-provided BYOK models never
+ *   reach agent-host sessions until it is flipped on.
+ * - `extensions.supportAgentsWindow.<id>`: the ONLY way a code extension is
+ *   allowed to run in the Agents window (sessions window) process. Without
+ *   it the extension is disabled there, its `languageModelChatProviders`
+ *   vendors are not registered, and neither the model picker nor the
+ *   "+ Add Models" list knows OpenCode Go/Zen.
+ */
+const AGENT_HOST_BYOK_ENABLED_SETTING = "byokModels.enabled";
+const SUPPORT_AGENTS_WINDOW_SETTING = "supportAgentsWindow";
+const EXTENSION_ID = "ltmoerdani.opencode-copilot-chat";
+/** How many VS Code versions old the agent-host BYOK bridge goes back to. */
+const AGENT_HOST_BYOK_MINOR_VERSION = 129;
+/** globalState keys tracking that the extension enabled each setting itself. */
+const AGENTS_BYOK_BRIDGE_STATE_KEY = "opencode.agentsByokBridge.v1";
+const SUPPORT_AGENTS_WINDOW_STATE_KEY = "opencode.supportAgentsWindow.v1";
 
 let usageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
@@ -723,21 +748,33 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
+  // Read from the root configuration with the FULL setting key: section-scoped
+  // reads (getConfiguration("opencodego")) resolve keys relative to the
+  // section, which would misread the Zen flag as opencodego.opencodezen.enabled.
+  const goProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true);
+  const zenProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true);
   const goProvider = new OpenCodeProvider(context, PROVIDERS[GO_VENDOR]);
   const zenProvider = new OpenCodeProvider(context, PROVIDERS[ZEN_VENDOR]);
   const modelInfoProviders: OpenCodeProvider[] = [goProvider, zenProvider];
 
   const subscriptions: vscode.Disposable[] = [
-    vscode.lm.registerLanguageModelChatProvider(GO_VENDOR, goProvider),
-    vscode.lm.registerLanguageModelChatProvider(ZEN_VENDOR, zenProvider),
+    // Register the chat providers only while the matching `opencodego.enabled`
+    // / `opencodezen.enabled` setting is on, so a disabled provider disappears
+    // from the Language Models list and every model picker (its vendor
+    // contribution carries the same `when` clause). The provider instances are
+    // still created so the management commands keep working for re-enabling.
+    ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(GO_VENDOR, goProvider)] : []),
+    ...(zenProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(ZEN_VENDOR, zenProvider)] : []),
     vscode.commands.registerCommand("opencodego.manage", () => goProvider.manage()),
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
     vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
+    vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled("opencodego", "OpenCode Go")),
     vscode.commands.registerCommand("opencodego.configureUtilityModels", () => configureUtilityModels()),
     vscode.commands.registerCommand("opencodezen.diagnostics", () => zenProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodezen.manage", () => zenProvider.manage()),
     vscode.commands.registerCommand("opencodezen.refreshModels", () => zenProvider.refreshModels()),
+    vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled("opencodezen", "OpenCode Zen")),
     vscode.commands.registerCommand("opencodego.modelPickerDiagnostics", () => showModelPickerDiagnostics()),
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => {
@@ -897,14 +934,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Agent-host providers for the Copilot Agents window (opt-in via config).
   const enableAgents = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
-  if (enableAgents) {
+  if (enableAgents && (goProviderEnabled || zenProviderEnabled)) {
     const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
     const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
     modelInfoProviders.push(agentGoProvider, agentZenProvider);
     subscriptions.push(
-      vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider),
-      vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider),
+      ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider)] : []),
+      ...(zenProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider)] : []),
     );
+    // On VS Code 1.129+ the Agents window runs in the agent host process,
+    // where extension BYOK models are only reachable through VS Code's BYOK
+    // language-model bridge — which is off by default. Make sure it is on so
+    // OpenCode models actually show up there (issue #122).
+    void ensureAgentsWindowSupport(context);
   }
 
   context.subscriptions.push(...subscriptions);
@@ -917,6 +959,18 @@ export function activate(context: vscode.ExtensionContext) {
       if (event.affectsConfiguration("opencodego.showProviderPrefix")) {
         for (const provider of modelInfoProviders) {
           provider.notifyModelInfoChanged();
+        }
+      }
+      if (event.affectsConfiguration("opencodego.agentsWindow") || event.affectsConfiguration("opencodego.autoEnableAgentsWindow")) {
+        const agentsWindowEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
+        const autoEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("autoEnableAgentsWindow", true);
+        if (agentsWindowEnabled && autoEnabled) {
+          void ensureAgentsWindowSupport(context);
+        } else if (!agentsWindowEnabled) {
+          // We may have enabled core settings for the Agents window; revert
+          // them when the user turns the feature off so the user's global
+          // configuration is restored.
+          void revertAgentsWindowSupport(context);
         }
       }
     }),
@@ -932,9 +986,144 @@ async function configureUtilityModels(): Promise<void> {
   );
 }
 
+/**
+ * Toggle whether a provider (`opencodego` / `opencodezen`) is registered at
+ * all. Disabling removes the provider from the Language Models list and every
+ * model picker — the provider's vendor contribution is gated by the same
+ * `when` clause (`config.<vendor>.enabled`) and its runtime registration is
+ * skipped. Previously configured BYOK groups and API keys are kept, so
+ * re-enabling restores the provider exactly as it was.
+ *
+ * Provider registration happens at startup, so a window reload is required
+ * for the change to take effect.
+ */
+async function toggleProviderEnabled(vendor: string, displayName: string): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration(vendor);
+  const current = cfg.get<boolean>("enabled", true);
+  const next = !current;
+  await cfg.update("enabled", next, vscode.ConfigurationTarget.Global);
+
+  const reload = await vscode.window.showInformationMessage(
+    next
+      ? `${displayName} re-enabled. Reload the window for the provider to appear in Language Models again.`
+      : `${displayName} removed from Language Models. Reload the window for it to disappear from the model picker and the manage list. Your API key and group settings are kept.`,
+    "Reload Now",
+  );
+  if (reload === "Reload Now") {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
+
+/**
+ * Whether this VS Code has the modern agent-host BYOK bridge (1.129+).
+ *
+ * From VS Code 1.129 the Agents window runs in a separate agent host
+ * process. Extension-provided BYOK models (isBYOK, no `targetChatSessionType`)
+ * are mirrored into agent-host sessions exclusively through the BYOK
+ * language-model bridge, which VS Code keeps OFF by default
+ * (`chat.agentHost.byokModels.enabled`, experimental). On older versions the
+ * extension's own agent-host providers (`targetChatSessionType: "copilotcli"`)
+ * are the only path, which is why they stay registered.
+ */
+function isModernAgentHostVscode(): boolean {
+  const [major = 1, minor = 0] = vscode.version.split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= AGENT_HOST_BYOK_MINOR_VERSION);
+}
+
+/**
+ * Ensure the VS Code core settings that make OpenCode Go/Zen models usable in
+ * the Agents window are enabled (issue #122):
+ *
+ * 1. `extensions.supportAgentsWindow.<id>` — the only way a code extension is
+ *    allowed to run in the Agents window (sessions window) process. VS Code
+ *    disables any extension with a `main` entry there by default, so without
+ *    this setting the extension's `languageModelChatProviders` vendors are
+ *    not registered in that window: neither the model picker nor the
+ *    "+ Add Models" list can show OpenCode Go/Zen.
+ * 2. `chat.agentHost.byokModels.enabled` (VS Code 1.129+) — the BYOK
+ *    language-model bridge that mirrors extension BYOK models into
+ *    agent-host sessions. Off by default and experimental.
+ *
+ * CONTRACT:
+ * - Only writes the settings while the user keeps `opencodego.agentsWindow`
+ *   and `opencodego.autoEnableAgentsWindow` on; the settings are merged with
+ *   existing user values (never clobbering unrelated entries).
+ * - Records in globalState which settings the extension flipped itself, so
+ *   {@link revertAgentsWindowSupport} can restore them when the user disables
+ *   the Agents feature.
+ * - Both settings take effect after a window reload (extension host /
+ *   agent host restart) — surface an actionable notification the first time
+ *   anything was changed.
+ */
+async function ensureAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
+  const opencodeCfg = vscode.workspace.getConfiguration("opencodego");
+  if (!opencodeCfg.get<boolean>("agentsWindow", true) || !opencodeCfg.get<boolean>("autoEnableAgentsWindow", true)) {
+    return;
+  }
+
+  let changed = false;
+  const extensionCfg = vscode.workspace.getConfiguration("extensions");
+  const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
+  if (!support[EXTENSION_ID]) {
+    await extensionCfg.update(SUPPORT_AGENTS_WINDOW_SETTING, { ...support, [EXTENSION_ID]: true }, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, true);
+    changed = true;
+  }
+
+  if (isModernAgentHostVscode()) {
+    const agentHostCfg = vscode.workspace.getConfiguration("chat.agentHost");
+    if (!agentHostCfg.get<boolean>(AGENT_HOST_BYOK_ENABLED_SETTING, false)) {
+      await agentHostCfg.update(AGENT_HOST_BYOK_ENABLED_SETTING, true, vscode.ConfigurationTarget.Global);
+      await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, true);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    const reload = await vscode.window.showInformationMessage(
+      "OpenCode: enabled VS Code's Agents window support so OpenCode Go/Zen models can run in the Agents window. Reload the window for it to take effect.",
+      "Reload Now",
+    );
+    if (reload === "Reload Now") {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    }
+  }
+}
+
+/**
+ * Revert the core settings that {@link ensureAgentsWindowSupport} enabled on
+ * this machine (and only those — settings the user configured manually are
+ * left untouched).
+ */
+async function revertAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
+  const extensionCfg = vscode.workspace.getConfiguration("extensions");
+  if (context.globalState.get<boolean>(SUPPORT_AGENTS_WINDOW_STATE_KEY)) {
+    const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
+    if (support[EXTENSION_ID]) {
+      const next: Record<string, boolean> = Object.fromEntries(Object.entries(support).filter(([id]) => id !== EXTENSION_ID));
+      await extensionCfg.update(
+        SUPPORT_AGENTS_WINDOW_SETTING,
+        Object.keys(next).length > 0 ? next : undefined,
+        vscode.ConfigurationTarget.Global,
+      );
+    }
+    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, undefined);
+  }
+
+  if (context.globalState.get<boolean>(AGENTS_BYOK_BRIDGE_STATE_KEY)) {
+    await vscode.workspace
+      .getConfiguration("chat.agentHost")
+      .update(AGENT_HOST_BYOK_ENABLED_SETTING, false, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, undefined);
+  }
+}
+
 async function warmModelPickerMetadata(): Promise<void> {
-  const vendors: string[] = [GO_VENDOR, ZEN_VENDOR];
-  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true)) {
+  const vendors: string[] = [
+    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true) ? [GO_VENDOR] : []),
+    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true) ? [ZEN_VENDOR] : []),
+  ];
+  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true) && vendors.length > 0) {
     vendors.push(AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
   }
   await Promise.allSettled(vendors.map((v) => vscode.lm.selectChatModels({ vendor: v })));
@@ -1655,13 +1844,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   async manage(): Promise<void> {
-    const apiKey = await this.context.secrets.get(SECRET_KEY);
-
-    if (!apiKey) {
-      await this.setApiKey();
-      return;
-    }
-
+    // Read via the base-vendor full key so agent variants (opencodego-agent,
+    // opencodezen-agent) follow the same switch as the vendor they mirror.
+    const providerEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(this.definition.vendor), true);
     const choice = await vscode.window.showQuickPick(
       [
         { label: "Set API Key", action: "set" as const },
@@ -1670,6 +1855,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         { label: "Refresh Models", action: "refresh" as const },
         { label: "Configure Utility Models", action: "utility" as const },
         { label: "Open Diagnostics", action: "diagnostics" as const },
+        ...(providerEnabled
+          ? [{ label: "Remove from Language Models", action: "remove" as const }]
+          : [{ label: "Re-add to Language Models", action: "remove" as const }]),
       ],
       {
         title: `Manage ${this.definition.displayName}`,
@@ -1678,6 +1866,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     );
 
     if (!choice) {
+      return;
+    }
+
+    if (choice.action === "remove") {
+      await toggleProviderEnabled(this.definition.vendor, this.definition.displayName);
       return;
     }
 
@@ -2051,11 +2244,25 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const convertedMessages = await Promise.all(
       messages.map((message) => convertMessage(message, this.reasoningContentByToolCallId, rawModelId)),
     );
-    const apiMessages = normalizeMessages(convertedMessages.flatMap((result) => result.messages));
     const normalizedImageCount = convertedMessages.map((result) => result.normalizedImageCount).reduce((total, count) => total + count, 0);
     if (normalizedImageCount > 0) {
       this.log(`[vision] Normalized ${String(normalizedImageCount)} image attachment(s) to provider-safe dimensions/encoding.`);
     }
+
+    // Flatten the converted messages, tracking which original message produced
+    // each apiMessage. The vision proxy returns per-message descriptions keyed
+    // by the original message index, so this mapping lets us apply the correct
+    // description to the right apiMessage (convertMessage can emit several
+    // messages per input — e.g. tool results — which shifts indices).
+    const flatMessages: ApiMessage[] = [];
+    const flatSourceIndex: number[] = [];
+    for (let i = 0; i < convertedMessages.length; i++) {
+      for (const msg of convertedMessages[i].messages) {
+        flatMessages.push(msg);
+        flatSourceIndex.push(i);
+      }
+    }
+
     const baseSettings = getSettings();
     // Apply per-request Thinking selection (from Copilot Chat submenu) on top
     // of the workspace default. The override only affects the current model
@@ -2071,34 +2278,56 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const metadata = this.resolveModelMetadata(rawModelId, metadataSnapshot);
     const routing = resolveModelRouting(rawModelId, this.definition);
 
-    const hasImageInput = messagesHaveImages(apiMessages);
+    // `hasImageInput` is computed from the flattened (pre-normalize) messages:
+    // normalization never creates or drops image parts, so this matches the
+    // previous `messagesHaveImages(apiMessages)` result.
+    const hasImageInput = messagesHaveImages(flatMessages);
     const actuallySupportsVision = metadata.supportsVision; // cached before capabilities override
 
     // Vision proxy: when a text-only model receives images, relay them
     // through a configured vision-capable Copilot model, then replace
-    // the image parts with the text description.
+    // the image parts with the text description. Descriptions are cached
+    // per image (`imageDescriptionCache`), so already-described images are
+    // reused on future turns without calling the vision model again.
     const visionProxyModelId = isVisionProxyEnabled() ? this.context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "") || "" : "";
     if (hasImageInput && !actuallySupportsVision && visionProxyModelId) {
       const visionProxyPrompt = this.context.globalState.get<string>(VISION_PROXY_PROMPT_KEY, "") || DEFAULT_VISION_PROXY_PROMPT;
+      // When `opencodego.visionProxyWholeConversation` is on, describe the whole
+      // conversation instead of only the message with a new image, so descriptions
+      // keep conversation context (at the cost of more tokens).
+      const describeWholeConversation = vscode.workspace.getConfiguration("opencodego").get<boolean>("visionProxyWholeConversation", false);
       let imagesHandled = false;
       try {
-        this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}`);
-        const description = await proxyVision(messages, visionProxyModelId, visionProxyPrompt, token);
-        if (description) {
-          for (const msg of apiMessages) {
+        this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}${describeWholeConversation ? " (whole conversation)" : ""}`);
+        const { descriptions, cacheHits, cacheMisses } = await proxyVision(
+          messages,
+          visionProxyModelId,
+          visionProxyPrompt,
+          describeWholeConversation,
+          token,
+        );
+        if (descriptions.size > 0) {
+          const fallbackDescription = descriptions.values().next().value ?? "";
+          for (let i = 0; i < flatMessages.length; i++) {
+            const msg = flatMessages[i];
             if (!Array.isArray(msg.content)) continue;
-            if (msg.content.some((p) => p.type === "image_url")) {
-              const textParts = msg.content
-                .filter((p): p is OpenAiContentPart & { text: string } => p.type === "text" && typeof p.text === "string")
-                .map((p) => p.text);
-              msg.content = [{ type: "text", text: `[Image described by vision proxy]: ${description}` }];
-              if (textParts.length > 0) {
-                msg.content.push({ type: "text", text: textParts.join("\n") });
-              }
-              imagesHandled = true;
+            if (!msg.content.some((p) => p.type === "image_url")) continue;
+            const textParts = msg.content
+              .filter((p): p is OpenAiContentPart & { text: string } => p.type === "text" && typeof p.text === "string")
+              .map((p) => p.text);
+            // Tool-result images are not described by the proxy, so they fall
+            // back to the first available description (matching the previous
+            // single-description behavior).
+            const description = descriptions.get(flatSourceIndex[i]) ?? fallbackDescription;
+            msg.content = [{ type: "text", text: `[Image described by vision proxy]: ${description}` }];
+            if (textParts.length > 0) {
+              msg.content.push({ type: "text", text: textParts.join("\n") });
             }
+            imagesHandled = true;
           }
-          this.log(`[vision-proxy] Replaced images using vision proxy model`);
+          this.log(
+            `[vision-proxy] Replaced images using vision proxy model (${String(cacheHits)} from cache, ${String(cacheMisses)} newly described)`,
+          );
         }
       } catch (err) {
         this.log(`[vision-proxy] Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -2108,7 +2337,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       // model not found), strip them anyway so the non-vision model
       // doesn't receive image data it can't process (fixes 400 errors).
       if (!imagesHandled) {
-        for (const msg of apiMessages) {
+        for (const msg of flatMessages) {
           if (!Array.isArray(msg.content)) continue;
           if (msg.content.some((p) => p.type === "image_url")) {
             const textParts = msg.content
@@ -2123,6 +2352,8 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         this.log(`[vision-proxy] Stripped images (proxy unavailable), prevented 400`);
       }
     }
+
+    const apiMessages = normalizeMessages(flatMessages);
 
     // Trim old images from conversation history to bound cumulative payload
     // weight. MCP screenshot loops (chrome-devtools-mcp, playwright-mcp) can
@@ -3225,6 +3456,7 @@ async function convertMessage(
 ): Promise<ConvertedMessageResult> {
   const role = message.role === vscode.LanguageModelChatMessageRole.Assistant ? "assistant" : "user";
   const textParts: string[] = [];
+  const thinkingTextParts: string[] = [];
   const imageParts: OpenAiContentPart[] = [];
   const toolCalls: OpenAiToolCall[] = [];
   const toolResults: ApiMessage[] = [];
@@ -3370,6 +3602,14 @@ async function convertMessage(
       continue;
     }
 
+    if (part instanceof vscode.LanguageModelThinkingPart) {
+      const thinking = thinkingPartText(part);
+      if (thinking) {
+        thinkingTextParts.push(thinking);
+      }
+      continue;
+    }
+
     const text = partToText(part);
     if (text) {
       textParts.push(text);
@@ -3379,6 +3619,14 @@ async function convertMessage(
   // Build content: use multimodal array if images present, otherwise plain string
   const hasImages = imageParts.length > 0;
   const textContent = textParts.join("\n");
+
+  // Thinking parts from the conversation history. Models like DeepSeek V4
+  // (OpenAI-compatible chat-completions) REQUIRE the previously emitted
+  // reasoning_content to be passed back unchanged on multi-turn requests —
+  // omitting it yields HTTP 400 "The reasoning_content in the thinking mode
+  // must be passed back to the API". This also enables cross-turn reasoning
+  // continuity for other families (Kimi, GLM, Qwen, MiniMax, Gemini).
+  const thinkingText = thinkingTextParts.length ? thinkingTextParts.join("\n").trim() : undefined;
 
   let content: string | null | OpenAiContentPart[] = textContent;
   if (hasImages) {
@@ -3410,7 +3658,9 @@ async function convertMessage(
       {
         role,
         content: typeof content === "string" ? content || null : content,
-        reasoning_content: shouldOmitReasoningEcho ? undefined : reasoningForToolCalls(toolCalls, reasoningContentByToolCallId),
+        reasoning_content: shouldOmitReasoningEcho
+          ? undefined
+          : (reasoningForToolCalls(toolCalls, reasoningContentByToolCallId) ?? thinkingText),
         tool_calls: toolCalls,
       },
     ]);
@@ -3418,6 +3668,16 @@ async function convertMessage(
 
   if (toolResults.length) {
     return finish(content ? [{ role, content }, ...toolResults] : toolResults);
+  }
+
+  if (role === "assistant") {
+    return finish([
+      {
+        role,
+        content: typeof content === "string" ? content || null : content,
+        reasoning_content: shouldEchoThinkingHistory(rawModelId) ? thinkingText : undefined,
+      },
+    ]);
   }
 
   return finish([{ role, content }]);
@@ -3447,6 +3707,21 @@ function reasoningForToolCalls(toolCalls: OpenAiToolCall[], reasoningContentByTo
     .filter((value): value is string => Boolean(value?.trim()));
 
   return reasoning.length ? reasoning.join("\n") : undefined;
+}
+
+/**
+ * Extract the raw thinking text from a history `LanguageModelThinkingPart`.
+ * `LanguageModelThinkingPart` is a proposed VS Code API available at runtime
+ * on all hosts we target (^1.125.0); `partToText` intentionally ignores it so
+ * the thinking text never leaks into the visible assistant `content`. The
+ * `typeof` guard mirrors `streaming.ts` so we degrade gracefully on any
+ * hypothetical older host.
+ */
+function thinkingPartText(part: unknown): string {
+  if (typeof vscode.LanguageModelThinkingPart !== "function" || !(part instanceof vscode.LanguageModelThinkingPart)) {
+    return "";
+  }
+  return thinkingTextFromValue(part.value);
 }
 
 function messageText(message: vscode.LanguageModelChatRequestMessage): string {
@@ -3855,60 +4130,73 @@ function isFreeModel(modelId: string): boolean {
   return FREE_ZEN_MODEL_IDS.has(modelId) || modelId.endsWith("-free");
 }
 
-/**
- * Vision proxy: relay image messages through a vision-capable Copilot model
- * and return the text description. This lets text-only models "see" images
- * transparently (issue #74).
- */
-async function proxyVision(
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
-  visionModelId: string,
-  visionPrompt: string,
-  token: vscode.CancellationToken,
-): Promise<string | undefined> {
-  // Find the vision model by trying several matching strategies:
-  // 1. Exact id match (full internal model id)
-  // 2. Vendor:id partial (e.g. "opencodego:mimo-v2.5")
-  // 3. Name or id substring (e.g. "mimo-v2.5" or "Mimo V2.5")
-  // Filter out agent-host variants — they use a different transport and
-  // don't have vision support. Prefer non-agent models.
-  const nonAgent = (models: readonly vscode.LanguageModelChat[]) => models.filter((m) => !m.id.includes("-agent:"));
+/** Result of a vision-proxy pass: per-message descriptions plus cache stats. */
+interface VisionProxyResult {
+  /** Original message index → text description (only for messages with images). */
+  descriptions: ReadonlyMap<number, string>;
+  /** Messages whose images were already cached — no vision model request was made. */
+  cacheHits: number;
+  /** Messages that required a new vision-model request. */
+  cacheMisses: number;
+}
 
-  let visionModels = nonAgent(await vscode.lm.selectChatModels({ id: visionModelId }));
-  if (visionModels.length === 0) {
-    // Try matching by name substring across all providers
-    const allVisible = nonAgent(await vscode.lm.selectChatModels({}));
-    visionModels = allVisible.filter(
-      (m) =>
-        m.id.toLowerCase().includes(visionModelId.toLowerCase()) ||
-        m.name.toLowerCase().includes(visionModelId.toLowerCase()) ||
-        m.family.toLowerCase().includes(visionModelId.toLowerCase()),
+/**
+ * Collect the parts of a single message that the vision proxy should see:
+ * image parts plus text parts, dropping tool parts.
+ */
+function collectRequestParts(msg: vscode.LanguageModelChatRequestMessage): (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] {
+  const parts: (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] = [];
+  for (const part of msg.content) {
+    if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
+      parts.push(part);
+    } else if (part instanceof vscode.LanguageModelTextPart) {
+      parts.push(part);
+    } else if (typeof part === "object" && part !== null && "value" in part) {
+      parts.push(new vscode.LanguageModelTextPart(String(part.value)));
+    }
+  }
+  return parts;
+}
+
+/**
+ * Build a vision-model request for a single message: keep its image parts and
+ * text parts (dropping tool parts), then append the vision prompt. This lets
+ * the proxy describe ONLY the message that contains a new image, instead of
+ * re-sending the whole conversation on every turn.
+ */
+function buildVisionRequestMessage(msg: vscode.LanguageModelChatRequestMessage, visionPrompt: string): vscode.LanguageModelChatMessage[] {
+  const requestMessages: vscode.LanguageModelChatMessage[] = [];
+  const parts = collectRequestParts(msg);
+  if (parts.length > 0) {
+    requestMessages.push(
+      new vscode.LanguageModelChatMessage(
+        msg.role === vscode.LanguageModelChatMessageRole.Assistant
+          ? vscode.LanguageModelChatMessageRole.Assistant
+          : vscode.LanguageModelChatMessageRole.User,
+        parts,
+      ),
     );
   }
-  if (visionModels.length === 0) {
-    throw new Error(`Vision model "${visionModelId}" not found. ` + `Run "OpenCode Go: Configure Vision Proxy" to see available models.`);
+  // Append the vision prompt
+  if (visionPrompt) {
+    requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
   }
+  return requestMessages;
+}
 
-  // All models that matched are candidates. `selectChatModels` returns
-  // `LanguageModelChat` which does not expose capabilities in the stable
-  // API, so we just use the first match. Most vision models handle image
-  // input gracefully — models without vision will report the error.
-  const model = visionModels[0];
-
-  // Build a request preserving images and text from the original messages
+/**
+ * Build a vision-model request over the WHOLE conversation: keep image and
+ * text parts from every message (dropping tool parts), then append the vision
+ * prompt. Used when `opencodego.visionProxyWholeConversation` is enabled, so
+ * descriptions carry full conversation context (at the cost of more tokens).
+ */
+function buildWholeConversationRequest(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  visionPrompt: string,
+): vscode.LanguageModelChatMessage[] {
   const requestMessages: vscode.LanguageModelChatMessage[] = [];
   for (const msg of messages) {
-    const parts: (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] = [];
-    for (const part of msg.content) {
-      if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
-        parts.push(part);
-      } else if (part instanceof vscode.LanguageModelTextPart) {
-        parts.push(part);
-      } else if (typeof part === "object" && part !== null && "value" in part) {
-        const valuePart = part;
-        parts.push(new vscode.LanguageModelTextPart(String(valuePart.value)));
-      }
-    }
+    const parts = collectRequestParts(msg);
     if (parts.length > 0) {
       requestMessages.push(
         new vscode.LanguageModelChatMessage(
@@ -3920,18 +4208,147 @@ async function proxyVision(
       );
     }
   }
-
   // Append the vision prompt
   if (visionPrompt) {
     requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
   }
+  return requestMessages;
+}
 
-  const response = await model.sendRequest(requestMessages, {}, token);
-  let fullDescription = "";
-  for await (const part of response.text) {
-    fullDescription += part;
+/**
+ * Vision proxy: relay image messages through a vision-capable Copilot model
+ * and return the text description. This lets text-only models "see" images
+ * transparently (issue #74).
+ *
+ * By default (`describeWholeConversation` false), descriptions are cached per
+ * image (`imageDescriptionCache`). A message whose images are ALL already
+ * cached is reused without contacting the vision model; only messages that
+ * contain at least one new image trigger a `sendRequest()` - for that single
+ * message + prompt - and the result is stored in the cache for future turns.
+ *
+ * When `describeWholeConversation` is true (setting
+ * `opencodego.visionProxyWholeConversation`), the proxy sends ONE request over
+ * the whole conversation so descriptions keep full context; the combined
+ * description is still stored under every image hash.
+ */
+async function proxyVision(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  visionModelId: string,
+  visionPrompt: string,
+  describeWholeConversation: boolean,
+  token: vscode.CancellationToken,
+): Promise<VisionProxyResult> {
+  const descriptions = new Map<number, string>();
+  let cacheHits = 0;
+  let cacheMisses = 0;
+
+  // Find the vision model lazily — only when a message actually needs a new
+  // description. When every image is already cached we never call
+  // `vscode.lm.selectChatModels()` or `model.sendRequest()`.
+  let visionModel: vscode.LanguageModelChat | undefined;
+  const resolveVisionModel = async (): Promise<vscode.LanguageModelChat> => {
+    if (visionModel) {
+      return visionModel;
+    }
+    // Matching strategies:
+    // 1. Exact id match (full internal model id)
+    // 2. Vendor:id partial (e.g. "opencodego:mimo-v2.5")
+    // 3. Name or id substring (e.g. "mimo-v2.5" or "Mimo V2.5")
+    // Filter out agent-host variants — they use a different transport and
+    // don't have vision support. Prefer non-agent models.
+    const nonAgent = (models: readonly vscode.LanguageModelChat[]) => models.filter((m) => !m.id.includes("-agent:"));
+
+    let visionModels = nonAgent(await vscode.lm.selectChatModels({ id: visionModelId }));
+    if (visionModels.length === 0) {
+      // Try matching by name substring across all providers
+      const allVisible = nonAgent(await vscode.lm.selectChatModels({}));
+      visionModels = allVisible.filter(
+        (m) =>
+          m.id.toLowerCase().includes(visionModelId.toLowerCase()) ||
+          m.name.toLowerCase().includes(visionModelId.toLowerCase()) ||
+          m.family.toLowerCase().includes(visionModelId.toLowerCase()),
+      );
+    }
+    if (visionModels.length === 0) {
+      throw new Error(`Vision model "${visionModelId}" not found. ` + `Run "OpenCode Go: Configure Vision Proxy" to see available models.`);
+    }
+
+    // All models that matched are candidates. `selectChatModels` returns
+    // `LanguageModelChat` which does not expose capabilities in the stable
+    // API, so we just use the first match. Most vision models handle image
+    // input gracefully — models without vision will report the error.
+    visionModel = visionModels[0];
+    return visionModel;
+  };
+
+  // Whole-conversation mode (opencodego.visionProxyWholeConversation): one
+  // request over all messages, so descriptions carry full conversation context.
+  if (describeWholeConversation) {
+    const imageIndices: number[] = [];
+    const allHashes: string[] = [];
+    for (let index = 0; index < messages.length; index++) {
+      const msg = messages[index];
+      const imageParts = msg.content.filter(
+        (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+      );
+      if (imageParts.length === 0) {
+        continue;
+      }
+      imageIndices.push(index);
+      allHashes.push(...imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data))));
+    }
+    if (imageIndices.length > 0) {
+      cacheMisses++;
+      const model = await resolveVisionModel();
+      const response = await model.sendRequest(buildWholeConversationRequest(messages, visionPrompt), {}, token);
+      let fullDescription = "";
+      for await (const part of response.text) {
+        fullDescription += part;
+      }
+      if (fullDescription) {
+        storeImageDescriptions(allHashes, fullDescription);
+        for (const index of imageIndices) {
+          descriptions.set(index, fullDescription);
+        }
+      }
+    }
+    return { descriptions, cacheHits, cacheMisses };
   }
-  return fullDescription.length > 0 ? fullDescription : undefined;
+
+  for (let index = 0; index < messages.length; index++) {
+    const msg = messages[index];
+    const imageParts = msg.content.filter(
+      (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+    );
+    if (imageParts.length === 0) {
+      continue;
+    }
+    const hashes = imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data)));
+
+    // All images already described → reuse the cached text, no model request.
+    const cachedDescription = lookupImageDescriptions(hashes);
+    if (cachedDescription !== undefined) {
+      cacheHits++;
+      descriptions.set(index, cachedDescription);
+      continue;
+    }
+
+    // At least one new image → describe only this message and cache the result.
+    cacheMisses++;
+    const model = await resolveVisionModel();
+    const response = await model.sendRequest(buildVisionRequestMessage(msg, visionPrompt), {}, token);
+    let fullDescription = "";
+    for await (const part of response.text) {
+      fullDescription += part;
+    }
+    if (!fullDescription) {
+      continue;
+    }
+    storeImageDescriptions(hashes, fullDescription);
+    descriptions.set(index, fullDescription);
+  }
+
+  return { descriptions, cacheHits, cacheMisses };
 }
 
 // ---------------------------------------------------------------------------

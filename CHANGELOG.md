@@ -4,6 +4,15 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Added
+
+- **`[VS Code]` Remove OpenCode Go / OpenCode Zen from Language Models.** Providers can now be removed from the Language Models list and every model picker like in GitHub Copilot's Manage Language Models: new `opencodego.enabled` / `opencodezen.enabled` settings (with matching `when` clauses on the vendor contributions) skip provider registration, plus `OpenCode Go/Zen: Remove/Re-add Provider in Language Models` commands and a **Remove from Language Models** action in the Manage Provider QuickPick. API keys and BYOK group settings are kept so re-enabling restores the provider unchanged. A window reload is required after toggling.
+- **`[Agents]` OpenCode Go/Zen in the VS Code Agents window (#122).** VS Code ≥1.129 runs the Agents window in a separate agent host process and keeps the two mechanisms this feature depends on off by default: the experimental BYOK model bridge (`chat.agentHost.byokModels.enabled`) that mirrors extension BYOK models into agent-host sessions, and `extensions.supportAgentsWindow`, without which code extensions are disabled in the Agents window process entirely — so OpenCode Go/Zen were missing from both the Agents window model picker and its "+ Add Models" vendor list. The extension now auto-enables both settings on activation (gated by the new `opencodego.autoEnableAgentsWindow` setting, default `true`, merging with any existing user values), records what it flipped, and offers a reload button the first time. When the user disables `opencodego.agentsWindow` afterwards, only the settings the extension itself enabled are reverted. The legacy agent-host providers (`targetChatSessionType: "copilotcli"`) remain registered for VS Code 1.125–1.128, where the bridge does not exist.
+
+### Fixed
+
+- **`[VS Code]` Provider context menu unresponsive; "+ Add Models" dead; leftover groups undeletable (#121).** The `languageModelChatProviders` contributions declared both `managementCommand` and a `configuration` schema. VS Code's native BYOK flow (`configureLanguageModelsProviderGroup`) short-circuits on `managementCommand` — it re-resolves models and returns without prompting for a group name or API key — so a BYOK group could never be created through "+ Add Models", and every built-in context-menu action (Rename Group, Update API Key, Delete, Open in Language Models (JSON)) throws "group not found", failing silently. Dropped `managementCommand` from the `opencodego`, `opencodezen`, and agent-variant contributions; "+ Add Models" now runs the native prompt flow, the context-menu actions work against the created group, and leftover groups (e.g. created by per-model configuration) can finally be deleted. The extension's own commands (`OpenCode Go: Manage Provider`, `Set API Key`, etc.) remain available in the Command Palette and keep working as a legacy fallback.
+
 ## [0.5.1] — 2026-08-08
 
 ### Added

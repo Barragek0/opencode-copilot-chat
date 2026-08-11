@@ -30,9 +30,9 @@ const steps = [
   {
     label: "Markdown",
     cmd: bin("markdownlint-cli2"),
-    args: ["--config", ".markdownlint.json", "**/*.md", "#node_modules"],
+    args: ["--config", ".markdownlint-cli2.jsonc", "**/*.md", "#node_modules"],
   },
-  { label: "Prettier", cmd: bin("prettier"), args: ["--check", "."] },
+  { label: "Prettier", cmd: bin("prettier"), args: ["--check", ".", "--ignore-path", ".gitignore"] },
   { label: "Shell", cmd: bin("shellcheck"), args: [".husky/pre-commit"] },
   { label: "TypeScript", cmd: bin("tsc"), args: ["-p", "tsconfig.check.json"] },
 ];

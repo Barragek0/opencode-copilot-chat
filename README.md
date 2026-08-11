@@ -270,42 +270,57 @@ Delete Active Profile` help you manage your profiles. The label you give
 
 ### 🪟 Agents Window (Copilot CLI) Support
 
-OpenCode models appear in the VS Code **Agents window** model picker when starting a Copilot CLI / Background agent session — not just the regular Chat view. Two sets of models are available:
+OpenCode models appear in the VS Code **Agents window** model picker when starting a Copilot CLI / Background agent session — not just the regular Chat view:
 
-| Provider                                 | Appears under | Notes                                                                                                                                                        |
-| ---------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `opencodego` / `opencodezen`             | **Local**     | Normal models, no `targetChatSessionType`. From VS Code ≥1.126 they appear naturally in the Local section (once the extension loads in the sessions window). |
-| `opencodego-agent` / `opencodezen-agent` | **Copilot**   | Agent variants with `targetChatSessionType: "copilotcli"`. Picked up by `CopilotChatSessionsProvider` for agent sessions.                                    |
+| Provider                                 | Appears under | Notes                                                                                                                                             |
+| ---------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opencodego` / `opencodezen`             | **Local**     | Normal models, no `targetChatSessionType`. On VS Code 1.129+ they reach agent-host sessions through VS Code's BYOK model bridge.                  |
+| `opencodego-agent` / `opencodezen-agent` | **Copilot**   | Agent variants with `targetChatSessionType: "copilotcli"`. Picked up by `CopilotChatSessionsProvider` for legacy agent sessions (VS Code ≤1.128). |
 
 **How it works:**
 
-| Setting                                   | Default | What it controls                                        |
-| ----------------------------------------- | ------- | ------------------------------------------------------- |
-| `opencodego.agentsWindow`                 | `true`  | Registers agent-host providers at runtime               |
-| `opencodego.showAgentModelsInManagePanel` | `false` | Shows agent vendors in the Manage Language Models panel |
+VS Code ≥1.129 runs the Agents window in a separate agent host process and keeps two knobs **off by default** that this extension depends on:
+
+1. `chat.agentHost.byokModels.enabled` (experimental) — the BYOK language-model bridge that mirrors extension-provided BYOK models into agent-host sessions.
+2. `extensions.supportAgentsWindow` — without it, code extensions are **disabled in the Agents window process**, so OpenCode Go/Zen don't appear in the Agents window picker nor in its **+ Add Models** list.
+
+The extension auto-enables both when `agentsWindow` is on:
+
+| Setting                                   | Default | What it controls                                                                                  |
+| ----------------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `opencodego.agentsWindow`                 | `true`  | Master switch for Agents window support                                                           |
+| `opencodego.autoEnableAgentsWindow`       | `true`  | Auto-manage the two VS Code core settings above (and revert them when `agentsWindow` is disabled) |
+| `opencodego.showAgentModelsInManagePanel` | `false` | Shows agent vendors in the Manage Language Models panel                                           |
 
 **Setup:**
 
-1. Agent models are enabled by default (`agentsWindow: true`). No changes needed for basic usage.
-2. Add this to your VS Code `settings.json` to enable the extension in the Agents window process:
-
-   ```json
-   "extensions.supportAgentsWindow": {
-     "ltmoerdani.opencode-copilot-chat": true
-   }
-   ```
-
-3. Reload the window (`Developer: Reload Window`).
-4. Open the **Agents window** → start a new session → select **Copilot CLI** as the agent type.
-5. Open the model picker — OpenCode models appear under **Local** (normal models) and **Copilot** (agent-host variants).
-
-Normal OpenCode models (`opencodego`, `opencodezen`) appear in the **Local** section of the Agents window picker from VS Code ≥1.126 onwards. On ≤1.125 they may require the `supportAgentsWindow` setting. Agent-host variants (`opencodego-agent`, `opencodezen-agent`) appear under **Copilot** because they carry `targetChatSessionType: "copilotcli"` and are matched by `CopilotChatSessionsProvider`.
+1. Agent models are enabled by default (`agentsWindow: true`). The extension auto-enables the required VS Code settings on first activation and offers a **Reload Now** button — a window reload is required for them to take effect.
+2. Reload the window (`Developer: Reload Window`) if you haven't been prompted.
+3. Open the **Agents window** → start a new session → select **Copilot CLI** as the agent type.
+4. Open the model picker — OpenCode models appear under their provider; the **+ Add Models** list in the Agents window's Language Models view now includes **OpenCode Go** and **OpenCode Zen**.
 
 To manage agent API keys separately or see agent vendors in the Manage panel, enable:
 
 ```json
 "opencodego.showAgentModelsInManagePanel": true
 ```
+
+#### ❌ Removing a provider from Language Models
+
+Like deleting a provider in GitHub Copilot's Manage Language Models, you can
+remove **OpenCode Go** or **OpenCode Zen** from the Language Models list and
+every model picker:
+
+- **Command Palette** — `OpenCode Go: Remove/Re-add Provider in Language
+Models` (same for Zen), or use **Manage Provider → Remove from Language
+  Models**.
+- **Settings** — set `opencodego.enabled` / `opencodezen.enabled` to `false`.
+
+The provider's vendor row and models disappear from the Manage Language
+Models view, the `+ Add Models` list, the Chat picker, and the Agents window.
+Your API key and BYOK group settings are kept, so re-enabling (or the
+`Re-add to Language Models` action) restores everything. A window reload is
+required after toggling.
 
 ### 🛠️ Smart Routing & Reliability
 
@@ -329,27 +344,28 @@ Provider diagnostics also include the VS Code/extension versions, extension host
 
 ## 🔧 Settings
 
-| Setting                                   | Default  | Description                                                                      |
-| ----------------------------------------- | -------- | -------------------------------------------------------------------------------- |
-| `opencodego.temperature`                  | `0.2`    | Sampling temperature (`0`–`2`)                                                   |
-| `opencodego.maxTokens`                    | `0`      | Max output token override (`0` = per-model max)                                  |
-| `opencodego.maxInputTokens`               | `0`      | Context window override (`0` = per-model default)                                |
-| `opencodego.debugReasoning`               | `false`  | Log `reasoning_content` to Output panel                                          |
-| `opencodego.requestTimeoutSeconds`        | `600`    | Total request timeout                                                            |
-| `opencodego.streamIdleTimeoutSeconds`     | `120`    | Cancel if stream goes idle                                                       |
-| `opencodego.showUsageStatusBar`           | `true`   | Show usage summary in status bar                                                 |
-| `opencodego.showProviderPrefix`           | `true`   | Include `OpenCode Go` / `OpenCode Zen` in model names                            |
-| `opencodego.freeOnly`                     | `true`   | Zen: free models only. `false` = include paid                                    |
-| `opencodego.agentsWindow`                 | `true`   | Expose agent-host model variants (`targetChatSessionType`) for the Agents window |
-| `opencodego.showAgentModelsInManagePanel` | `false`  | Show agent vendors in Manage Language Models panel                               |
-| `opencodego.stripThinkTags`               | `"auto"` | Strip `<think>` tags (`never`/`auto`/`always`)                                   |
-| `opencodego.thinking.deepseek`            | `"off"`  | `off`/`low`/`medium`/`high`/`max`                                                |
-| `opencodego.thinking.glm`                 | `"off"`  | `on`/`off`                                                                       |
-| `opencodego.thinking.kimi`                | `"off"`  | `on`/`off`                                                                       |
-| `opencodego.thinking.minimax`             | `"off"`  | `off`/`on`                                                                       |
-| `opencodego.thinking.mimo`                | `"off"`  | `off`/`low`/`medium`/`high`                                                      |
-| `opencodego.thinking.qwen`                | `"off"`  | `auto`/`on`/`off`                                                                |
-| `opencodego.thinking.qwenBudget`          | `"auto"` | `auto`/`4096`/`16384`/`32768`/`81920`                                            |
+| Setting                                   | Default  | Description                                                                                                            |
+| ----------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `opencodego.temperature`                  | `0.2`    | Sampling temperature (`0`–`2`)                                                                                         |
+| `opencodego.maxTokens`                    | `0`      | Max output token override (`0` = per-model max)                                                                        |
+| `opencodego.maxInputTokens`               | `0`      | Context window override (`0` = per-model default)                                                                      |
+| `opencodego.debugReasoning`               | `false`  | Log `reasoning_content` to Output panel                                                                                |
+| `opencodego.requestTimeoutSeconds`        | `600`    | Total request timeout                                                                                                  |
+| `opencodego.streamIdleTimeoutSeconds`     | `120`    | Cancel if stream goes idle                                                                                             |
+| `opencodego.showUsageStatusBar`           | `true`   | Show usage summary in status bar                                                                                       |
+| `opencodego.showProviderPrefix`           | `true`   | Include `OpenCode Go` / `OpenCode Zen` in model names                                                                  |
+| `opencodego.visionProxyWholeConversation` | `false`  | Vision proxy: describe the whole conversation instead of only the message with a new image (more context, more tokens) |
+| `opencodego.freeOnly`                     | `true`   | Zen: free models only. `false` = include paid                                                                          |
+| `opencodego.agentsWindow`                 | `true`   | Expose agent-host model variants (`targetChatSessionType`) for the Agents window                                       |
+| `opencodego.showAgentModelsInManagePanel` | `false`  | Show agent vendors in Manage Language Models panel                                                                     |
+| `opencodego.stripThinkTags`               | `"auto"` | Strip `<think>` tags (`never`/`auto`/`always`)                                                                         |
+| `opencodego.thinking.deepseek`            | `"off"`  | `off`/`low`/`medium`/`high`/`max`                                                                                      |
+| `opencodego.thinking.glm`                 | `"off"`  | `on`/`off`                                                                                                             |
+| `opencodego.thinking.kimi`                | `"off"`  | `on`/`off`                                                                                                             |
+| `opencodego.thinking.minimax`             | `"off"`  | `off`/`on`                                                                                                             |
+| `opencodego.thinking.mimo`                | `"off"`  | `off`/`low`/`medium`/`high`                                                                                            |
+| `opencodego.thinking.qwen`                | `"off"`  | `auto`/`on`/`off`                                                                                                      |
+| `opencodego.thinking.qwenBudget`          | `"auto"` | `auto`/`4096`/`16384`/`32768`/`81920`                                                                                  |
 
 <details>
 <summary><b>📜 Full settings reference with descriptions</b></summary>

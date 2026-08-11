@@ -71,6 +71,10 @@
         "title": "OpenCode Go: Set API Key"
       },
       {
+        "command": "opencodego.toggleProvider",
+        "title": "OpenCode Go: Remove/Re-add Provider in Language Models"
+      },
+      {
         "command": "opencodego.refreshModels",
         "title": "OpenCode Go: Refresh Models"
       },
@@ -89,6 +93,10 @@
       {
         "command": "opencodezen.manage",
         "title": "OpenCode Zen: Manage Provider"
+      },
+      {
+        "command": "opencodezen.toggleProvider",
+        "title": "OpenCode Zen: Remove/Re-add Provider in Language Models"
       },
       {
         "command": "opencodezen.refreshModels",
@@ -176,15 +184,35 @@
           "default": true,
           "description": "Show the OpenCode Go or OpenCode Zen provider prefix in model names."
         },
+        "opencodego.visionProxyWholeConversation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Off (default): describe only the message with a new image and reuse cached image descriptions to save quota. On: describe the whole conversation for richer context (uses more tokens; descriptions are still cached)."
+        },
         "opencodego.freeOnly": {
           "type": "boolean",
           "default": true,
           "description": "When enabled, only free OpenCode Zen models are shown in the Copilot model selector. Disable to include paid Zen models as well."
         },
+        "opencodego.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Register the OpenCode Go provider. Set to `false` to remove OpenCode Go from the Language Models list and all model pickers (like deleting the provider in GitHub Copilot's Manage Language Models). Models you previously configured stay in your language-models config so they come back if you re-enable. Requires a window reload to take effect."
+        },
+        "opencodezen.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Register the OpenCode Zen provider. Set to `false` to remove OpenCode Zen from the Language Models list and all model pickers (like deleting the provider in GitHub Copilot's Manage Language Models). Models you previously configured stay in your language-models config so they come back if you re-enable. Requires a window reload to take effect."
+        },
         "opencodego.agentsWindow": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Register separate agent-host providers for the Copilot Agents window. Disable to hide the Agents section entirely. Requires a window reload to take effect."
+          "markdownDescription": "Enable OpenCode models in the VS Code Agents window. On VS Code 1.129+ this enables VS Code's BYOK model bridge (`chat.agentHost.byokModels.enabled`) so OpenCode Go/Zen models run in agent-host sessions; on all versions it also opts the extension in to run in the Agents window process (`extensions.supportAgentsWindow`) so OpenCode Go/Zen appear in the Agents window's '+ Add Models' list. Both core settings are auto-managed (see `#opencodego.autoEnableAgentsWindow#`). Disable to hide the Agents section entirely and revert the auto-managed settings. Requires a window reload to take effect."
+        },
+        "opencodego.autoEnableAgentsWindow": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When `#opencodego.agentsWindow#` is on, automatically enable the VS Code core settings the Agents window support depends on: `chat.agentHost.byokModels.enabled` (BYOK model bridge, experimental, off by default) and `extensions.supportAgentsWindow: { \"ltmoerdani.opencode-copilot-chat\": true }` (without this the extension is disabled in the Agents window process and its providers, including the '+ Add Models' vendors, are missing). The extension records the values it flips and reverts them when `agentsWindow` is disabled. A window reload is required after the first auto-enable. Disable to manage those settings manually."
         },
         "opencodego.showAgentModelsInManagePanel": {
           "type": "boolean",
@@ -280,6 +308,7 @@
       {
         "vendor": "opencodego",
         "displayName": "OpenCode Go",
+        "when": "config.opencodego.enabled",
         "configuration": {
           "type": "object",
           "required": [
@@ -298,6 +327,7 @@
       {
         "vendor": "opencodezen",
         "displayName": "OpenCode Zen",
+        "when": "config.opencodezen.enabled",
         "configuration": {
           "type": "object",
           "required": [
@@ -329,14 +359,15 @@
     "lint": "node scripts/lint.js",
     "lint:js": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix --max-warnings 0",
-    "lint:md": "markdownlint-cli2 --config .markdownlint.json \"**/*.md\" \"#node_modules\"",
+    "lint:md": "markdownlint-cli2 --config .markdownlint-cli2.jsonc \"**/*.md\" \"#node_modules\"",
+    "lint:md:all": "markdownlint-cli2 --config .markdownlint-cli2.jsonc \"**/*.md\"",
     "lint:sh": "shellcheck .husky/pre-commit",
     "lint:hygiene": "editorconfig-checker",
     "lint:ts": "tsc -p tsconfig.check.json",
     "format": "node scripts/format.js",
     "format:js": "eslint . --fix --max-warnings 0",
-    "format:prettier": "npx prettier --write .",
-    "format:check": "npx prettier --check .",
+    "format:prettier": "npx prettier --write . --ignore-path .gitignore",
+    "format:check": "npx prettier --check . --ignore-path .gitignore",
     "clean": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\"",
     "compile": "npm run clean && tsc -p ./",
     "test": "npm run compile && node scripts/run-unit-tests.js",
@@ -351,7 +382,7 @@
   "lint-staged": {
     "*": "prettier --write --ignore-unknown",
     "*.{js,mjs,cjs,ts,mts,cts}": "eslint --fix --max-warnings 0",
-    "*.md": "markdownlint-cli2 --config .markdownlint.json --fix",
+    "*.md": "markdownlint-cli2 --config .markdownlint-cli2.jsonc --fix",
     ".husky/*": "shellcheck"
   },
   "devDependencies": {
