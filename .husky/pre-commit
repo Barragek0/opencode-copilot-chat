@@ -14,10 +14,11 @@ if ! command -v npx >/dev/null 2>&1; then
   fi
 fi
 
-# Zero-tolerance gate FIRST, on raw content: block the commit if any file has
-# any error, warning, info diagnostic, type error, or formatting drift.
-# Linting before formatting ensures the linter sees the file as written.
-npm run lint
+# Zero-tolerance gate on exactly what this change can affect: the staged
+# files plus the files that import them (see scripts/staged-lint.js). Runs
+# BEFORE formatting so the linter sees the file as written. The full-tree
+# lint (including tests) runs in CI and on demand via `npm run lint`.
+node scripts/staged-lint.js
 
 # Format changed files (code + non-code) after linting passes.
 npx lint-staged

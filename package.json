@@ -357,6 +357,7 @@
   },
   "scripts": {
     "lint": "node scripts/lint.js",
+    "lint:staged": "node scripts/staged-lint.js",
     "lint:js": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix --max-warnings 0",
     "lint:md": "markdownlint-cli2 --config .markdownlint-cli2.jsonc \"**/*.md\" \"#node_modules\"",
