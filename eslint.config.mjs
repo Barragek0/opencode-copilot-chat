@@ -1,15 +1,19 @@
-// ESLint flat config — MAXIMUM strictness.
+// ESLint flat config — strict where it catches real bugs, quiet where it
+// would only add ceremony.
 //
-// Stack (strictest available for each layer):
-//   - typescript-eslint `strict` + `strictTypeChecked` + `stylistic`:
-//       type-aware rules (no-unsafe-*, no-unnecessary-condition, ...),
-//       strict correctness rules, and stylistic consistency.
+// Stack:
+//   - typescript-eslint `strict` + `strictTypeChecked`:
+//       type-aware correctness rules (no-unsafe-*, no-unnecessary-condition,
+//       ...). The pure-stylistic layer (`stylistic`) is deliberately NOT
+//       enabled — it fights the formatter (prettier owns formatting) and its
+//       rules (array-type, consistent-type-definitions, prefer-for-of, ...)
+//       produced churn without catching bugs.
 //   - eslint-plugin-yml `flat/standard`: strict YAML linting.
 //   - eslint-plugin-jsonc `flat/recommended-with-jsonc`: strict JSON/JSONC.
 //
 // Zero tolerance: every violation is an error; warnings are turned into errors
-// via `--max-warnings 0` in package.json. Nothing is disabled here except what
-// the strict stacks themselves permit.
+// via `--max-warnings 0`. The only rules disabled here are ones whose noise
+// outweighs their value (see the scoped overrides below).
 
 import { readFileSync } from "node:fs";
 import { defineConfig } from "eslint/config";
@@ -30,15 +34,15 @@ const nonProjectFiles = ["eslint.config.mjs", "scripts/*.js", "scripts/*.mjs", "
 // provides `defineConfig()`. We replicate the helper's `extends` expansion
 // explicitly by applying the TS `files` glob to each config object.
 const tsFiles = ["**/*.{ts,mts,cts,js,mjs,cjs}"];
+const testFiles = ["**/*.test.{ts,tsx,js,mjs,cjs}"];
 
 export default defineConfig([
   {
     ignores: gitignore,
   },
-  // --- TypeScript / JavaScript: strictest type-aware rules -----------------
+  // --- TypeScript / JavaScript: strict type-aware rules --------------------
   ...tseslint.configs.strict.map((conf) => ({ ...conf, files: tsFiles })),
   ...tseslint.configs.strictTypeChecked.map((conf) => ({ ...conf, files: tsFiles })),
-  ...tseslint.configs.stylistic.map((conf) => ({ ...conf, files: tsFiles })),
   {
     files: tsFiles,
     languageOptions: {
@@ -63,6 +67,23 @@ export default defineConfig([
           caughtErrorsIgnorePattern: "^_",
         },
       ],
+      // Numbers and booleans interpolate unambiguously; requiring `String()`
+      // around them is noise, not safety.
+      "@typescript-eslint/restrict-template-expressions": [
+        "error",
+        {
+          allowNumber: true,
+          allowBoolean: true,
+        },
+      ],
+    },
+  },
+  {
+    // node:test's describe/it are scheduled by the test runner; the returned
+    // promise is handled there, so the `void`/`await` ceremony adds nothing.
+    files: testFiles,
+    rules: {
+      "@typescript-eslint/no-floating-promises": "off",
     },
   },
   // --- YAML: strict rules from eslint-plugin-yml ---------------------------
