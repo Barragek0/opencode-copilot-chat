@@ -35,6 +35,7 @@ const steps = [
   { label: "Prettier", cmd: bin("prettier"), args: ["--check", ".", "--ignore-path", ".gitignore"] },
   { label: "Shell", cmd: bin("shellcheck"), args: [".husky/pre-commit"] },
   { label: "TypeScript", cmd: bin("tsc"), args: ["-p", "tsconfig.check.json"] },
+  { label: "Tests", cmd: "npm", args: ["test"] },
 ];
 
 console.log(pc.bold("Lint"));
