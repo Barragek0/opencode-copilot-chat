@@ -3,14 +3,17 @@
 # Agents Window Model Visibility — OpenCode Models in Copilot CLI Picker
 
 **Topic:** models / vscode / agents-window
-**Updated:** 2026-06-15
-**Tags:** #models #vscode #agents-window #targetChatSessionType #marketplace #copilotcli
+**Updated:** 2026-08-11
+**Tags:** #models #vscode #agents-window #targetChatSessionType #marketplace #copilotcli #byok #byok-bridge
 **GitHub Issue:** [ltmoerdani/opencode-copilot-chat#11](https://github.com/ltmoerdani/opencode-copilot-chat/issues/11)
 **GitHub Issue:** [ltmoerdani/opencode-copilot-chat#41](https://github.com/ltmoerdani/opencode-copilot-chat/issues/41) (duplication regression)
+**GitHub Issue:** [ltmoerdani/opencode-copilot-chat#122](https://github.com/ltmoerdani/opencode-copilot-chat/issues/122) (VS Code ≥1.129 BYOK bridge, see update below)
 **GitHub PR:** [#39](https://github.com/ltmoerdani/opencode-copilot-chat/pull/39) (by [@Marinski](https://github.com/Marinski)) — initial implementation
 **GitHub PR:** [#42](https://github.com/ltmoerdani/opencode-copilot-chat/pull/42) (by [@Marinski](https://github.com/Marinski)) — opt-in gate fix
 **GitHub PR:** Alternative by [@Wallacy](https://github.com/Wallacy) — separate vendor approach (this document)
+**GitHub PR:** [#125](https://github.com/ltmoerdani/opencode-copilot-chat/pull/125) (by [@Fahad090NP](https://github.com/Fahad090NP)) — VS Code ≥1.129 BYOK bridge + auto-enable (update below)
 **Related Research:** [`docs/references/01-20260611-agents-window-model-visibility.md`](../references/01-20260611-agents-window-model-visibility.md)
+**Update Doc:** [`docs/issues/58-20260811-pr125-agents-window-byok-bridge.md`](../issues/58-20260811-pr125-agents-window-byok-bridge.md)
 
 ---
 
@@ -116,6 +119,8 @@ The Agents window does **not** activate third-party extensions by default. Users
 ```
 
 Without this setting, the extension will not load in the Agents window process and no OpenCode models will appear in the picker, regardless of the `targetChatSessionType` registration.
+
+> **Update (2026-08-11, PR #125 / issue #122):** on VS Code ≥1.129 this setting **plus** `chat.agentHost.byokModels.enabled` (the experimental BYOK language-model bridge that mirrors extension BYOK models into agent-host sessions) are now **auto-enabled by the extension** on activation, gated by `opencodego.agentsWindow` + the new `opencodego.autoEnableAgentsWindow` (default `true`). The extension merges with any existing user values, records what it flipped in globalState, shows a one-time **Reload Now** notification, and reverts **only its own changes** when `agentsWindow` is disabled. Manual opt-in is no longer required on VS Code 1.129+. The legacy agent-host providers (`targetChatSessionType: "copilotcli"`) documented below remain the only path on VS Code 1.125–1.128, where the bridge does not exist. Full detail in [`docs/issues/58-20260811-pr125-agents-window-byok-bridge.md`](../issues/58-20260811-pr125-agents-window-byok-bridge.md).
 
 ---
 

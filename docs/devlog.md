@@ -1,6 +1,79 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
 
-**Branch:** `main` | **Updated:** 2026-08-08 Asia/Jakarta | **Current Phase:** Documentation backfill — PR #110/#113/#114 issue docs + devlog entries
+**Branch:** `main` | **Updated:** 2026-08-11 Asia/Jakarta | **Current Phase:** Release 0.5.2 cut — PR #123/#124/#125/#126 all merged (reasoning echo, BYOK group flow, Agents window models, reasoning tests); version bumped to `0.5.2`, building + installing locally.
+
+---
+
+## ✅ PR #126 Merge — Reasoning History `typeof` Guard + Unit Tests (Follow-up on #123) — 2026-08-11
+
+**Action:** Merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #126 (`fix/reasoning-history-guard-tests`, +151/−51). Merge commit `7be0c06`, 2026-08-11.
+
+**What:** Addresses the two non-blocking review notes left on the merged PR #123 (DeepSeek V4 multi-turn `reasoning_content` echo fix):
+
+1. **`typeof` guard.** `thinkingPartText()` in `src/extension.ts` used `part instanceof vscode.LanguageModelThinkingPart` without the `typeof ... === 'function'` guard that `src/streaming.ts` already uses for the same proposed API. Guard now in place, mirroring the `streaming.ts` pattern and the contract in `src/vscode.proposed.languageModelThinkingPart.d.ts`.
+2. **Unit tests for pure reasoning helpers.** `shouldEchoThinkingHistory()` and the value-normalization logic were inline in `extension.ts` with no tests. Extracted into new pure module `src/reasoningHistory.ts` (`thinkingTextFromValue()` + `shouldEchoThinkingHistory()`), with `src/test/reasoningHistory.test.ts` covering every model family including the issue #38 carve-out. 177/177 tests pass (+16 new).
+
+**Tooling overlap with #125:** branch carries the same `tmp/` ignore + `.gitignore`-aware tooling commits as #125 (cherry-picked so lint passed on `main` before #125 landed). After #125 merged (`3001d68`), those commits auto-reconcile to no-ops. Local simulation: `git merge-tree` reports 0 conflicts, post-merge working tree is clean, no duplication.
+
+**Residual (out of scope):** `src/extension.ts:3545` (`processAssistantMessage`) still has an unguarded `part instanceof vscode.LanguageModelThinkingPart`. Safe under the engine floor, candidate for a separate consistency pass.
+
+**Docs:** Dedicated issue doc `docs/issues/59-20260811-pr126-reasoning-history-guard-tests.md`. Corrected `55-…` (parent doc) which had prematurely claimed #126 was merged. Release runbook: `docs/issues/60-20260811-release-0-5-2-plan.md`.
+
+---
+
+## ✅ PR #125 Merge — OpenCode Go/Zen in Agents Window + Remove from Language Models (#122) — 2026-08-11
+
+**Action:** Merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #125 (`fix/issue-122-agents-window-models`, +380/−67). Merge commit `3001d68`, 2026-08-11T07:22:30Z.
+
+**What:** Auto-enables the two VS Code settings the Agents window needs (experimental BYOK bridge `chat.agentHost.byokModels.enabled` and `extensions.supportAgentsWindow`, gated by `opencodego.autoEnableAgentsWindow` default `true`), so OpenCode Go/Zen appear in the Agents window model picker and its "+ Add Models" vendor list. Also adds `opencodego.enabled` / `opencodezen.enabled` + `when` clauses on the vendor contributions and `Remove/Re-add Provider in Language Models` commands so providers can be removed from the Language Models list. New `src/providerEnablement.ts` + tests.
+
+**Relation to #121:** this PR adds `when` clauses (`config.opencodego.enabled` / `config.opencodezen.enabled`) to the `languageModelChatProviders` contributions — no `managementCommand` reintroduced, so the native BYOK group flow from #124 stays intact.
+
+**Docs:** CHANGELOG `[Unreleased]` entries added by the PR. Dedicated issue doc: `docs/issues/58-20260811-pr125-agents-window-byok-bridge.md` (also updates `docs/architecture/01-…` timeline, `docs/features/06-…agents-window-model-visibility.md` BYOK-bridge note).
+
+---
+
+## ✅ PR #126 Merge — `typeof` Guard + Unit Tests for Reasoning History Helpers — 2026-08-11
+
+**Action:** Merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #126 (review notes on #123) — the missing `typeof vscode.LanguageModelThinkingPart === "function"` runtime guard plus unit tests for `shouldEchoThinkingHistory` / `thinkingPartText`. Merge commit `7be0c06`, 2026-08-11T07:34:39Z.
+
+**Relation to #123:** addresses the two non-blocking review notes recorded on PR #123. With #126 merged, the #123 family-gating logic is guarded and tested.
+
+---
+
+## ✅ PR #124 Merge — Drop `managementCommand`, Restore Native BYOK Group Flow (#121) — 2026-08-11
+
+**Action:** Reviewed and merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #124 (`fix/issue-121-manage-models-unresponsive`, 1 commit `f778835a`, manifest-only, `package.json` + `CHANGELOG.md`, −4 lines). Merge commit `43a55c60`, 2026-08-10T23:38:09Z.
+
+**Problem (#121):** The `languageModelChatProviders` contributions declared both `managementCommand` and a `configuration` schema. VS Code's `configureLanguageModelsProviderGroup()` **short-circuits on `managementCommand`** — it re-resolves models and returns without prompting for a group name or API key — so "+ Add Models" never created a BYOK group, every built-in context-menu action (Rename / Update API Key / Delete / Open in Language Models (JSON)) threw `group not found` and failed silently, and leftover groups (e.g. created by per-model `reasoningEffort`) could not be deleted.
+
+**Root cause (verified against VS Code source):** `if (vendor.managementCommand) { await this._resolveAllLanguageModels(vendor.vendor, false); return; }` in `src/vs/workbench/contrib/chat/common/languageModels.ts` never reaches the group-name/configuration prompts. `managementCommand` is also officially deprecated in the contribution schema ("Use the new `configuration` property instead").
+
+**Fix:** Dropped `managementCommand` from `opencodego`, `opencodezen`, `opencodego-agent`, `opencodezen-agent`. "+ Add Models" now runs the native BYOK prompt flow; context-menu actions work against the created group; leftover groups are deletable. Legacy commands (`OpenCode Go: Manage Provider`, `Set API Key`, …) remain registered in `contributes.commands` and keep working as the SecretStorage fallback.
+
+**Verification:** `npm run compile` ✅ · `npm test` 161/161 ✅ · `npm run lint` ✅ · CI build + GitGuardian pass ✅ · author tested VSIX on VS Code 1.132 (Add Models → prompt → group created; gear actions work; leftover group deletable) ✅ · PR based on latest `main`, no conflict ✅.
+
+**Review notes (non-blocking):** agent vendors (`*-agent`) no longer appear in "+ Add Models" (VS Code lists vendors with `managementCommand || configuration`) and lose their gear "Manage (Agents)…" entry when `opencodego.showAgentModelsInManagePanel` is on (default off) — acceptable trade-off, commands stay reachable from the Command Palette.
+
+**Docs:** `docs/issues/57-20260811-pr124-managementcommand-byok-flow.md` (new, ✅ Solved); architecture doc timeline updated; CHANGELOG `[Unreleased] → Fixed` entry added by the PR.
+
+---
+
+## ✅ PR #123 Merge — DeepSeek Multi-Turn `reasoning_content` Echo — 2026-08-11
+
+**Action:** Reviewed and merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #123 (`fix/deepseek-reasoning-content-echo`, 1 commit `fec411b`, `src/extension.ts`, +70/−1). Fixes repeated `HTTP 400: The reasoning_content in the thinking mode must be passed back to the API` on multi-turn DeepSeek V4 Flash conversations. Merged 2026-08-10T23:28:50Z.
+
+**Root cause:** `convertMessage()` dropped `LanguageModelThinkingPart` from assistant history (fell through to `partToText()` → `""`), so follow-up turns omitted the `reasoning_content` DeepSeek's upstream validator requires to be echoed back unchanged.
+
+**Fix:** Extract thinking text from history (`thinkingPartText`) and echo it as `reasoning_content` on assistant messages — tool-call branch uses cache-first with history fallback (`reasoningForToolCalls(...) ?? thinkingText`), plain assistant branch is new. Family-gated via `shouldEchoThinkingHistory`: DeepSeek required, Gemini (thought parts), GLM/Kimi/Qwen/MiniMax tolerated; omitted for MiMo (#38), GPT (Responses API), Claude (Anthropic API), unknown.
+
+**Verification:** `npm run compile` ✅ · `npm run lint` ✅ · `npm test` 161/161 ✅ (in separate worktree `review/pr-123`, `main` untouched). Transport tracing confirmed Gemini reads the field into `thought: true`, Responses/Anthropic serializers ignore it, MiMo carve-out intact.
+
+**Review notes:** (1) missing `typeof vscode.LanguageModelThinkingPart === "function"` runtime guard (consistency with `streaming.ts`); (2) `shouldEchoThinkingHistory`/`thinkingPartText` pure but untested — family gating regression-prone (lesson #38). Both notes addressed by PR #126 (merged 2026-08-11, commit `7be0c06`).
+
+**Next (done):** merged with a merge commit preserving `fec411b`; issue doc promoted to ✅ Solved.
+
+**Docs:** `docs/issues/55-20260811-pr123-deepseek-reasoning-content-echo.md` (new, ✅ Solved), CHANGELOG `[Unreleased]` entry added.
 
 ---
 
