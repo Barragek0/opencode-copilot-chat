@@ -27,7 +27,9 @@ The branch also carries the same `tmp/` ignore + `.gitignore`-aware tooling comm
 `thinkingPartText()` in `src/extension.ts` (added by PR #123) used:
 
 ```ts
-if (!(part instanceof vscode.LanguageModelThinkingPart)) { return ""; }
+if (!(part instanceof vscode.LanguageModelThinkingPart)) {
+  return "";
+}
 ```
 
 `LanguageModelThinkingPart` is a proposed VS Code API. The extension's `engines.vscode: ^1.125.0` guarantees it is present at runtime (API shipped August 2025, VS Code PR #259939), and the `src/vscode.proposed.languageModelThinkingPart.d.ts` augmentation already documents the `typeof ... === 'function'` guard as the recommended pattern. `src/streaming.ts` follows that pattern via `thinkingPartConstructor` (lines 261–265), but the `extension.ts` site added by #123 did not.
@@ -68,9 +70,9 @@ Two exported functions extracted from `extension.ts`:
 
 Covers:
 
-| Function | Cases |
-| -------- | ----- |
-| `thinkingTextFromValue()` | plain strings, string chunk arrays, non-string chunks dropped, empty string, empty array |
+| Function                      | Cases                                                                                                                                                             |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `thinkingTextFromValue()`     | plain strings, string chunk arrays, non-string chunks dropped, empty string, empty array                                                                          |
 | `shouldEchoThinkingHistory()` | `undefined` (no echo), DeepSeek/Kimi/GLM/Qwen/MiniMax (echo), Gemini (echo), MiMo/GPT/Claude (no echo, preserves issue #38 carve-out), unknown model id (no echo) |
 
 ### 4. Tooling commits (shared with PR #125)
@@ -88,28 +90,28 @@ After #125 merged, these auto-reconcile to no-ops on merge.
 
 ### Author-reported (PR description)
 
-| Check | Result |
-| ----- | ------ |
-| `npm run compile` | ✅ PASS |
-| `npm test` | ✅ 177/177 pass (was 161/161; +16 new) |
-| `npm run lint` | ✅ PASS (markdownlint now ignores `tmp/` via `gitignore: true`) |
-| GitHub PR checks | ✅ passing |
+| Check             | Result                                                          |
+| ----------------- | --------------------------------------------------------------- |
+| `npm run compile` | ✅ PASS                                                         |
+| `npm test`        | ✅ 177/177 pass (was 161/161; +16 new)                          |
+| `npm run lint`    | ✅ PASS (markdownlint now ignores `tmp/` via `gitignore: true`) |
+| GitHub PR checks  | ✅ passing                                                      |
 
 ### Maintainer-side verification (this review, 2026-08-11)
 
 Performed locally against `main` at `3001d68` (post-#125):
 
-| Check | Result |
-| ----- | ------ |
-| `gh pr view 126 --json mergeable,mergeStateStatus` | `MERGEABLE` + `CLEAN` ✅ |
-| `git fetch origin pull/126/head:pr-126 && git log --oneline main..pr-126` | 3 commits, 2 of which are tooling duplicates of #125 ✅ |
-| `git merge-tree $(git merge-base main pr-126) main pr-126` (conflict count) | **0 conflicts** ✅ |
-| Simulated `git merge --no-ff --no-commit pr-126` on clean `main` | Auto-merge of `package.json` + `src/extension.ts`, clean working tree ✅ |
-| Post-merge `reasoningHistory.ts` presence | single definition, no duplication ✅ |
-| Post-merge `shouldEchoThinkingHistory` definition count | 1 (in `reasoningHistory.ts` only), removed from `extension.ts` ✅ |
-| Post-merge `typeof` guard in `extension.ts` | present at the `thinkingPartText()` site ✅ |
-| Tooling from #125 preserved post-merge | `.markdownlint-cli2.jsonc`, `scripts/gitignore-patterns.mjs`, `tmp/` in `.gitignore` all intact ✅ |
-| Actual merge diff | `extension.ts` −30/+36, `reasoningHistory.ts` +43, `reasoningHistory.test.ts` +48 (only reasoning changes, no tooling noise) ✅ |
+| Check                                                                       | Result                                                                                                                          |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `gh pr view 126 --json mergeable,mergeStateStatus`                          | `MERGEABLE` + `CLEAN` ✅                                                                                                        |
+| `git fetch origin pull/126/head:pr-126 && git log --oneline main..pr-126`   | 3 commits, 2 of which are tooling duplicates of #125 ✅                                                                         |
+| `git merge-tree $(git merge-base main pr-126) main pr-126` (conflict count) | **0 conflicts** ✅                                                                                                              |
+| Simulated `git merge --no-ff --no-commit pr-126` on clean `main`            | Auto-merge of `package.json` + `src/extension.ts`, clean working tree ✅                                                        |
+| Post-merge `reasoningHistory.ts` presence                                   | single definition, no duplication ✅                                                                                            |
+| Post-merge `shouldEchoThinkingHistory` definition count                     | 1 (in `reasoningHistory.ts` only), removed from `extension.ts` ✅                                                               |
+| Post-merge `typeof` guard in `extension.ts`                                 | present at the `thinkingPartText()` site ✅                                                                                     |
+| Tooling from #125 preserved post-merge                                      | `.markdownlint-cli2.jsonc`, `scripts/gitignore-patterns.mjs`, `tmp/` in `.gitignore` all intact ✅                              |
+| Actual merge diff                                                           | `extension.ts` −30/+36, `reasoningHistory.ts` +43, `reasoningHistory.test.ts` +48 (only reasoning changes, no tooling noise) ✅ |
 
 ### Residual note (out of scope for this PR)
 

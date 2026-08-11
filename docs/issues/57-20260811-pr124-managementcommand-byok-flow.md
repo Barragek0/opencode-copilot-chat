@@ -21,8 +21,8 @@ The `languageModelChatProviders` contributions in `package.json` declared **both
 
 ### Reported symptoms
 
-1. **Context menu unresponsive** — *Rename Group*, *Update API Key*, *Delete*, and *Open in Language Models (JSON)* did nothing when clicked.
-2. **"+ Add Models" dead** — clicking *OpenCode Go* or *OpenCode Zen* under **+ Add Models** did not prompt for a group name or API key and never created a group.
+1. **Context menu unresponsive** — _Rename Group_, _Update API Key_, _Delete_, and _Open in Language Models (JSON)_ did nothing when clicked.
+2. **"+ Add Models" dead** — clicking _OpenCode Go_ or _OpenCode Zen_ under **+ Add Models** did not prompt for a group name or API key and never created a group.
 3. **Leftover default group cannot be removed** — the `OpenCode Go` group persisted in `chatLanguageModels.json` (e.g. created by per-model `reasoningEffort` configuration) could never be deleted.
 
 ### Root cause
@@ -31,8 +31,8 @@ Verified against the VS Code source (`src/vs/workbench/contrib/chat/common/langu
 
 ```ts
 if (vendor.managementCommand) {
-    await this._resolveAllLanguageModels(vendor.vendor, false);
-    return; // ← short-circuit: re-resolve models only, never prompt/create a group
+  await this._resolveAllLanguageModels(vendor.vendor, false);
+  return; // ← short-circuit: re-resolve models only, never prompt/create a group
 }
 // ...only below this point does VS Code prompt for a group name + configuration
 //     and create the BYOK group in chatLanguageModels.json
@@ -69,10 +69,10 @@ The extension's own management commands (`OpenCode Go: Manage Provider`, `OpenCo
 
 ## Files Changed
 
-| File | Change |
-| ---- | ------ |
+| File           | Change                                                                                                |
+| -------------- | ----------------------------------------------------------------------------------------------------- |
 | `package.json` | Removed `managementCommand` from `opencodego`, `opencodezen`, `opencodego-agent`, `opencodezen-agent` |
-| `CHANGELOG.md` | New `[Unreleased] → Fixed` entry for #121 |
+| `CHANGELOG.md` | New `[Unreleased] → Fixed` entry for #121                                                             |
 
 No `src/` changes — this is a manifest-only fix.
 
@@ -86,6 +86,7 @@ No `src/` changes — this is a manifest-only fix.
    > `managementCommand` — Deprecated. Use `configuration` instead. Command ID that opens a UI for managing this provider.
 
    And `configuration` is documented as "the recommended way to let users configure a provider."
+
 3. **No auth regression** — `provideLanguageModelChatInformation` / `provideLanguageModelChatResponse` already fall back to the extension's `SecretStorage` via `getConfiguredApiKey` when `options.configuration.apiKey` is absent, so users who set the key through the legacy commands keep working.
 
 ### Minor UX trade-off (agent vendors)
@@ -95,7 +96,7 @@ The "+ Add Models" dropdown in VS Code lists vendors with `managementCommand || 
 - The agent vendors (`*-agent`) no longer appear in "+ Add Models" — acceptable, since clicking them was previously a dead short-circuit too.
 - The gear "Manage (Agents)…" entry in the Manage Language Models panel is no longer rendered for agent vendors (that branch is `else if (vendorEntry.vendor.managementCommand)`). Only relevant when `opencodego.showAgentModelsInManagePanel` is `true` (default `false`); the commands remain reachable from the Command Palette.
 
-> **Note — not affected by PR #125 (#122):** the *base* providers `opencodego` / `opencodezen` DO appear in the Agents window's "+ Add Models" list since PR #125 auto-enables the BYOK agent-host bridge (`chat.agentHost.byokModels.enabled` + `extensions.supportAgentsWindow`). That is the base vendor flow, separate from the `*-agent` variant vendors discussed above. PR #125 also added `when` clauses (`config.opencodego.enabled` / `config.opencodezen.enabled`) to the contributions but did **not** reintroduce `managementCommand`, so the native BYOK group flow from this PR stays intact.
+> **Note — not affected by PR #125 (#122):** the _base_ providers `opencodego` / `opencodezen` DO appear in the Agents window's "+ Add Models" list since PR #125 auto-enables the BYOK agent-host bridge (`chat.agentHost.byokModels.enabled` + `extensions.supportAgentsWindow`). That is the base vendor flow, separate from the `*-agent` variant vendors discussed above. PR #125 also added `when` clauses (`config.opencodego.enabled` / `config.opencodezen.enabled`) to the contributions but did **not** reintroduce `managementCommand`, so the native BYOK group flow from this PR stays intact.
 
 ---
 
