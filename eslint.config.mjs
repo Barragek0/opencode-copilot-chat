@@ -1,14 +1,11 @@
-import { readFileSync } from "node:fs";
 import tseslint from "typescript-eslint";
-
-const gitignore = readFileSync(new URL(".gitignore", import.meta.url), "utf8")
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"));
+import { readGitignorePatterns } from "./scripts/gitignore-patterns.mjs";
 
 export default tseslint.config(
   {
-    ignores: gitignore,
+    // Ignore everything `.gitignore` ignores (tmp/, out/, generated scripts,
+    // …) so linting stays in sync with the repo's ignore rules at runtime.
+    ignores: readGitignorePatterns(),
   },
   ...tseslint.configs.recommended,
   {

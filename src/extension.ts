@@ -44,6 +44,7 @@ import {
   type AllProviderVendor,
   type ProviderVendor,
 } from "./providerTypes";
+import { providerEnabledSetting } from "./providerEnablement";
 import { isInternalDataPart } from "./chatParts";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
@@ -83,6 +84,28 @@ import {
 const SECRET_KEY = "opencodego.apiKey";
 const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
 const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
+
+/**
+ * VS Code core settings the extension manages (auto-configures and reverts)
+ * so OpenCode models work in the Agents window (issue #122):
+ *
+ * - `chat.agentHost.byokModels.enabled`: wires the agent-host BYOK bridge
+ *   (VS Code 1.129+); off by default, so extension-provided BYOK models never
+ *   reach agent-host sessions until it is flipped on.
+ * - `extensions.supportAgentsWindow.<id>`: the ONLY way a code extension is
+ *   allowed to run in the Agents window (sessions window) process. Without
+ *   it the extension is disabled there, its `languageModelChatProviders`
+ *   vendors are not registered, and neither the model picker nor the
+ *   "+ Add Models" list knows OpenCode Go/Zen.
+ */
+const AGENT_HOST_BYOK_ENABLED_SETTING = "byokModels.enabled";
+const SUPPORT_AGENTS_WINDOW_SETTING = "supportAgentsWindow";
+const EXTENSION_ID = "ltmoerdani.opencode-copilot-chat";
+/** How many VS Code versions old the agent-host BYOK bridge goes back to. */
+const AGENT_HOST_BYOK_MINOR_VERSION = 129;
+/** globalState keys tracking that the extension enabled each setting itself. */
+const AGENTS_BYOK_BRIDGE_STATE_KEY = "opencode.agentsByokBridge.v1";
+const SUPPORT_AGENTS_WINDOW_STATE_KEY = "opencode.supportAgentsWindow.v1";
 
 let usageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
@@ -696,21 +719,33 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
+  // Read from the root configuration with the FULL setting key: section-scoped
+  // reads (getConfiguration("opencodego")) resolve keys relative to the
+  // section, which would misread the Zen flag as opencodego.opencodezen.enabled.
+  const goProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true);
+  const zenProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true);
   const goProvider = new OpenCodeProvider(context, PROVIDERS[GO_VENDOR]);
   const zenProvider = new OpenCodeProvider(context, PROVIDERS[ZEN_VENDOR]);
   const modelInfoProviders: OpenCodeProvider[] = [goProvider, zenProvider];
 
   const subscriptions: vscode.Disposable[] = [
-    vscode.lm.registerLanguageModelChatProvider(GO_VENDOR, goProvider),
-    vscode.lm.registerLanguageModelChatProvider(ZEN_VENDOR, zenProvider),
+    // Register the chat providers only while the matching `opencodego.enabled`
+    // / `opencodezen.enabled` setting is on, so a disabled provider disappears
+    // from the Language Models list and every model picker (its vendor
+    // contribution carries the same `when` clause). The provider instances are
+    // still created so the management commands keep working for re-enabling.
+    ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(GO_VENDOR, goProvider)] : []),
+    ...(zenProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(ZEN_VENDOR, zenProvider)] : []),
     vscode.commands.registerCommand("opencodego.manage", () => goProvider.manage()),
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
     vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
+    vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled("opencodego", "OpenCode Go")),
     vscode.commands.registerCommand("opencodego.configureUtilityModels", () => configureUtilityModels()),
     vscode.commands.registerCommand("opencodezen.diagnostics", () => zenProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodezen.manage", () => zenProvider.manage()),
     vscode.commands.registerCommand("opencodezen.refreshModels", () => zenProvider.refreshModels()),
+    vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled("opencodezen", "OpenCode Zen")),
     vscode.commands.registerCommand("opencodego.modelPickerDiagnostics", () => showModelPickerDiagnostics()),
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => showUsageWebview(context)),
@@ -868,14 +903,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Agent-host providers for the Copilot Agents window (opt-in via config).
   const enableAgents = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
-  if (enableAgents) {
+  if (enableAgents && (goProviderEnabled || zenProviderEnabled)) {
     const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
     const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
     modelInfoProviders.push(agentGoProvider, agentZenProvider);
     subscriptions.push(
-      vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider),
-      vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider),
+      ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider)] : []),
+      ...(zenProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_ZEN_VENDOR, agentZenProvider)] : []),
     );
+    // On VS Code 1.129+ the Agents window runs in the agent host process,
+    // where extension BYOK models are only reachable through VS Code's BYOK
+    // language-model bridge — which is off by default. Make sure it is on so
+    // OpenCode models actually show up there (issue #122).
+    void ensureAgentsWindowSupport(context);
   }
 
   context.subscriptions.push(...subscriptions);
@@ -888,6 +928,18 @@ export function activate(context: vscode.ExtensionContext) {
       if (event.affectsConfiguration("opencodego.showProviderPrefix")) {
         for (const provider of modelInfoProviders) {
           provider.notifyModelInfoChanged();
+        }
+      }
+      if (event.affectsConfiguration("opencodego.agentsWindow") || event.affectsConfiguration("opencodego.autoEnableAgentsWindow")) {
+        const agentsWindowEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
+        const autoEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("autoEnableAgentsWindow", true);
+        if (agentsWindowEnabled && autoEnabled) {
+          void ensureAgentsWindowSupport(context);
+        } else if (!agentsWindowEnabled) {
+          // We may have enabled core settings for the Agents window; revert
+          // them when the user turns the feature off so the user's global
+          // configuration is restored.
+          void revertAgentsWindowSupport(context);
         }
       }
     }),
@@ -903,9 +955,145 @@ async function configureUtilityModels(): Promise<void> {
   );
 }
 
+/**
+ * Toggle whether a provider (`opencodego` / `opencodezen`) is registered at
+ * all. Disabling removes the provider from the Language Models list and every
+ * model picker — the provider's vendor contribution is gated by the same
+ * `when` clause (`config.<vendor>.enabled`) and its runtime registration is
+ * skipped. Previously configured BYOK groups and API keys are kept, so
+ * re-enabling restores the provider exactly as it was.
+ *
+ * Provider registration happens at startup, so a window reload is required
+ * for the change to take effect.
+ */
+async function toggleProviderEnabled(vendor: string, displayName: string): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration(vendor);
+  const current = cfg.get<boolean>("enabled", true);
+  const next = !current;
+  await cfg.update("enabled", next, vscode.ConfigurationTarget.Global);
+
+  const reload = await vscode.window.showInformationMessage(
+    next
+      ? `${displayName} re-enabled. Reload the window for the provider to appear in Language Models again.`
+      : `${displayName} removed from Language Models. Reload the window for it to disappear from the model picker and the manage list. Your API key and group settings are kept.`,
+    "Reload Now",
+  );
+  if (reload === "Reload Now") {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
+
+/**
+ * Whether this VS Code has the modern agent-host BYOK bridge (1.129+).
+ *
+ * From VS Code 1.129 the Agents window runs in a separate agent host
+ * process. Extension-provided BYOK models (isBYOK, no `targetChatSessionType`)
+ * are mirrored into agent-host sessions exclusively through the BYOK
+ * language-model bridge, which VS Code keeps OFF by default
+ * (`chat.agentHost.byokModels.enabled`, experimental). On older versions the
+ * extension's own agent-host providers (`targetChatSessionType: "copilotcli"`)
+ * are the only path, which is why they stay registered.
+ */
+function isModernAgentHostVscode(): boolean {
+  const [major = 1, minor = 0] = (vscode.version ?? "").split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= AGENT_HOST_BYOK_MINOR_VERSION);
+}
+
+/**
+ * Ensure the VS Code core settings that make OpenCode Go/Zen models usable in
+ * the Agents window are enabled (issue #122):
+ *
+ * 1. `extensions.supportAgentsWindow.<id>` — the only way a code extension is
+ *    allowed to run in the Agents window (sessions window) process. VS Code
+ *    disables any extension with a `main` entry there by default, so without
+ *    this setting the extension's `languageModelChatProviders` vendors are
+ *    not registered in that window: neither the model picker nor the
+ *    "+ Add Models" list can show OpenCode Go/Zen.
+ * 2. `chat.agentHost.byokModels.enabled` (VS Code 1.129+) — the BYOK
+ *    language-model bridge that mirrors extension BYOK models into
+ *    agent-host sessions. Off by default and experimental.
+ *
+ * CONTRACT:
+ * - Only writes the settings while the user keeps `opencodego.agentsWindow`
+ *   and `opencodego.autoEnableAgentsWindow` on; the settings are merged with
+ *   existing user values (never clobbering unrelated entries).
+ * - Records in globalState which settings the extension flipped itself, so
+ *   {@link revertAgentsWindowSupport} can restore them when the user disables
+ *   the Agents feature.
+ * - Both settings take effect after a window reload (extension host /
+ *   agent host restart) — surface an actionable notification the first time
+ *   anything was changed.
+ */
+async function ensureAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
+  const opencodeCfg = vscode.workspace.getConfiguration("opencodego");
+  if (!opencodeCfg.get<boolean>("agentsWindow", true) || !opencodeCfg.get<boolean>("autoEnableAgentsWindow", true)) {
+    return;
+  }
+
+  let changed = false;
+  const extensionCfg = vscode.workspace.getConfiguration("extensions");
+  const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
+  if (!support[EXTENSION_ID]) {
+    await extensionCfg.update(SUPPORT_AGENTS_WINDOW_SETTING, { ...support, [EXTENSION_ID]: true }, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, true);
+    changed = true;
+  }
+
+  if (isModernAgentHostVscode()) {
+    const agentHostCfg = vscode.workspace.getConfiguration("chat.agentHost");
+    if (!agentHostCfg.get<boolean>(AGENT_HOST_BYOK_ENABLED_SETTING, false)) {
+      await agentHostCfg.update(AGENT_HOST_BYOK_ENABLED_SETTING, true, vscode.ConfigurationTarget.Global);
+      await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, true);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    const reload = await vscode.window.showInformationMessage(
+      "OpenCode: enabled VS Code's Agents window support so OpenCode Go/Zen models can run in the Agents window. Reload the window for it to take effect.",
+      "Reload Now",
+    );
+    if (reload === "Reload Now") {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    }
+  }
+}
+
+/**
+ * Revert the core settings that {@link ensureAgentsWindowSupport} enabled on
+ * this machine (and only those — settings the user configured manually are
+ * left untouched).
+ */
+async function revertAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
+  const extensionCfg = vscode.workspace.getConfiguration("extensions");
+  if (context.globalState.get<boolean>(SUPPORT_AGENTS_WINDOW_STATE_KEY)) {
+    const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
+    if (support[EXTENSION_ID]) {
+      const next = { ...support };
+      delete next[EXTENSION_ID];
+      await extensionCfg.update(
+        SUPPORT_AGENTS_WINDOW_SETTING,
+        Object.keys(next).length > 0 ? next : undefined,
+        vscode.ConfigurationTarget.Global,
+      );
+    }
+    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, undefined);
+  }
+
+  if (context.globalState.get<boolean>(AGENTS_BYOK_BRIDGE_STATE_KEY)) {
+    await vscode.workspace
+      .getConfiguration("chat.agentHost")
+      .update(AGENT_HOST_BYOK_ENABLED_SETTING, false, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, undefined);
+  }
+}
+
 async function warmModelPickerMetadata(): Promise<void> {
-  const vendors: string[] = [GO_VENDOR, ZEN_VENDOR];
-  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true)) {
+  const vendors: string[] = [
+    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true) ? [GO_VENDOR] : []),
+    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true) ? [ZEN_VENDOR] : []),
+  ];
+  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true) && vendors.length > 0) {
     vendors.push(AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
   }
   await Promise.allSettled(vendors.map((v) => vscode.lm.selectChatModels({ vendor: v })));
@@ -1625,13 +1813,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   async manage(): Promise<void> {
-    const apiKey = await this.context.secrets.get(SECRET_KEY);
-
-    if (!apiKey) {
-      await this.setApiKey();
-      return;
-    }
-
+    // Read via the base-vendor full key so agent variants (opencodego-agent,
+    // opencodezen-agent) follow the same switch as the vendor they mirror.
+    const providerEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(this.definition.vendor), true);
     const choice = await vscode.window.showQuickPick(
       [
         { label: "Set API Key", action: "set" as const },
@@ -1640,6 +1824,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         { label: "Refresh Models", action: "refresh" as const },
         { label: "Configure Utility Models", action: "utility" as const },
         { label: "Open Diagnostics", action: "diagnostics" as const },
+        ...(providerEnabled
+          ? [{ label: "Remove from Language Models", action: "remove" as const }]
+          : [{ label: "Re-add to Language Models", action: "remove" as const }]),
       ],
       {
         title: `Manage ${this.definition.displayName}`,
@@ -1648,6 +1835,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     );
 
     if (!choice) {
+      return;
+    }
+
+    if (choice.action === "remove") {
+      await toggleProviderEnabled(this.definition.vendor, this.definition.displayName);
       return;
     }
 
@@ -2076,7 +2268,13 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       let imagesHandled = false;
       try {
         this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}${describeWholeConversation ? " (whole conversation)" : ""}`);
-        const { descriptions, cacheHits, cacheMisses } = await proxyVision(messages, visionProxyModelId, visionProxyPrompt, describeWholeConversation, token);
+        const { descriptions, cacheHits, cacheMisses } = await proxyVision(
+          messages,
+          visionProxyModelId,
+          visionProxyPrompt,
+          describeWholeConversation,
+          token,
+        );
         if (descriptions.size > 0) {
           const fallbackDescription = descriptions.values().next().value ?? "";
           for (let i = 0; i < flatMessages.length; i++) {
@@ -3934,10 +4132,7 @@ function collectRequestParts(
  * the proxy describe ONLY the message that contains a new image, instead of
  * re-sending the whole conversation on every turn.
  */
-function buildVisionRequestMessage(
-  msg: vscode.LanguageModelChatRequestMessage,
-  visionPrompt: string,
-): vscode.LanguageModelChatMessage[] {
+function buildVisionRequestMessage(msg: vscode.LanguageModelChatRequestMessage, visionPrompt: string): vscode.LanguageModelChatMessage[] {
   const requestMessages: vscode.LanguageModelChatMessage[] = [];
   const parts = collectRequestParts(msg);
   if (parts.length > 0) {
@@ -4062,8 +4257,7 @@ async function proxyVision(
     for (let index = 0; index < messages.length; index++) {
       const msg = messages[index];
       const imageParts = msg.content.filter(
-        (part): part is vscode.LanguageModelDataPart =>
-          part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+        (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
       );
       if (imageParts.length === 0) {
         continue;
@@ -4092,8 +4286,7 @@ async function proxyVision(
   for (let index = 0; index < messages.length; index++) {
     const msg = messages[index];
     const imageParts = msg.content.filter(
-      (part): part is vscode.LanguageModelDataPart =>
-        part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
+      (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
     );
     if (imageParts.length === 0) {
       continue;
