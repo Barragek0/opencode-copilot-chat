@@ -2,9 +2,9 @@
 
 # Context Size Display Correction — Per-Provider Model Limits
 
-**Topic:** models / provider / metadata  
-**Updated:** 2026-05-16  
-**Tags:** #models #provider #metadata #vscode #context-window #models-dev  
+**Topic:** models / provider / metadata
+**Updated:** 2026-05-16
+**Tags:** #models #provider #metadata #vscode #context-window #models-dev
 **Supersedes:** —
 
 ---

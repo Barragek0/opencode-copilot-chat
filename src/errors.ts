@@ -35,7 +35,7 @@ export function buildOpenCodeRequestError(
   const apiError = parseApiError(rawDetail);
   const rateLimitInfo = readRateLimitInfo(response.headers);
   const modelHint = modelId ? ` model=${modelId}` : "";
-  const sizeHint = ` payloadBytes=${payloadBytes}`;
+  const sizeHint = ` payloadBytes=${String(payloadBytes)}`;
   const apiMessage = (apiError.message ?? rawDetail.trim()) || response.statusText;
   const isLimit = isRateLimitResponse(response.status, apiError);
 
@@ -48,15 +48,15 @@ export function buildOpenCodeRequestError(
       waitText ? `Retry after ${waitText}.` : undefined,
       quotaText ? `Quota: ${quotaText}.` : undefined,
     ].filter((part): part is string => Boolean(part));
-    const userMessage = `${providerDisplayName}: ${reason}${modelHint ? ` (${modelId})` : ""}. ${details.join(" ")}`.trim();
+    const userMessage = `${providerDisplayName}: ${reason}${modelId ? ` (${modelId})` : ""}. ${details.join(" ")}`.trim();
     return new OpenCodeRequestError(
-      `${providerDisplayName} API rate/quota limit (${response.status})${modelHint}${sizeHint}: ${apiMessage}; ${quotaText || "no quota headers"}`,
+      `${providerDisplayName} API rate/quota limit (${String(response.status)})${modelHint}${sizeHint}: ${apiMessage}; ${quotaText || "no quota headers"}`,
       userMessage,
     );
   }
 
-  const userMessage = `${providerDisplayName} API request failed (HTTP ${response.status})${modelHint ? ` for ${modelId}` : ""}: ${describeRouterUnavailable(apiError, apiMessage)}${capacityHint}`;
-  const requestMessage = `${providerDisplayName} API request failed (${response.status})${modelHint}${sizeHint}${capacityHint}: ${apiMessage}`;
+  const userMessage = `${providerDisplayName} API request failed (HTTP ${String(response.status)})${modelId ? ` for ${modelId}` : ""}: ${describeRouterUnavailable(apiError, apiMessage)}${capacityHint}`;
+  const requestMessage = `${providerDisplayName} API request failed (${String(response.status)})${modelHint}${sizeHint}${capacityHint}: ${apiMessage}`;
   return new OpenCodeRequestError(requestMessage, userMessage);
 }
 
@@ -75,7 +75,7 @@ function describeRouterUnavailable(apiError: ParsedApiError, fallback: string): 
 
 export function truncateForLog(value: string, max = 1200): string {
   const collapsed = value.replace(/\s+/g, " ").trim();
-  return collapsed.length > max ? `${collapsed.slice(0, max)}… (+${collapsed.length - max} chars)` : collapsed;
+  return collapsed.length > max ? `${collapsed.slice(0, max)}… (+${String(collapsed.length - max)} chars)` : collapsed;
 }
 
 function parseApiError(rawDetail: string): ParsedApiError {
@@ -281,12 +281,12 @@ export function formatDuration(ms: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   if (hours) {
-    return `${hours}h ${minutes}m`;
+    return `${String(hours)}h ${String(minutes)}m`;
   }
   if (minutes) {
-    return `${minutes}m ${seconds}s`;
+    return `${String(minutes)}m ${String(seconds)}s`;
   }
-  return `${seconds}s`;
+  return `${String(seconds)}s`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

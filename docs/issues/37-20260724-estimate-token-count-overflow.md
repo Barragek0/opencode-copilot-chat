@@ -2,9 +2,9 @@
 
 # estimateTokenCount Overestimation Causes `max_tokens: 1` on Large Conversations
 
-**Topic:** streaming / models / context-window  
-**Updated:** 2026-07-24  
-**Tags:** #streaming #models #bug #estimateTokenCount #context-window #max-tokens  
+**Topic:** streaming / models / context-window
+**Updated:** 2026-07-24
+**Tags:** #streaming #models #bug #estimateTokenCount #context-window #max-tokens
 **Fixes:** [#83](https://github.com/ltmoerdani/opencode-copilot-chat/issues/83)
 
 ---
@@ -13,8 +13,8 @@
 
 When a user has a large conversation that approaches the model's context window limit (~754K tokens on a 1M window), the extension sends `max_tokens: 1` to the API. The model generates exactly 1 token, hits `finishReason: length`, and the user sees an empty or 1-word response. The chat becomes unusable until the conversation is cleared.
 
-**Reported:** [#83](https://github.com/ltmoerdani/opencode-copilot-chat/issues/83) by @gwynnbleiidd (2026-07-24)  
-**Environment:** Extension v0.4.2, VS Code 1.130.0, OpenCode Go provider  
+**Reported:** [#83](https://github.com/ltmoerdani/opencode-copilot-chat/issues/83) by @gwynnbleiidd (2026-07-24)
+**Environment:** Extension v0.4.2, VS Code 1.130.0, OpenCode Go provider
 **Affected models:** `deepseek-v4-flash`, `mimo-v2.5`, `hy3` (all Go models with large context windows)
 
 ### Symptoms

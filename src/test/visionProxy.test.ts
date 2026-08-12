@@ -23,11 +23,11 @@ import {
  * model natively supports images), NOT the enhanced capabilities.
  */
 
-type ProxyConditionInput = {
+interface ProxyConditionInput {
   hasImageInput: boolean;
   actuallySupportsVision: boolean;
   visionProxyModelId: string;
-};
+}
 
 function shouldProxy({ hasImageInput, actuallySupportsVision, visionProxyModelId }: ProxyConditionInput): boolean {
   return Boolean(hasImageInput && !actuallySupportsVision && visionProxyModelId);
@@ -154,12 +154,16 @@ describe("vision proxy image description cache", () => {
     const firstKey = imageDescriptionKey("Zmlyc3Q=");
 
     for (let i = 0; i <= IMAGE_DESCRIPTION_CACHE_LIMIT; i++) {
-      storeImageDescriptions([imageDescriptionKey(`aW1hZ2UtaW5kZXgt${i}`)], `description-${i}`);
+      storeImageDescriptions([imageDescriptionKey(`aW1hZ2UtaW5kZXgt${String(i)}`)], `description-${String(i)}`);
     }
 
     assert.ok(imageDescriptionCache.size <= IMAGE_DESCRIPTION_CACHE_LIMIT, "cache size stays within the limit");
     assert.equal(imageDescriptionCache.has(firstKey), false, "oldest entry is evicted");
-    assert.equal(imageDescriptionCache.has(imageDescriptionKey(`aW1hZ2UtaW5kZXgt${IMAGE_DESCRIPTION_CACHE_LIMIT}`)), true, "recent entry is kept");
+    assert.equal(
+      imageDescriptionCache.has(imageDescriptionKey(`aW1hZ2UtaW5kZXgt${String(IMAGE_DESCRIPTION_CACHE_LIMIT)}`)),
+      true,
+      "recent entry is kept",
+    );
   });
 
   it("clearImageDescriptionCache empties the cache", () => {

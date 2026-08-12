@@ -2,10 +2,10 @@
 
 # PR #54 — Security Hardening and Optimization Cleanup
 
-**Topic:** security / memory / dead code / cleanup  
-**Updated:** 2026-06-24  
-**Tags:** #security #memory-leak #dead-code #cleanup #community  
-**Supersedes:** —  
+**Topic:** security / memory / dead code / cleanup
+**Updated:** 2026-06-24
+**Tags:** #security #memory-leak #dead-code #cleanup #community
+**Supersedes:** —
 **Depends on:** PR [#53](https://github.com/ltmoerdani/opencode-copilot-chat/pull/53)
 
 ---
@@ -20,9 +20,9 @@ Follow-up to PR #53 that addresses three categories of issues identified during 
 
 This PR contains **zero behavioral changes**. All fixes are internal: security, memory bounds, and dead code removal.
 
-**Documented:** 2026-06-24  
-**Fixed in:** v0.3.4 (PR [#54](https://github.com/ltmoerdani/opencode-copilot-chat/pull/54))  
-**Contributor:** [@Wallacy](https://github.com/Wallacy)  
+**Documented:** 2026-06-24
+**Fixed in:** v0.3.4 (PR [#54](https://github.com/ltmoerdani/opencode-copilot-chat/pull/54))
+**Contributor:** [@Wallacy](https://github.com/Wallacy)
 **Commits:** 2 (`afd26e3`, `b7111a9`)
 
 ---

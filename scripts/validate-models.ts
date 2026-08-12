@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * validate-models.mts — Comprehensive model parameter validation suite.
+ * validate-models.ts — Comprehensive model parameter validation suite.
  *
  * Reuses the EXACT same logic as the extension:
  * - buildThinkingPayload() from thinking.ts
@@ -11,8 +11,8 @@
  * the live OpenCode API to verify what actually works.
  *
  * Usage:
- *   npx tsx scripts/validate-models.mts --api-key YOUR_KEY
- *   OPENCODE_API_KEY=... npx tsx scripts/validate-models.mts
+ *   npx tsx scripts/validate-models.ts --api-key YOUR_KEY
+ *   OPENCODE_API_KEY=... npx tsx scripts/validate-models.ts
  */
 
 import { parseArgs } from "node:util";
@@ -38,17 +38,16 @@ const { values: args } = parseArgs({
     timeout: { type: "string", default: "30000" },
     help: { type: "boolean", short: "h" },
   },
-  strict: false,
-});
+} as const);
 
 if (args.help) {
   console.log(`
-Usage: npx tsx scripts/validate-models.mts [options]
+Usage: npx tsx scripts/validate-models.ts [options]
 
 Examples:
-  npx tsx scripts/validate-models.mts --api-key YOUR_KEY
-  npx tsx scripts/validate-models.mts --api-key YOUR_KEY --families deepseek,kimi
-  npx tsx scripts/validate-models.mts --dry-run
+  npx tsx scripts/validate-models.ts --api-key YOUR_KEY
+  npx tsx scripts/validate-models.ts --api-key YOUR_KEY --families deepseek,kimi
+  npx tsx scripts/validate-models.ts --dry-run
 `);
   process.exit(0);
 }
@@ -59,14 +58,14 @@ const ZEN_BASE = process.env.OPENCODE_ZEN_URL ?? "https://opencode.ai/zen/v1";
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const TIMEOUT_MS = Number(args.timeout) || 30000;
 
-const INCLUDE_GO = args.go !== false;
-const INCLUDE_ZEN_FREE = args["zen-free"] !== false;
-const INCLUDE_ZEN_PAID = args["zen-paid"] === true;
+const INCLUDE_GO = args.go;
+const INCLUDE_ZEN_FREE = args["zen-free"];
+const INCLUDE_ZEN_PAID = args["zen-paid"];
 const FAMILIES_FILTER = args.families?.split(",").map((f) => f.trim().toLowerCase());
 const MODELS_FILTER = args.models?.split(",").map((m) => m.trim());
 const SKIP_MODELS = new Set(args["skip-models"]?.split(",").map((m) => m.trim()) ?? []);
-const DRY_RUN = args["dry-run"] === true;
-const OUTPUT_JSON = args.json === true;
+const DRY_RUN = args["dry-run"];
+const OUTPUT_JSON = args.json;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +76,7 @@ interface ModelInfo {
   vendor: "go" | "zen";
   family: string;
   reasoning: boolean;
-  reasoningOptions?: Array<{ type?: string; values?: string[] }>;
+  reasoningOptions?: { type?: string; values?: string[] }[];
   temperature: boolean;
 }
 
@@ -127,6 +126,7 @@ const DEFAULT_SETTINGS: ThinkingSettings = {
   glm: "off",
   kimi: "off",
   minimax: "off",
+  openai: "off",
   qwen: "off",
   qwenBudget: "auto",
   mimo: "off",
@@ -137,7 +137,7 @@ function buildThinkingTests(model: ModelInfo): ParamTest[] {
   const tests: ParamTest[] = [];
 
   // Temperature tests
-  if (model.temperature !== false) {
+  if (model.temperature) {
     tests.push({ name: "temp=0.2", settings: {} });
   }
   tests.push({ name: "no-temp", settings: {} });
@@ -200,7 +200,7 @@ function buildThinkingTests(model: ModelInfo): ParamTest[] {
 // API call using extension's routing + auth
 // ---------------------------------------------------------------------------
 
-async function testParameter(model: ModelInfo, test: ParamTest): Promise<TestResult> {
+async function testParameter(model: ModelInfo, test: ParamTest, apiKey: string): Promise<TestResult> {
   // Build the provider definition matching what the extension uses
   const provider =
     model.vendor === "go"
@@ -223,7 +223,7 @@ async function testParameter(model: ModelInfo, test: ParamTest): Promise<TestRes
   const routing = resolveModelRouting(model.id, provider);
 
   // Use extension's auth headers
-  const authHeaders = buildOpenCodeGatewayAuthHeaders(routing.endpointKind, API_KEY!);
+  const authHeaders = buildOpenCodeGatewayAuthHeaders(routing.endpointKind, apiKey);
 
   // Build thinking payload using extension's buildThinkingPayload
   const thinking: ThinkingSettings = { ...DEFAULT_SETTINGS, ...test.settings };
@@ -238,13 +238,15 @@ async function testParameter(model: ModelInfo, test: ParamTest): Promise<TestRes
   };
 
   // Add temperature unless model doesn't support it
-  if (test.name !== "no-temp" && model.temperature !== false) {
+  if (test.name !== "no-temp" && model.temperature) {
     body.temperature = 0.2;
   }
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, TIMEOUT_MS);
 
     const response = await fetch(routing.endpointUrl, {
       method: "POST",
@@ -297,23 +299,25 @@ async function testParameter(model: ModelInfo, test: ParamTest): Promise<TestRes
 // Model fetching from models.dev
 // ---------------------------------------------------------------------------
 
-interface ModelsDevResponse {
-  [provider: string]: {
-    models: Record<
-      string,
-      {
-        status?: string;
-        reasoning?: boolean;
-        reasoning_options?: Array<{ type?: string; values?: string[] }>;
-        temperature?: boolean;
-      }
-    >;
-  };
-}
+type ModelsDevResponse = Record<
+  string,
+  | {
+      models: Record<
+        string,
+        {
+          status?: string;
+          reasoning?: boolean;
+          reasoning_options?: { type?: string; values?: string[] }[];
+          temperature?: boolean;
+        }
+      >;
+    }
+  | undefined
+>;
 
 async function fetchModels(): Promise<ModelInfo[]> {
   const response = await fetch(MODELS_DEV_URL);
-  if (!response.ok) throw new Error(`models.dev: ${response.status}`);
+  if (!response.ok) throw new Error(`models.dev: ${String(response.status)}`);
   const data = (await response.json()) as ModelsDevResponse;
   const models: ModelInfo[] = [];
 
@@ -369,13 +373,17 @@ function formatReport(results: TestResult[], models: ModelInfo[]): string {
   const lines: string[] = [];
   lines.push("# Model Parameter Validation Report");
   lines.push(`Generated: ${new Date().toISOString()}`);
-  lines.push(`Models: ${models.length} | Tests: ${results.length}`);
+  lines.push(`Models: ${String(models.length)} | Tests: ${String(results.length)}`);
   lines.push("");
 
   const byFamily = new Map<string, TestResult[]>();
   for (const r of results) {
-    if (!byFamily.has(r.family)) byFamily.set(r.family, []);
-    byFamily.get(r.family)!.push(r);
+    const familyResults = byFamily.get(r.family);
+    if (familyResults) {
+      familyResults.push(r);
+    } else {
+      byFamily.set(r.family, [r]);
+    }
   }
 
   lines.push("## Summary by Family");
@@ -389,7 +397,7 @@ function formatReport(results: TestResult[], models: ModelInfo[]): string {
     const fail = familyResults.filter((r) => r.status === "❌").length;
     const failModels = [...new Set(familyResults.filter((r) => r.status === "❌").map((r) => r.model))];
     lines.push(
-      `| ${family} | ${modelCount} | ${familyResults.length} | ${pass} | ${fail} | ${failModels.length > 0 ? failModels.join(", ") : "—"} |`,
+      `| ${family} | ${String(modelCount)} | ${String(familyResults.length)} | ${String(pass)} | ${String(fail)} | ${failModels.length > 0 ? failModels.join(", ") : "—"} |`,
     );
   }
   lines.push("");
@@ -401,7 +409,7 @@ function formatReport(results: TestResult[], models: ModelInfo[]): string {
     lines.push("| Model | Vendor | Parameter | HTTP | Error |");
     lines.push("|-------|--------|-----------|------|-------|");
     for (const r of failures) {
-      lines.push(`| ${r.model} | ${r.vendor} | ${r.param} | ${r.httpStatus} | ${(r.error ?? "").slice(0, 80)} |`);
+      lines.push(`| ${r.model} | ${r.vendor} | ${r.param} | ${String(r.httpStatus)} | ${(r.error ?? "").slice(0, 80)} |`);
     }
     lines.push("");
   }
@@ -411,19 +419,25 @@ function formatReport(results: TestResult[], models: ModelInfo[]): string {
 
   const byModel = new Map<string, TestResult[]>();
   for (const r of results) {
-    if (!byModel.has(r.model)) byModel.set(r.model, []);
-    byModel.get(r.model)!.push(r);
+    const modelResults = byModel.get(r.model);
+    if (modelResults) {
+      modelResults.push(r);
+    } else {
+      byModel.set(r.model, [r]);
+    }
   }
 
   for (const [modelId, modelResults] of [...byModel.entries()].sort()) {
     const model = models.find((m) => m.id === modelId);
     const pass = modelResults.filter((r) => r.status === "✅").length;
     const fail = modelResults.filter((r) => r.status === "❌").length;
-    lines.push(`### ${modelId} (${model?.vendor}/${model?.family}) — ${pass}✅ ${fail}❌`);
+    const vendorLabel = model?.vendor ?? "unknown";
+    const familyLabel = model?.family ?? "unknown";
+    lines.push(`### ${modelId} (${vendorLabel}/${familyLabel}) — ${String(pass)}✅ ${String(fail)}❌`);
     lines.push("");
     for (const r of modelResults) {
       const err = r.error ? ` — ${r.error.slice(0, 60)}` : "";
-      lines.push(`- ${r.status} \`${r.param}\` (HTTP ${r.httpStatus})${err}`);
+      lines.push(`- ${r.status} \`${r.param}\` (HTTP ${String(r.httpStatus)})${err}`);
     }
     lines.push("");
   }
@@ -446,7 +460,7 @@ async function main() {
 
   console.error("📡 Fetching models from models.dev…");
   const models = await fetchModels();
-  console.error(`   Found ${models.length} models.\n`);
+  console.error(`   Found ${String(models.length)} models.\n`);
 
   if (models.length === 0) {
     console.error("No models to test.");
@@ -456,11 +470,16 @@ async function main() {
   const results: TestResult[] = [];
   let testCount = 0;
 
+  if (!DRY_RUN && !API_KEY) {
+    console.error("❌ API key required for live testing. Use --api-key or set OPENCODE_API_KEY.");
+    process.exit(1);
+  }
+
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
     const tests = buildThinkingTests(model);
 
-    process.stderr.write(`[${i + 1}/${models.length}] ${model.vendor}/${model.id} (${tests.length} params)… `);
+    process.stderr.write(`[${String(i + 1)}/${String(models.length)}] ${model.vendor}/${model.id} (${String(tests.length)} params)… `);
 
     if (DRY_RUN) {
       const summaries = tests.map((t) => {
@@ -473,10 +492,17 @@ async function main() {
       continue;
     }
 
+    // DRY_RUN returned above, so API_KEY is guaranteed here (required by the
+    // guards at the top of main()). TS cannot correlate the `!DRY_RUN && !API_KEY`
+    // exit with the DRY_RUN `continue` above, so re-assert the invariant.
+    if (!API_KEY) {
+      throw new Error("API key required for live testing");
+    }
+
     let pass = 0;
     let fail = 0;
     for (const test of tests) {
-      const result = await testParameter(model, test);
+      const result = await testParameter(model, test, API_KEY);
       results.push(result);
       testCount++;
       if (result.status === "✅") pass++;
@@ -484,7 +510,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 300));
     }
 
-    console.error(fail === 0 ? `✅ ${pass}/${pass}` : `❌ ${fail} failed`);
+    console.error(fail === 0 ? `✅ ${String(pass)}/${String(pass)}` : `❌ ${String(fail)} failed`);
   }
 
   if (DRY_RUN) process.exit(0);
@@ -496,12 +522,12 @@ async function main() {
   }
 
   const failures = results.filter((r) => r.status === "❌");
-  console.error(`\n📊 Total: ${testCount} tests, ${testCount - failures.length} passed, ${failures.length} failed`);
+  console.error(`\n📊 Total: ${String(testCount)} tests, ${String(testCount - failures.length)} passed, ${String(failures.length)} failed`);
 
   if (failures.length > 0) process.exit(1);
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error("Fatal:", err);
   process.exit(1);
 });

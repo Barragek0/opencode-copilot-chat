@@ -1,12 +1,12 @@
 .gitignore
 .github/**
 .husky/**
-.markdownlint-cli2.jsonc
+.markdownlint-cli2.json
 .prettierrc.json
 .vscode/**
 .vscode-test/**
 docs/**/*.md
-eslint.config.mjs
+eslint.config.ts
 node_modules/**
 !node_modules/@silvia-odwyer/
 !node_modules/@silvia-odwyer/photon-node/

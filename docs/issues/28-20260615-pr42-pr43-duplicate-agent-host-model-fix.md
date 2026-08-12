@@ -2,13 +2,13 @@
 
 # PR #42 / PR #43 — Duplicate Agent-Host Model Fix (Issue #41)
 
-**Topic:** models / vscode / agents-window / byok / routing  
-**Updated:** 2026-06-15  
-**Tags:** #models #agents-window #byok #duplicate #routing #vendor #community-pr  
-**GitHub Issue:** [ltmoerdani/opencode-copilot-chat#41](https://github.com/ltmoerdani/opencode-copilot-chat/issues/41)  
-**GitHub PR:** [#42](https://github.com/ltmoerdani/opencode-copilot-chat/pull/42) (by [@Marinski](https://github.com/Marinski)) — opt-in gate hotfix  
-**GitHub PR:** [#43](https://github.com/ltmoerdani/opencode-copilot-chat/pull/43) (by [@Wallacy](https://github.com/Wallacy)) — separate vendor IDs (final solution)  
-**Related Feature Doc:** [`docs/features/06-20260614-agents-window-model-visibility.md`](../features/06-20260614-agents-window-model-visibility.md)  
+**Topic:** models / vscode / agents-window / byok / routing
+**Updated:** 2026-06-15
+**Tags:** #models #agents-window #byok #duplicate #routing #vendor #community-pr
+**GitHub Issue:** [ltmoerdani/opencode-copilot-chat#41](https://github.com/ltmoerdani/opencode-copilot-chat/issues/41)
+**GitHub PR:** [#42](https://github.com/ltmoerdani/opencode-copilot-chat/pull/42) (by [@Marinski](https://github.com/Marinski)) — opt-in gate hotfix
+**GitHub PR:** [#43](https://github.com/ltmoerdani/opencode-copilot-chat/pull/43) (by [@Wallacy](https://github.com/Wallacy)) — separate vendor IDs (final solution)
+**Related Feature Doc:** [`docs/features/06-20260614-agents-window-model-visibility.md`](../features/06-20260614-agents-window-model-visibility.md)
 **Supersedes:** PR #42 (`showInAgentsWindow` setting replaced by `agentsWindow` + `showAgentModelsInManagePanel`)
 
 ---

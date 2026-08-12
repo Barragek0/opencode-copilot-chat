@@ -113,7 +113,7 @@ let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
 /** Singleton tracker — the first/legacy account. Used for backward compat until first migration. */
 let goUsageTracker: GoUsageTracker | undefined;
 /** Per-profile trackers indexed by key fingerprint. */
-const goUsageTrackers: Map<string, GoUsageTracker> = new Map();
+const goUsageTrackers = new Map<string, GoUsageTracker>();
 let usageWebviewPanel: vscode.WebviewPanel | undefined;
 
 let profilesCache: UsageProfile[] = [];
@@ -126,8 +126,10 @@ function getOrCreateTracker(fingerprint: string): GoUsageTracker {
   let tracker = goUsageTrackers.get(fingerprint);
   if (tracker) return tracker;
   tracker = new GoUsageTracker(
-    _extensionContext!,
-    (msg) => _usageLogChannel!.appendLine(`[${new Date().toISOString()}] [${fingerprint}] ${msg}`),
+    extensionContext(),
+    (msg) => {
+      usageLogChannel().appendLine(`[${new Date().toISOString()}] [${fingerprint}] ${msg}`);
+    },
     (modelId) => modelMetadataSnapshot?.providers[GO_VENDOR]?.[modelId]?.cost,
     fingerprint,
   );
@@ -144,7 +146,7 @@ function activeGoUsageTracker(): GoUsageTracker | undefined {
 /** Switch the active profile and refresh the UI. */
 async function setActiveProfile(fingerprint: string): Promise<void> {
   activeProfileFingerprint = fingerprint;
-  await writeActiveProfile(_extensionContext!, fingerprint);
+  await writeActiveProfile(extensionContext(), fingerprint);
   refreshGoUsageStatusBar();
   updateWebviewContent();
 }
@@ -164,24 +166,24 @@ function ensureProfileSync(apiKey: string): void {
     const nextNumber = nonLegacyCount(profilesCache) + 1;
     profilesCache.push({
       fingerprint: fp,
-      label: `Profile ${nextNumber}`,
+      label: `Profile ${String(nextNumber)}`,
       lastSeenAt: Date.now(),
     });
-    writeProfiles(_extensionContext!, profilesCache);
+    void writeProfiles(extensionContext(), profilesCache);
   }
 
   // One-time migration from singleton
-  if (!readMigratedTo(_extensionContext!)) {
+  if (!readMigratedTo(extensionContext())) {
     if (goUsageTracker && fp !== LEGACY_FINGERPRINT) {
       tracker.migrateFromSingleton();
     }
-    writeMigratedTo(_extensionContext!, fp);
-    profilesCache = readProfiles(_extensionContext!);
+    void writeMigratedTo(extensionContext(), fp);
+    profilesCache = readProfiles(extensionContext());
   }
 
   // Update active profile to this one
   activeProfileFingerprint = fp;
-  writeActiveProfile(_extensionContext!, fp);
+  void writeActiveProfile(extensionContext(), fp);
 }
 
 /**
@@ -193,8 +195,30 @@ function ensureProfileForApiKey(apiKey: string): GoUsageTracker {
   return getOrCreateTracker(keyFingerprint(apiKey));
 }
 
-let _extensionContext: vscode.ExtensionContext;
-let _usageLogChannel: vscode.OutputChannel;
+let _extensionContext: vscode.ExtensionContext | undefined;
+let _usageLogChannel: vscode.OutputChannel | undefined;
+
+/**
+ * Returns the extension context, or throws if the extension has not been
+ * activated yet. Callers must be reached after `activate()` has run.
+ */
+function extensionContext(): vscode.ExtensionContext {
+  if (!_extensionContext) {
+    throw new Error("extension context not initialized");
+  }
+  return _extensionContext;
+}
+
+/**
+ * Returns the usage log output channel, or throws if the extension has not
+ * been activated yet. Callers must be reached after `activate()` has run.
+ */
+function usageLogChannel(): vscode.OutputChannel {
+  if (!_usageLogChannel) {
+    throw new Error("usage log channel not initialized");
+  }
+  return _usageLogChannel;
+}
 
 interface ProviderDefinition {
   vendor: AllProviderVendor;
@@ -253,8 +277,9 @@ let cachedUserAgent: string | undefined;
  */
 function getUserAgent(): string {
   if (cachedUserAgent) return cachedUserAgent;
-  const version = vscode.extensions.getExtension("ltmoerdani.opencode-copilot-chat")?.packageJSON?.version;
-  cachedUserAgent = typeof version === "string" && version ? `opencode-copilot-chat/${version} VSCode` : FALLBACK_USER_AGENT;
+  const packageJSON = vscode.extensions.getExtension("ltmoerdani.opencode-copilot-chat")?.packageJSON as { version?: unknown } | undefined;
+  const version = typeof packageJSON?.version === "string" ? packageJSON.version : undefined;
+  cachedUserAgent = version ? `opencode-copilot-chat/${version} VSCode` : FALLBACK_USER_AGENT;
   return cachedUserAgent;
 }
 
@@ -325,9 +350,13 @@ function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
         resolve();
       }
     };
-    state.timer = setTimeout(() => finish(false), ms);
+    state.timer = setTimeout(() => {
+      finish(false);
+    }, ms);
     if (token) {
-      state.subscription = token.onCancellationRequested(() => finish(true));
+      state.subscription = token.onCancellationRequested(() => {
+        finish(true);
+      });
     }
   });
 }
@@ -436,7 +465,7 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
       "big-pickle",
     ],
     filterModel: (modelId) =>
-      vscode.workspace.getConfiguration("opencodego").get("freeOnly", true)
+      vscode.workspace.getConfiguration("opencodego").get<boolean>("freeOnly", true)
         ? modelId.endsWith("-free") || FREE_ZEN_MODEL_IDS.has(modelId)
         : true,
   };
@@ -751,7 +780,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled("opencodezen", "OpenCode Zen")),
     vscode.commands.registerCommand("opencodego.modelPickerDiagnostics", () => showModelPickerDiagnostics()),
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
-    vscode.commands.registerCommand("opencodego.showUsageDetails", () => showUsageWebview(context)),
+    vscode.commands.registerCommand("opencodego.showUsageDetails", () => {
+      showUsageWebview(context);
+    }),
     vscode.commands.registerCommand("opencodego.setUsageTargets", async () => {
       const tracker = activeGoUsageTracker();
       if (!tracker) return;
@@ -774,7 +805,7 @@ export function activate(context: vscode.ExtensionContext) {
         const sessionItem: vscode.QuickPickItem = {
           label: `$(comment) Latest Session (est)`,
           description: `$${sessionCost.cost.toFixed(4)}`,
-          detail: `${tokens(totalTokens)} tokens · ${sessionCost.requests} requests`,
+          detail: `${tokens(totalTokens)} tokens · ${String(sessionCost.requests)} requests`,
           alwaysShow: true,
         };
         const dailyIdx = items.findIndex((i) => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
@@ -842,7 +873,7 @@ export function activate(context: vscode.ExtensionContext) {
         updateWebviewContent();
         vscode.window.showInformationMessage("Locally tracked usage data cleared.");
       } else if (action === "switchProfile" && "_fp" in picked) {
-        setActiveProfile((picked as { _fp: string })._fp);
+        void setActiveProfile((picked as { _fp: string })._fp);
       }
     }),
     vscode.commands.registerCommand("opencodego.renameActiveProfile", async () => {
@@ -858,14 +889,14 @@ export function activate(context: vscode.ExtensionContext) {
         placeHolder: "e.g. OpenCode Go (Works)",
       });
       if (!newLabel || !newLabel.trim()) return;
-      await renameProfile(_extensionContext, activeProfileFingerprint, newLabel);
-      profilesCache = readProfiles(_extensionContext);
+      await renameProfile(extensionContext(), activeProfileFingerprint, newLabel);
+      profilesCache = readProfiles(extensionContext());
       refreshGoUsageStatusBar();
       updateWebviewContent();
       vscode.window.showInformationMessage(`Profile renamed to "${newLabel}".`);
     }),
     vscode.commands.registerCommand("opencodego.deleteProfile", async () => {
-      const profiles = readActiveProfiles(_extensionContext);
+      const profiles = readActiveProfiles(extensionContext());
       if (profiles.length === 0) {
         vscode.window.showInformationMessage("No profiles to delete.");
         return;
@@ -890,7 +921,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (confirm !== "Delete") return;
 
       goUsageTrackers.delete(fp);
-      const ctx = _extensionContext;
+      const ctx = extensionContext();
       ctx.globalState.update(`opencodego.usageLog.v1.${fp}`, []);
       ctx.globalState.update(`opencodego.usageBaseline.v1.${fp}`, {});
       ctx.globalState.update(`opencodego.sessionCosts.v1.${fp}`, []);
@@ -1011,7 +1042,7 @@ async function toggleProviderEnabled(vendor: string, displayName: string): Promi
  * are the only path, which is why they stay registered.
  */
 function isModernAgentHostVscode(): boolean {
-  const [major = 1, minor = 0] = (vscode.version ?? "").split(".").map(Number);
+  const [major = 1, minor = 0] = vscode.version.split(".").map(Number);
   return major > 1 || (major === 1 && minor >= AGENT_HOST_BYOK_MINOR_VERSION);
 }
 
@@ -1085,8 +1116,7 @@ async function revertAgentsWindowSupport(context: vscode.ExtensionContext): Prom
   if (context.globalState.get<boolean>(SUPPORT_AGENTS_WINDOW_STATE_KEY)) {
     const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
     if (support[EXTENSION_ID]) {
-      const next = { ...support };
-      delete next[EXTENSION_ID];
+      const next: Record<string, boolean> = Object.fromEntries(Object.entries(support).filter(([id]) => id !== EXTENSION_ID));
       await extensionCfg.update(
         SUPPORT_AGENTS_WINDOW_SETTING,
         Object.keys(next).length > 0 ? next : undefined,
@@ -1124,7 +1154,7 @@ async function showModelPickerDiagnostics(): Promise<void> {
 
   for (const vendor of vendors) {
     const models = await vscode.lm.selectChatModels({ vendor });
-    sections.push(`## vendor: ${vendor}`, "", `models: ${models.length}`, "");
+    sections.push(`## vendor: ${vendor}`, "", `models: ${String(models.length)}`, "");
     for (const model of models) {
       const internalModel = model as unknown as { configurationSchema?: unknown; detail?: unknown };
       const schema = internalModel.configurationSchema;
@@ -1264,7 +1294,7 @@ function refreshGoUsageStatusBar(): void {
   // a new snapshot lands, rebuild the status bar with it.
   void (async () => {
     const apiKey = await _extensionContext?.secrets.get(SECRET_KEY);
-    if (!apiKey || !tracker) return;
+    if (!apiKey) return;
     const changed = await tracker.syncServerUsage(apiKey);
     if (changed) refreshGoUsageStatusBar();
   })();
@@ -1494,13 +1524,14 @@ async function showUsageTargetEditor(tracker: GoUsageTracker): Promise<UsageBase
   // Ask for session spent (pre-filled with current tracked value)
   const sessionStr = await vscode.window.showInputBox({
     title: "OpenCode Go — Session Spent",
-    prompt: `Total spent in the 5-hour rolling window (limit: $${GO_LIMITS.session}).`,
+    prompt: `Total spent in the 5-hour rolling window (limit: $${String(GO_LIMITS.session)}).`,
     placeHolder: "e.g. 3.50",
     value: summary.session.spent.toFixed(2),
     validateInput: (value: string) => {
       const n = parseCurrencyInput(value);
       if (isNaN(n) || n < 0) return "Enter a valid number using digits and . or , as decimal separator (e.g. 3.50).";
-      if (n > GO_LIMITS.session) return `Session limit is $${GO_LIMITS.session}. Enter a value between 0 and ${GO_LIMITS.session}.`;
+      if (n > GO_LIMITS.session)
+        return `Session limit is $${String(GO_LIMITS.session)}. Enter a value between 0 and ${String(GO_LIMITS.session)}.`;
       return undefined;
     },
   });
@@ -1509,13 +1540,14 @@ async function showUsageTargetEditor(tracker: GoUsageTracker): Promise<UsageBase
   // Ask for weekly spent (pre-filled)
   const weeklyStr = await vscode.window.showInputBox({
     title: "OpenCode Go — Weekly Spent",
-    prompt: `Total spent this week Mon–Mon UTC (limit: $${GO_LIMITS.weekly}).`,
+    prompt: `Total spent this week Mon–Mon UTC (limit: $${String(GO_LIMITS.weekly)}).`,
     placeHolder: "e.g. 12.00",
     value: summary.weekly.spent.toFixed(2),
     validateInput: (value: string) => {
       const n = parseCurrencyInput(value);
       if (isNaN(n) || n < 0) return "Enter a valid number using digits and . or , as decimal separator (e.g. 12.00).";
-      if (n > GO_LIMITS.weekly) return `Weekly limit is $${GO_LIMITS.weekly}. Enter a value between 0 and ${GO_LIMITS.weekly}.`;
+      if (n > GO_LIMITS.weekly)
+        return `Weekly limit is $${String(GO_LIMITS.weekly)}. Enter a value between 0 and ${String(GO_LIMITS.weekly)}.`;
       return undefined;
     },
   });
@@ -1524,13 +1556,14 @@ async function showUsageTargetEditor(tracker: GoUsageTracker): Promise<UsageBase
   // Ask for monthly spent (pre-filled)
   const monthlyStr = await vscode.window.showInputBox({
     title: "OpenCode Go — Monthly Spent",
-    prompt: `Total spent this month (limit: $${GO_LIMITS.monthly}).`,
+    prompt: `Total spent this month (limit: $${String(GO_LIMITS.monthly)}).`,
     placeHolder: "e.g. 25.00",
     value: summary.monthly.spent.toFixed(2),
     validateInput: (value: string) => {
       const n = parseCurrencyInput(value);
       if (isNaN(n) || n < 0) return "Enter a valid number using digits and . or , as decimal separator (e.g. 25.00).";
-      if (n > GO_LIMITS.monthly) return `Monthly limit is $${GO_LIMITS.monthly}. Enter a value between 0 and ${GO_LIMITS.monthly}.`;
+      if (n > GO_LIMITS.monthly)
+        return `Monthly limit is $${String(GO_LIMITS.monthly)}. Enter a value between 0 and ${String(GO_LIMITS.monthly)}.`;
       return undefined;
     },
   });
@@ -1612,14 +1645,14 @@ function buildUsageTooltipSvg(
   const noDataMsg = s.hasData ? null : nonLegacyCount(profilesCache) > 0 ? "No data yet for this profile." : "No usage data yet.";
 
   const text = (value: string, x: number, y: number, size: number, weight = 400, color = fg, anchor: "start" | "end" = "start"): string =>
-    `<text x="${x}" y="${y}" fill="${color}" font-family="${font}" font-size="${size}" font-weight="${weight}" text-anchor="${anchor}">${escapeSvg(value)}</text>`;
+    `<text x="${String(x)}" y="${String(y)}" fill="${color}" font-family="${font}" font-size="${String(size)}" font-weight="${String(weight)}" text-anchor="${anchor}">${escapeSvg(value)}</text>`;
 
   const bar = (pct: number, x: number, y: number, barWidth: number): string => {
     const clamped = Math.min(Math.max(pct, 0), 100);
     const fillWidth = Math.max(0, Math.round((clamped / 100) * barWidth));
     return [
-      `<rect x="${x}" y="${y}" width="${barWidth}" height="5" rx="2.5" fill="${track}"/>`,
-      fillWidth > 0 ? `<rect x="${x}" y="${y}" width="${fillWidth}" height="5" rx="2.5" fill="${accent}"/>` : "",
+      `<rect x="${String(x)}" y="${String(y)}" width="${String(barWidth)}" height="5" rx="2.5" fill="${track}"/>`,
+      fillWidth > 0 ? `<rect x="${String(x)}" y="${String(y)}" width="${String(fillWidth)}" height="5" rx="2.5" fill="${accent}"/>` : "",
     ].join("");
   };
 
@@ -1648,8 +1681,7 @@ function buildUsageTooltipSvg(
     ].join("");
 
   if (!s.hasData) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="70" viewBox="0 0 ${width} 70">
-<rect width="100%" height="100%" rx="4" fill="${bg}"/>
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="70" viewBox="0 0 ${width} 70"><rect width="100%" height="100%" rx="4" fill="${bg}"/>
 ${text(svgTitle, padX, 28, 16, 700)}
 ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", padX, 52, 12, 400, muted)}
 </svg>`;
@@ -1657,12 +1689,18 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
 
   // Title starts at the same 14px gutter as the sides. Meter rows, the
   // divider and the device rows keep a consistent 14px rhythm.
-  const meterRows = [["Session (5h rolling)", s.session, 56], ["Weekly", s.weekly, 116], ["Monthly", s.monthly, 176]] as const;
+  const meterRows = [
+    ["Session (5h rolling)", s.session, 56],
+    ["Weekly", s.weekly, 116],
+    ["Monthly", s.monthly, 176],
+  ] as const;
   const dividerY = 226;
   const firstRowY = 248;
   const rowGap = 24;
+  const session = sc && sc.cost > 0 ? sc : undefined;
   const deviceRows: Array<[string, number, number, number, number]> = [];
-  if (hasSession) deviceRows.push(["Session (est):", sc!.cost, sc!.requests, sc!.promptTokens + sc!.completionTokens, firstRowY]);
+  if (session)
+    deviceRows.push(["Session (est):", session.cost, session.requests, session.promptTokens + session.completionTokens, firstRowY]);
   deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + (hasSession ? rowGap : 0)]);
   deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + 2 * rowGap]);
 
@@ -1673,8 +1711,7 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
 ${text(svgTitle, padX, 28, 16, 700)}
 ${meterRows.map(([label, periodValue, y]) => period(label, periodValue, y)).join("")}
 <line x1="${padX}" y1="${dividerY}" x2="${right}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
-${deviceRows.map(([label, cost, requests, tokenCount, y]) => deviceRow(label, cost, requests, tokenCount, y)).join("")}
-</svg>`;
+${deviceRows.map(([label, cost, requests, tokenCount, y]) => deviceRow(label, cost, requests, tokenCount, y)).join("")}</svg>`;
 }
 
 function escapeSvg(value: string): string {
@@ -1691,13 +1728,13 @@ function tokens(v: number): string {
 }
 function rel(date: Date): string {
   const min = Math.max(0, Math.floor((date.getTime() - Date.now()) / 60_000));
-  if (min < 60) return `${min}m`;
+  if (min < 60) return `${String(min)}m`;
   const h = Math.floor(min / 60),
     m = min % 60;
-  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
+  if (h < 24) return m ? `${String(h)}h ${String(m)}m` : `${String(h)}h`;
   const d = Math.floor(h / 24),
     rh = h % 24;
-  return rh ? `${d}d ${rh}h` : `${d}d`;
+  return rh ? `${String(d)}d ${String(rh)}h` : `${String(d)}d`;
 }
 
 class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel> {
@@ -1720,7 +1757,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     return `opencode.byokGroup.v1.${this.definition.vendor}`;
   }
 
-  private async hasByokGroupConfigured(): Promise<boolean> {
+  private hasByokGroupConfigured(): boolean {
     return this.context.globalState.get<boolean>(this.byokGroupStateKey, false);
   }
 
@@ -1835,12 +1872,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     metadataSource: string,
     requestInitiator: unknown,
   ): void {
-    const initiator =
-      typeof requestInitiator === "string"
-        ? requestInitiator
-        : requestInitiator === undefined || requestInitiator === null
-          ? undefined
-          : String(requestInitiator);
+    // requestInitiator is an arbitrary value from the transport layer. Only
+    // stringify it when it is a primitive; objects are JSON-serialized and
+    // nullish values are dropped so diagnostics never show "[object Object]".
+    const initiator = stringifyInitiator(requestInitiator);
 
     this.recentTransportSummaries.push({
       ...summary,
@@ -1872,18 +1907,18 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           cachedTokens: summary.cachedTokens,
         });
         const lines = [
-          `### ${index + 1}. ${summary.modelId}`,
+          `### ${String(index + 1)}. ${summary.modelId}`,
           "",
           `- time: ${summary.recordedAt}`,
           `- endpoint: ${summary.endpointKind}`,
           `- initiator: ${summary.requestInitiator ?? "unknown"}`,
           `- metadataSource: ${summary.metadataSource}`,
-          `- status: ${status}`,
-          `- durationMs: ${summary.durationMs}`,
-          `- ttfbMs: ${summary.ttfbMs ?? "n/a"}`,
-          `- totalBytes: ${summary.totalBytes}`,
-          `- totalEvents: ${summary.totalEvents}`,
-          `- tokens: prompt=${summary.promptTokens ?? "n/a"}, completion=${summary.completionTokens ?? "n/a"}, total=${summary.totalTokens ?? "n/a"}, cached=${summary.cachedTokens ?? "n/a"}`,
+          `- status: ${String(status)}`,
+          `- durationMs: ${String(summary.durationMs)}`,
+          `- ttfbMs: ${String(summary.ttfbMs ?? "n/a")}`,
+          `- totalBytes: ${String(summary.totalBytes)}`,
+          `- totalEvents: ${String(summary.totalEvents)}`,
+          `- tokens: prompt=${String(summary.promptTokens ?? "n/a")}, completion=${String(summary.completionTokens ?? "n/a")}, total=${String(summary.totalTokens ?? "n/a")}, cached=${String(summary.cachedTokens ?? "n/a")}`,
           `- cacheHitRatio: ${cacheHitRatio ?? "n/a"}`,
           `- finishReason: ${summary.finishReason ?? "n/a"}`,
           `- requestId: ${summary.requestId ?? "n/a"}`,
@@ -2032,15 +2067,15 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       });
 
       const responseText = await response.text();
-      this.log(`Test response (${response.status}): ${responseText}`);
+      this.log(`Test response (${String(response.status)}): ${responseText}`);
 
       if (response.ok) {
         vscode.window.showInformationMessage(
-          `${this.definition.displayName}: Connection OK (HTTP ${response.status}). Check Output panel for details.`,
+          `${this.definition.displayName}: Connection OK (HTTP ${String(response.status)}). Check Output panel for details.`,
         );
       } else {
         vscode.window.showErrorMessage(
-          `${this.definition.displayName}: Connection failed (HTTP ${response.status}). Check Output panel for details.`,
+          `${this.definition.displayName}: Connection failed (HTTP ${String(response.status)}). Check Output panel for details.`,
         );
       }
     } catch (error) {
@@ -2092,12 +2127,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         `  family: ${model.family}`,
         `  vendor: ${model.vendor}`,
         `  version: ${model.version}`,
-        `  maxInputTokens: ${model.maxInputTokens}`,
-        `  advertisedMaxOutputTokens: ${limits.advertisedMaxOutputTokens}`,
-        `  advertisedContextWindow: ${limits.advertisedContextWindow}`,
-        `  apiMaxOutputTokens: ${limits.maxOutputTokens}`,
+        `  maxInputTokens: ${String(model.maxInputTokens)}`,
+        `  advertisedMaxOutputTokens: ${String(limits.advertisedMaxOutputTokens)}`,
+        `  advertisedContextWindow: ${String(limits.advertisedContextWindow)}`,
+        `  apiMaxOutputTokens: ${String(limits.maxOutputTokens)}`,
         `  metadataSource: ${metadata.source}`,
-        `  supportsVision: ${metadata.supportsVision}`,
+        `  supportsVision: ${String(metadata.supportsVision)}`,
         `  status: ${metadata.status ?? "active"}`,
         `  thinkingFamily: ${thinkingFamily(rawModelId) ?? "none"}`,
         `  configurationSchema: ${JSON.stringify((model as unknown as { configurationSchema?: unknown }).configurationSchema ?? null)}`,
@@ -2111,7 +2146,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       "## Runtime",
       "",
       ...runtimeDiagnosticsLines(this.context),
-      `- credentialInSecretStorage: ${hasStoredApiKey}`,
+      `- credentialInSecretStorage: ${String(hasStoredApiKey)}`,
       `- modelSelectionError: ${modelSelectionError ?? "none"}`,
       "",
       "## Recent Requests",
@@ -2119,7 +2154,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       ...this.recentTransportDiagnosticsLines(),
       `## Models`,
       "",
-      `Models visible through vscode.lm.selectChatModels({ vendor: "${this.definition.vendor}" }): ${models.length}`,
+      `Models visible through vscode.lm.selectChatModels({ vendor: "${this.definition.vendor}" }): ${String(models.length)}`,
       "",
       ...lines,
     ].join("\n");
@@ -2177,7 +2212,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     //    set above), the group call(s) are authoritative — return [] here so the
     //    groupless call does not emit a duplicate set.
     if (!apiKey) {
-      if (await this.hasByokGroupConfigured()) {
+      if (this.hasByokGroupConfigured()) {
         return [];
       }
       apiKey = await this.context.secrets.get(SECRET_KEY);
@@ -2253,7 +2288,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         family: `${this.definition.isAgentVariant && this.definition.baseVendor ? this.definition.baseVendor : this.definition.vendor}-${modelId}-${MODEL_METADATA_REVISION}`,
         // Include effective limits in version so VS Code invalidates stale
         // picker metadata after limit changes (eg. 2M -> 262K corrections).
-        version: `1.2.0-${MODEL_METADATA_REVISION}-${limits.contextWindow}-${limits.maxOutputTokens}`,
+        version: `1.2.0-${MODEL_METADATA_REVISION}-${String(limits.contextWindow)}-${String(limits.maxOutputTokens)}`,
         detail: capacityNote ? `${baseDetail} • Limited capacity` : modalityBadges ? `${baseDetail} • ${modalityBadges}` : baseDetail,
         tooltip: capacityNote ? `${baseTooltip}\n\n${capacityNote}` : modalityBadges ? `${baseTooltip}\n\n${modalityBadges}` : baseTooltip,
         isUserSelectable: true,
@@ -2302,7 +2337,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     // the Output channel when VS Code refreshes model info frequently.
     if (registeredCount > 0) {
       this.log(
-        `Models registered: count=${registeredCount} provider=${this.definition.vendor}` +
+        `Models registered: count=${String(registeredCount)} provider=${this.definition.vendor}` +
           ` first=${firstModelId} last=${lastModelId}` +
           (this.definition.isAgentVariant ? " (agents)" : ""),
       );
@@ -2339,7 +2374,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     );
     const normalizedImageCount = convertedMessages.map((result) => result.normalizedImageCount).reduce((total, count) => total + count, 0);
     if (normalizedImageCount > 0) {
-      this.log(`[vision] Normalized ${normalizedImageCount} image attachment(s) to provider-safe dimensions/encoding.`);
+      this.log(`[vision] Normalized ${String(normalizedImageCount)} image attachment(s) to provider-safe dimensions/encoding.`);
     }
 
     // Flatten the converted messages, tracking which original message produced
@@ -2418,7 +2453,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
             }
             imagesHandled = true;
           }
-          this.log(`[vision-proxy] Replaced images using vision proxy model (${cacheHits} from cache, ${cacheMisses} newly described)`);
+          this.log(
+            `[vision-proxy] Replaced images using vision proxy model (${String(cacheHits)} from cache, ${String(cacheMisses)} newly described)`,
+          );
         }
       } catch (err) {
         this.log(`[vision-proxy] Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -2428,8 +2465,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       // model not found), strip them anyway so the non-vision model
       // doesn't receive image data it can't process (fixes 400 errors).
       if (!imagesHandled) {
-        for (let i = 0; i < flatMessages.length; i++) {
-          const msg = flatMessages[i];
+        for (const msg of flatMessages) {
           if (!Array.isArray(msg.content)) continue;
           if (msg.content.some((p) => p.type === "image_url")) {
             const textParts = msg.content
@@ -2462,7 +2498,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const trimmedCount = trimOldImagesFromHistoryInPlace(apiMessages);
     if (trimmedCount > 0) {
       this.log(
-        `[history-trim] Replaced ${trimmedCount} old image(s) with placeholder text to bound payload (kept most recent ${MAX_HISTORY_IMAGES_KEPT}).`,
+        `[history-trim] Replaced ${String(trimmedCount)} old image(s) with placeholder text to bound payload (kept most recent ${String(MAX_HISTORY_IMAGES_KEPT)}).`,
       );
     }
 
@@ -2504,7 +2540,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     };
 
     this.log(
-      `Request: initiator=${options.requestInitiator} model=${model.id} rawModel=${rawModelId} endpoint=${routing.endpointKind} metadataSource=${metadata.source} messages=${apiMessages.length} promptEstimate=${promptTokens} maxOutputTokens=${limits.maxOutputTokens} session=${requestHeaders["x-opencode-session"]} request=${requestHeaders["x-opencode-request"]} modelConfiguration=${JSON.stringify(pickThinkingModelConfiguration(requestOverride))} thinking=${JSON.stringify(settings.thinking)} thinkingPayload=${JSON.stringify(thinkingPayload)}`,
+      `Request: initiator=${options.requestInitiator} model=${model.id} rawModel=${rawModelId} endpoint=${routing.endpointKind} metadataSource=${metadata.source} messages=${String(apiMessages.length)} promptEstimate=${String(promptTokens)} maxOutputTokens=${String(limits.maxOutputTokens)} session=${requestHeaders["x-opencode-session"]} request=${requestHeaders["x-opencode-request"]} modelConfiguration=${JSON.stringify(pickThinkingModelConfiguration(requestOverride))} thinking=${JSON.stringify(settings.thinking)} thinkingPayload=${JSON.stringify(thinkingPayload)}`,
     );
     if (settings.debugReasoning) {
       this.log("Reasoning debug is enabled. Provider reasoning_content will be written to this output channel when available.");
@@ -2622,12 +2658,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     }
   }
 
-  async provideTokenCount(
+  provideTokenCount(
     _model: OpenCodeModel,
     text: string | vscode.LanguageModelChatRequestMessage,
     _token: vscode.CancellationToken,
   ): Promise<number> {
-    return typeof text === "string" ? estimateTokenCount(text) : estimateChatMessageTokenCount(text);
+    return Promise.resolve(typeof text === "string" ? estimateTokenCount(text) : estimateChatMessageTokenCount(text));
   }
 
   /**
@@ -2676,11 +2712,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         // so either one tears down the in-flight fetch.
         const timeoutSignal = AbortSignal.timeout(MODEL_LIST_FETCH_TIMEOUT_MS);
         cancellationLink = token ? this.signalFromToken(token) : undefined;
-        const signal = token ? AbortSignal.any([timeoutSignal, cancellationLink!.signal]) : timeoutSignal;
+        const signal = token && cancellationLink ? AbortSignal.any([timeoutSignal, cancellationLink.signal]) : timeoutSignal;
 
         const response = await fetch(this.definition.modelsUrl, { headers, signal });
         if (!response.ok) {
-          throw new Error(`Model list request failed (${response.status}): ${response.statusText}`);
+          throw new Error(`Model list request failed (${String(response.status)}): ${response.statusText}`);
         }
         const data = (await response.json()) as ModelListResponse;
         this.replaceLiveModelMetadata(data.data);
@@ -2701,7 +2737,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         lastError = error;
         // 1. If the caller's cancellation token fired, never retry — bail.
         if (token?.isCancellationRequested) {
-          return this.fallbackModelList();
+          return await this.fallbackModelList();
         }
         // 2. Classify the error. Timeout (AbortError without token cancel)
         //    and transient network errors are retryable; HTTP 4xx is not.
@@ -2714,13 +2750,13 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         }
         const backoff = MODEL_LIST_FETCH_RETRY_BASE_MS * Math.pow(2, attempt);
         this.log(
-          `[fetchModels] ${this.definition.displayName}: transient error (attempt ${attempt + 1}/${MODEL_LIST_FETCH_MAX_RETRIES + 1}): ${this.errMsg(error)}. Retrying in ${backoff}ms.`,
+          `[fetchModels] ${this.definition.displayName}: transient error (attempt ${String(attempt + 1)}/${String(MODEL_LIST_FETCH_MAX_RETRIES + 1)}): ${this.errMsg(error)}. Retrying in ${String(backoff)}ms.`,
         );
         try {
           await sleep(backoff, token);
         } catch {
           // Cancellation during backoff — bail to fallback.
-          return this.fallbackModelList();
+          return await this.fallbackModelList();
         }
       } finally {
         cancellationLink?.dispose();
@@ -2731,12 +2767,12 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const cached = this.loadCachedModelList();
     if (cached) {
       this.log(
-        `[fetchModels] ${this.definition.displayName}: ${this.errMsg(lastError)}. Using cached model list (${cached.ids.length} models, fetched ${new Date(cached.fetchedAt).toISOString()}).`,
+        `[fetchModels] ${this.definition.displayName}: ${this.errMsg(lastError)}. Using cached model list (${String(cached.ids.length)} models, fetched ${new Date(cached.fetchedAt).toISOString()}).`,
       );
       return this.filterAvailableModels(cached.ids);
     }
     this.log(
-      `[fetchModels] ${this.definition.displayName}: ${this.errMsg(lastError)}. Using bundled model list (${this.definition.fallbackModels.length} models).`,
+      `[fetchModels] ${this.definition.displayName}: ${this.errMsg(lastError)}. Using bundled model list (${String(this.definition.fallbackModels.length)} models).`,
     );
     return this.filterAvailableModels(this.definition.fallbackModels);
   }
@@ -2750,7 +2786,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     } else {
       // Already-cancelled tokens still invoke the listener (shortcutEvent),
       // so this single subscription covers the subscribe-time race too.
-      subscription = token.onCancellationRequested(() => controller.abort());
+      subscription = token.onCancellationRequested(() => {
+        controller.abort();
+      });
     }
     return {
       signal: controller.signal,
@@ -2866,7 +2904,7 @@ async function refreshOpenCodeModelMetadata(
     });
 
     if (!response.ok) {
-      throw new Error(`models.dev request failed (${response.status}): ${response.statusText}`);
+      throw new Error(`models.dev request failed (${String(response.status)}): ${response.statusText}`);
     }
 
     const data = (await response.json()) as ModelsDevResponse;
@@ -2878,7 +2916,7 @@ async function refreshOpenCodeModelMetadata(
     );
     return snapshot;
   })()
-    .catch((error) => {
+    .catch((error: unknown) => {
       const cached = modelMetadataSnapshot ?? context.globalState.get<CachedModelMetadataSnapshot>(MODEL_METADATA_CACHE_KEY);
       if (cached) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2982,7 +3020,8 @@ function buildAnthropicMessages(messages: ApiMessage[]): AnthropicRequestMessage
       continue;
     }
 
-    if (message.role === "tool" && message.tool_call_id) {
+    // After the user/assistant continues above, role is narrowed to "tool".
+    if (message.tool_call_id) {
       anthropicMessages.push({
         role: "user",
         content: [
@@ -3121,7 +3160,7 @@ function anthropicImageSource(part: OpenAiContentPart): AnthropicImageSource | u
   return { type: "url", url };
 }
 
-function mapResponsesTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): Array<Record<string, unknown>> {
+function mapResponsesTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): Record<string, unknown>[] {
   return (tools ?? []).map((tool) => ({
     type: "function",
     name: tool.name,
@@ -3172,7 +3211,7 @@ function buildGoogleGenerateContentBody(
   };
 }
 
-function mapGoogleTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): Array<Record<string, unknown>> {
+function mapGoogleTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): Record<string, unknown>[] {
   return (tools ?? []).map((tool) => ({
     name: tool.name,
     description: tool.description,
@@ -3188,9 +3227,9 @@ function googleToolConfig(mode: vscode.LanguageModelChatToolMode): Record<string
   };
 }
 
-function googleContentsFromMessages(messages: ApiMessage[]): Array<Record<string, unknown>> {
+function googleContentsFromMessages(messages: ApiMessage[]): Record<string, unknown>[] {
   const toolNamesById = new Map<string, string>();
-  const contents: Array<Record<string, unknown>> = [];
+  const contents: Record<string, unknown>[] = [];
 
   for (const message of messages) {
     if (message.role === "user") {
@@ -3202,7 +3241,7 @@ function googleContentsFromMessages(messages: ApiMessage[]): Array<Record<string
     }
 
     if (message.role === "assistant") {
-      const parts: Array<Record<string, unknown>> = [];
+      const parts: Record<string, unknown>[] = [];
       if (typeof message.reasoning_content === "string" && message.reasoning_content.trim()) {
         parts.push({ text: message.reasoning_content, thought: true });
       }
@@ -3221,7 +3260,8 @@ function googleContentsFromMessages(messages: ApiMessage[]): Array<Record<string
       continue;
     }
 
-    if (message.role === "tool" && message.tool_call_id) {
+    // After the user/model continues above, role is narrowed to "tool".
+    if (message.tool_call_id) {
       const name = toolNamesById.get(message.tool_call_id) ?? "tool";
       const response = googleFunctionResponseContent(message.content, name);
       contents.push({
@@ -3238,7 +3278,7 @@ function googleContentsFromMessages(messages: ApiMessage[]): Array<Record<string
   return contents;
 }
 
-function googleUserParts(content: ApiMessage["content"]): Array<Record<string, unknown>> {
+function googleUserParts(content: ApiMessage["content"]): Record<string, unknown>[] {
   if (typeof content === "string") {
     return content ? [{ text: content }] : [];
   }
@@ -3247,7 +3287,7 @@ function googleUserParts(content: ApiMessage["content"]): Array<Record<string, u
     return [];
   }
 
-  return content.flatMap((part): Array<Record<string, unknown>> => {
+  return content.flatMap((part): Record<string, unknown>[] => {
     if (part.type === "text" && typeof part.text === "string") {
       return [{ text: part.text }];
     }
@@ -3281,13 +3321,15 @@ function dataUrlToInlineData(url: string): { mimeType: string; data: string } | 
 function googleFunctionResponseContent(
   content: ApiMessage["content"],
   name: string,
-): { name: string; content: string; parts?: Array<Record<string, unknown>> } {
+): { name: string; content: string; parts?: Record<string, unknown>[] } {
   if (typeof content === "string") {
     return { name, content };
   }
 
   if (!Array.isArray(content)) {
-    return { name, content: JSON.stringify(content ?? "") };
+    // ApiMessage content is `string | null | OpenAiContentPart[]`; after the
+    // string and array checks above, this branch only sees null.
+    return { name, content: JSON.stringify("") };
   }
 
   const text = joinedTextContent(content, "\n");
@@ -3296,7 +3338,7 @@ function googleFunctionResponseContent(
     return { name, content: text };
   }
 
-  const parts: Array<Record<string, unknown>> = [];
+  const parts: Record<string, unknown>[] = [];
   if (text) {
     parts.push({ text });
   }
@@ -3318,7 +3360,7 @@ function parseToolInput(value: string): object {
   }
 
   try {
-    const parsed = JSON.parse(value);
+    const parsed: unknown = JSON.parse(value);
     return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
@@ -3354,7 +3396,7 @@ function buildOpenCodeRequestHeaders(
   );
   const requestId = cleanHeaderValue(
     findStringOption(options, ["requestId", "requestID", "messageId", "messageID"]) ??
-      `req-${stableHash(`${Date.now()}-${Math.random()}-${sessionId}-${modelId}`)}`,
+      `req-${stableHash(`${String(Date.now())}-${String(Math.random())}-${sessionId}-${modelId}`)}`,
   );
 
   return {
@@ -3363,6 +3405,31 @@ function buildOpenCodeRequestHeaders(
     "x-opencode-client": OPEN_CODE_CLIENT,
     "User-Agent": getUserAgent(),
   };
+}
+
+/**
+ * Stringify an arbitrary transport-layer initiator value for diagnostics.
+ * Objects and functions are JSON-serialized, nullish values are dropped, and
+ * primitives are converted directly so logs never show "[object Object]".
+ */
+function stringifyInitiator(initiator: unknown): string | undefined {
+  if (initiator === undefined || initiator === null) {
+    return undefined;
+  }
+  if (typeof initiator === "string") {
+    return initiator;
+  }
+  if (typeof initiator === "object" || typeof initiator === "function") {
+    return JSON.stringify(initiator);
+  }
+  if (typeof initiator === "symbol" || typeof initiator === "bigint") {
+    return initiator.toString();
+  }
+  if (typeof initiator === "number" || typeof initiator === "boolean") {
+    return String(initiator);
+  }
+  // No known primitive type left; nothing useful to stringify.
+  return undefined;
 }
 
 function findStringOption(options: unknown, paths: string[]): string | undefined {
@@ -3387,7 +3454,7 @@ function readPath(value: unknown, path: string[]): unknown {
 }
 
 function conversationAnchor(messages: readonly vscode.LanguageModelChatRequestMessage[], modelId: string): string {
-  const anchorMessages = messages.slice(0, 3).map((message) => `${message.role}:${messageText(message).slice(0, 2048)}`);
+  const anchorMessages = messages.slice(0, 3).map((message) => `${String(message.role)}:${messageText(message).slice(0, 2048)}`);
   return anchorMessages.length ? anchorMessages.join("\n") : modelId;
 }
 
@@ -3549,7 +3616,7 @@ async function convertMessage(
         type: "function",
         function: {
           name: part.name,
-          arguments: JSON.stringify(part.input ?? {}),
+          arguments: JSON.stringify(part.input),
         },
       });
       continue;
@@ -3580,7 +3647,7 @@ async function convertMessage(
         ) {
           if (resultPart.data.byteLength > MAX_TOOL_RESULT_IMAGE_BYTES) {
             toolTextParts.push(
-              `[Image attachment omitted: ${resultPart.data.byteLength} bytes exceeds the ${MAX_TOOL_RESULT_IMAGE_BYTES}-byte limit for tool results. Ask the tool to produce a smaller screenshot or save it to a file.]`,
+              `[Image attachment omitted: ${String(resultPart.data.byteLength)} bytes exceeds the ${String(MAX_TOOL_RESULT_IMAGE_BYTES)}-byte limit for tool results. Ask the tool to produce a smaller screenshot or save it to a file.]`,
             );
             continue;
           }
@@ -3618,7 +3685,7 @@ async function convertMessage(
           const flattened: string[] = [...toolTextParts];
           for (let i = 0; i < toolImageParts.length; i++) {
             flattened.push(
-              `[Tool returned an image attachment, but the MiMo upstream provider does not accept images in tool messages. Image ${i + 1} of ${toolImageParts.length} was dropped to keep the request valid.]`,
+              `[Tool returned an image attachment, but the MiMo upstream provider does not accept images in tool messages. Image ${String(i + 1)} of ${String(toolImageParts.length)} was dropped to keep the request valid.]`,
             );
           }
           toolContent = flattened.join("\n");
@@ -3652,7 +3719,7 @@ async function convertMessage(
       if (base64Bytes === undefined || base64Bytes > MAX_IMAGE_BASE64_BYTES) {
         textParts.push(
           `[Image attachment omitted: normalized payload exceeds the ` +
-            `${Math.floor(MAX_IMAGE_BASE64_BYTES / (1024 * 1024))} MB base64 limit. ` +
+            `${String(Math.floor(MAX_IMAGE_BASE64_BYTES / (1024 * 1024)))} MB base64 limit. ` +
             `Resize or compress the image and re-attach it.]`,
         );
         continue;
@@ -3804,7 +3871,7 @@ function estimateChatMessageTokenCount(message: vscode.LanguageModelChatRequestM
   );
 }
 
-function partToTokenCount(part: vscode.LanguageModelInputPart | unknown): number {
+function partToTokenCount(part: unknown): number {
   if (part instanceof vscode.LanguageModelTextPart) {
     return estimateTokenCount(part.value);
   }
@@ -3855,7 +3922,7 @@ function estimateDataPartTokenCount(part: vscode.LanguageModelDataPart): number 
   return Math.max(1, Math.ceil(part.data.byteLength / 4));
 }
 
-function partToText(part: vscode.LanguageModelInputPart | unknown): string {
+function partToText(part: unknown): string {
   if (part instanceof vscode.LanguageModelTextPart) {
     return part.value;
   }
@@ -3903,7 +3970,7 @@ function normalizeMessages(messages: ApiMessage[]): ApiMessage[] {
       !prevHasToolCalls &&
       !msgHasToolCalls
     ) {
-      previous.content = `${prevContent ?? ""}\n\n${msgContent ?? ""}`.trim();
+      previous.content = `${prevContent}\n\n${msgContent}`.trim();
     } else {
       normalized.push({ ...message });
     }
@@ -4197,31 +4264,28 @@ function isFreeModel(modelId: string): boolean {
 }
 
 /** Result of a vision-proxy pass: per-message descriptions plus cache stats. */
-type VisionProxyResult = {
+interface VisionProxyResult {
   /** Original message index → text description (only for messages with images). */
   descriptions: ReadonlyMap<number, string>;
   /** Messages whose images were already cached — no vision model request was made. */
   cacheHits: number;
   /** Messages that required a new vision-model request. */
   cacheMisses: number;
-};
+}
 
 /**
  * Collect the parts of a single message that the vision proxy should see:
  * image parts plus text parts, dropping tool parts.
  */
-function collectRequestParts(
-  msg: vscode.LanguageModelChatRequestMessage,
-): Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> {
-  const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
+function collectRequestParts(msg: vscode.LanguageModelChatRequestMessage): (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] {
+  const parts: (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] = [];
   for (const part of msg.content) {
     if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
       parts.push(part);
     } else if (part instanceof vscode.LanguageModelTextPart) {
       parts.push(part);
     } else if (typeof part === "object" && part !== null && "value" in part) {
-      const valuePart = part as { value: unknown };
-      parts.push(new vscode.LanguageModelTextPart(String(valuePart.value)));
+      parts.push(new vscode.LanguageModelTextPart(String(part.value)));
     }
   }
   return parts;
@@ -4328,7 +4392,7 @@ async function proxyVision(
     const nonAgent = (models: readonly vscode.LanguageModelChat[]) => models.filter((m) => !m.id.includes("-agent:"));
 
     let visionModels = nonAgent(await vscode.lm.selectChatModels({ id: visionModelId }));
-    if (!visionModels || visionModels.length === 0) {
+    if (visionModels.length === 0) {
       // Try matching by name substring across all providers
       const allVisible = nonAgent(await vscode.lm.selectChatModels({}));
       visionModels = allVisible.filter(
@@ -4338,7 +4402,7 @@ async function proxyVision(
           m.family.toLowerCase().includes(visionModelId.toLowerCase()),
       );
     }
-    if (!visionModels || visionModels.length === 0) {
+    if (visionModels.length === 0) {
       throw new Error(`Vision model "${visionModelId}" not found. ` + `Run "OpenCode Go: Configure Vision Proxy" to see available models.`);
     }
 
@@ -4435,7 +4499,7 @@ const DEFAULT_VISION_PROXY_PROMPT =
  * stored in globalState via the "OpenCode Go: Configure Vision Proxy" command).
  */
 function isVisionProxyEnabled(): boolean {
-  return (_extensionContext?.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "") ?? "").length > 0;
+  return extensionContext().globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "").length > 0;
 }
 
 /**
@@ -4500,7 +4564,7 @@ async function showVisionProxyPicker(context: vscode.ExtensionContext): Promise<
     return a.label.localeCompare(b.label);
   });
 
-  const items: Array<{
+  const items: {
     label: string;
     description?: string;
     detail?: string;
@@ -4509,7 +4573,7 @@ async function showVisionProxyPicker(context: vscode.ExtensionContext): Promise<
     _kind: "none" | "prompt" | "model" | "separator";
     _supportsVision?: boolean;
     kind?: vscode.QuickPickItemKind;
-  }> = [
+  }[] = [
     { label: "$(circle-slash) None (disable)", detail: currentModelId ? "" : "currently selected", picked: !currentModelId, _kind: "none" },
     { label: "", kind: vscode.QuickPickItemKind.Separator, _kind: "separator" },
     {

@@ -2,16 +2,16 @@
 
 # Reasoning Not Surfaced as Thinking Part — Issues #22 + #71 (Duplicate)
 
-**Topic:** thinking / reasoning / vscode / byok / copilot-chat / streaming / languageModelThinkingPart  
-**Updated:** 2026-07-09  
-**Tags:** #thinking #reasoning #vscode #byok #copilot-chat #streaming #languageModelThinkingPart #upstream  
-**GitHub Issues:** [#22](https://github.com/ltmoerdani/opencode-copilot-chat/issues/22), [#71](https://github.com/ltmoerdani/opencode-copilot-chat/issues/71)  
-**Fixed in:** v0.3.7 (branch `fix/thinking-part-byok-surfacing-22-71`)  
+**Topic:** thinking / reasoning / vscode / byok / copilot-chat / streaming / languageModelThinkingPart
+**Updated:** 2026-07-09
+**Tags:** #thinking #reasoning #vscode #byok #copilot-chat #streaming #languageModelThinkingPart #upstream
+**GitHub Issues:** [#22](https://github.com/ltmoerdani/opencode-copilot-chat/issues/22), [#71](https://github.com/ltmoerdani/opencode-copilot-chat/issues/71)
+**Fixed in:** v0.3.7 (branch `fix/thinking-part-byok-surfacing-22-71`)
 **Manual test:** ✅ Verified with DeepSeek + Kimi in Copilot Chat (2026-07-09)
-**Supersedes:** [`23-20260615-thinking-style-setting-not-respected.md`](./23-20260615-thinking-style-setting-not-respected.md) (marked deprecated — conclusion overturned)  
-**Upstream (still open, NOT a blocker):** [microsoft/vscode#318211](https://github.com/microsoft/vscode/issues/318211)  
-**Proof-of-concept:** [`Vizards/deepseek-v4-for-copilot`](https://github.com/Vizards/deepseek-v4-for-copilot) v0.6.2 (Marketplace, working)  
-**Reporters:** [@hu3bi](https://github.com/hu3bi) (#22), [@alexaroth](https://github.com/alexaroth) (#71)  
+**Supersedes:** [`23-20260615-thinking-style-setting-not-respected.md`](./23-20260615-thinking-style-setting-not-respected.md) (marked deprecated — conclusion overturned)
+**Upstream (still open, NOT a blocker):** [microsoft/vscode#318211](https://github.com/microsoft/vscode/issues/318211)
+**Proof-of-concept:** [`Vizards/deepseek-v4-for-copilot`](https://github.com/Vizards/deepseek-v4-for-copilot) v0.6.2 (Marketplace, working)
+**Reporters:** [@hu3bi](https://github.com/hu3bi) (#22), [@alexaroth](https://github.com/alexaroth) (#71)
 **Participants:** [@hu3bi](https://github.com/hu3bi), [@alexaroth](https://github.com/alexaroth), [@yinhx3](https://github.com/yinhx3), [@Wallacy](https://github.com/Wallacy), [@sublimode](https://github.com/sublimode)
 
 ---

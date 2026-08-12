@@ -44,11 +44,11 @@ const CONTEXT_RETRY_SAFETY_RATIO = 0.001;
  *
  * Order matters: more specific patterns should come first.
  */
-const RECOVERABLE_ERROR_PATTERNS: Array<{
+const RECOVERABLE_ERROR_PATTERNS: {
   pattern: RegExp;
   patch: (body: Record<string, unknown>, match?: RegExpMatchArray) => Record<string, unknown>;
   describe: (match: RegExpMatchArray) => string;
-}> = [
+}[] = [
   // --- Thinking errors ---
   // "invalid thinking: only type=enabled is allowed for this model"
   {
@@ -169,10 +169,10 @@ const RECOVERABLE_ERROR_PATTERNS: Array<{
       const fieldName = match?.[1];
       if (!fieldName) return body;
       const next = { ...body };
-      delete next[fieldName];
+      next[fieldName] = undefined;
       return next;
     },
-    describe: (match) => `removed field '${match?.[1]}' (not accepted by this model)`,
+    describe: (match) => `removed field '${match[1]}' (not accepted by this model)`,
   },
 ];
 
@@ -232,7 +232,7 @@ function patchContextOverflow(errorMessage: string, body: Record<string, unknown
 
   return {
     body: patchedBody,
-    reason: `reduced ${outputLabel} from ${configuredOutput} to ${nextOutput} using upstream context counts`,
+    reason: `reduced ${outputLabel} from ${String(configuredOutput)} to ${String(nextOutput)} using upstream context counts`,
   };
 }
 

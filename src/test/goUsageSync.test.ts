@@ -30,21 +30,23 @@ function apiResponse(): GoUsageApiResponse {
 }
 
 function stubFetch(status: number, body: unknown): typeof fetch {
-  return (async () =>
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    })) as unknown as typeof fetch;
+  const response = new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+  return () => Promise.resolve(response);
 }
 
 test("fetchGoUsage — sends the key as Bearer to the official endpoint", async () => {
   let requestedUrl = "";
   let authHeader = "";
-  const fetcher = (async (url: RequestInfo | URL, init?: RequestInit) => {
-    requestedUrl = String(url);
-    authHeader = String((init?.headers && (init.headers as Record<string, string>).Authorization) ?? "");
-    return new Response(JSON.stringify(apiResponse()), { status: 200 });
-  }) as unknown as typeof fetch;
+  const fetcher: typeof fetch = (input, init) => {
+    // The production call always passes a string URL; capture it as-is.
+    requestedUrl = typeof input === "string" ? input : "";
+    const headers = init?.headers as Record<string, string> | undefined;
+    authHeader = headers?.Authorization ?? "";
+    return Promise.resolve(new Response(JSON.stringify(apiResponse()), { status: 200 }));
+  };
 
   const result = await fetchGoUsage("sk-test", fetcher);
   assert.equal(requestedUrl, GO_USAGE_API_URL);
@@ -68,10 +70,10 @@ test("fetchGoUsage — classifies failures so callers can fall back", async () =
 
 test("fetchGoUsage — missing key is refused without any request", async () => {
   let called = false;
-  const fetcher = (async () => {
+  const fetcher: typeof fetch = () => {
     called = true;
-    return new Response("", { status: 200 });
-  }) as unknown as typeof fetch;
+    return Promise.resolve(new Response("", { status: 200 }));
+  };
   assert.deepEqual(await fetchGoUsage("", fetcher), { ok: false, reason: "no-key" });
   assert.equal(called, false);
 });
@@ -79,9 +81,9 @@ test("fetchGoUsage — missing key is refused without any request", async () => 
 test("fetchGoUsage — malformed payloads and network errors are classified", async () => {
   assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(200, { nope: true })), { ok: false, reason: "invalid" });
   assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(200, "not json")), { ok: false, reason: "invalid" });
-  const throwing = (async () => {
+  const throwing: typeof fetch = () => {
     throw new TypeError("fetch failed");
-  }) as unknown as typeof fetch;
+  };
   assert.deepEqual(await fetchGoUsage("sk-test", throwing), { ok: false, reason: "network" });
 });
 

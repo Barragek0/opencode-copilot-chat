@@ -4,7 +4,7 @@
  * Simulates JSON-serialized chat messages at various sizes and checks
  * that the safeOutputBudget does not collapse to 1.
  *
- * Run: npx tsx scripts/verify-estimate-token-count.mts
+ * Run: npx tsx scripts/verify-estimate-token-count.ts
  */
 
 // ── Heuristic under test (same logic as extension.ts after fix) ──────────────
@@ -116,7 +116,7 @@ function generateChatPayload(targetTokens: number, hasToolCalls: boolean): strin
       if (hasToolCalls && i % 3 === 0) {
         userMsg.tool_calls = [
           {
-            id: `call_${i}_0`,
+            id: `call_${String(i)}_0`,
             type: "function",
             function: {
               name: "readFile",
@@ -124,7 +124,7 @@ function generateChatPayload(targetTokens: number, hasToolCalls: boolean): strin
             },
           },
           {
-            id: `call_${i}_1`,
+            id: `call_${String(i)}_1`,
             type: "function",
             function: {
               name: "searchFiles",
@@ -276,12 +276,12 @@ describe("ServiceManager", () => {
       if (hasToolCalls && (i - 1) % 4 === 0) {
         assistantMsg.tool_calls = [
           {
-            id: `call_res_${i}`,
+            id: `call_res_${String(i)}`,
             type: "function",
             function: {
               name: "createFile",
               arguments: JSON.stringify({
-                path: `src/services/example-${i}.ts`,
+                path: `src/services/example-${String(i)}.ts`,
               }),
             },
           },
@@ -374,7 +374,7 @@ for (const tc of testCases) {
   console.log(`   NEW: max_tokens =          ${newMaxTokens.toLocaleString()}`);
 
   if (oldMaxTokens < 1000) {
-    console.log(`\n   ❌ OLD: max_tokens collapsed to ${oldMaxTokens} — BUG REPRODUCED`);
+    console.log(`\n   ❌ OLD: max_tokens collapsed to ${String(oldMaxTokens)} — BUG REPRODUCED`);
   } else {
     console.log(`\n   ✅ OLD: OK (${oldMaxTokens.toLocaleString()} tokens)`);
   }
@@ -382,7 +382,7 @@ for (const tc of testCases) {
   if (newMaxTokens >= 4096) {
     console.log(`   ✅ NEW: OK (${newMaxTokens.toLocaleString()} tokens) — FIX VERIFIED`);
   } else {
-    console.log(`   ❌ NEW: max_tokens still only ${newMaxTokens} — FIX FAILED`);
+    console.log(`   ❌ NEW: max_tokens still only ${String(newMaxTokens)} — FIX FAILED`);
     allPassed = false;
   }
 

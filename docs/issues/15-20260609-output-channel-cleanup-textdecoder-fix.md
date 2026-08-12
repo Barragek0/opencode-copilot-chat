@@ -2,9 +2,9 @@
 
 # Output Channel Cleanup & Buffer TypeScript Fix
 
-**Topic:** extension / output channel / debug logging / TypeScript  
-**Updated:** 2026-06-09  
-**Tags:** #extension #fix #output-channel #debug #typescript  
+**Topic:** extension / output channel / debug logging / TypeScript
+**Updated:** 2026-06-09
+**Tags:** #extension #fix #output-channel #debug #typescript
 **Supersedes:** —
 
 ---

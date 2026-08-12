@@ -31,7 +31,7 @@ export function parseToolInput(value: string): object {
   }
 
   try {
-    const parsed = JSON.parse(value);
+    const parsed: unknown = JSON.parse(value);
     return isRecord(parsed) ? parsed : {};
   } catch {
     return {};

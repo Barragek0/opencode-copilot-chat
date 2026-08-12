@@ -28,7 +28,7 @@ describe("fallbackModelMetadata — kimi-k2.7-code (issue #25)", () => {
   it("reports correct context/output limits (models.dev: 256000 / 262144)", () => {
     const meta = fallbackModelMetadata("kimi-k2.7-code", GO_VENDOR);
     assert.equal(meta?.contextWindow, 256000);
-    assert.equal(meta?.maxOutputTokens, 262144);
+    assert.equal(meta.maxOutputTokens, 262144);
   });
 
   it("reports vision capability (models.dev attachment: true)", () => {
@@ -103,8 +103,8 @@ describe("getContextSizeOptionsForModel — Kimi context tiers (issue #87)", () 
       options?.map((option) => option.value),
       [256_000, 1_048_576],
     );
-    assert.equal(options?.[0].isDefault, true);
-    assert.equal(options?.[1].description, "Higher pricing");
+    assert.equal(options[0].isDefault, true);
+    assert.equal(options[1].description, "Higher pricing");
   });
 
   it("recognizes the official short K3 model id", () => {

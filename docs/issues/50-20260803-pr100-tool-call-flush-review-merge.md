@@ -2,9 +2,9 @@
 
 # PR #100 Review, Merge, and v0.4.5 Release
 
-**Topic:** streaming / tool-calling / provider  
-**Updated:** 2026-08-08  
-**Tags:** #streaming #tool-calling #community-pr #deepseek #regression  
+**Topic:** streaming / tool-calling / provider
+**Updated:** 2026-08-08
+**Tags:** #streaming #tool-calling #community-pr #deepseek #regression
 **Supersedes:** —
 
 ---
@@ -58,9 +58,9 @@ Full root-cause analysis: [`docs/issues/42-20260803-premature-tool-call-flush.md
 
 ## PR #100 Changes
 
-**Author:** [@xianhongtao](https://github.com/xianhongtao) (external contributor)  
-**Branch:** `xianhongtao/issue98` → `main`  
-**Size:** +532 / −78, 8 files  
+**Author:** [@xianhongtao](https://github.com/xianhongtao) (external contributor)
+**Branch:** `xianhongtao/issue98` → `main`
+**Size:** +532 / −78, 8 files
 **Commits:** 3 (initial fix + 2 follow-ups from review feedback)
 
 ### Commit 1 — `b36ecf2e` "fix(streaming): flush tool calls only at stream end (fixes #98)"
@@ -138,16 +138,16 @@ Copilot AI review: reviewed 6/7 files, generated no comments.
 
 ## Files Touched
 
-| File | Status | Purpose |
-| --- | --- | --- |
-| `src/toolCallAccumulator.ts` | new (141 lines) | Pure tool-call accumulator module |
-| `src/test/toolCallAccumulator.test.ts` | new (197 lines) | 15 unit test cases |
-| `src/streaming.ts` | modified | `OpenAiResponseExtractor` integration + transport flush calls |
-| `package.json` | modified | Version bump 0.4.4 → 0.4.5 |
-| `package-lock.json` | modified | Version bump 0.4.4 → 0.4.5 (2 locations) |
-| `CHANGELOG.md` | modified | 0.4.5 entry |
-| `docs/issues/42-20260803-premature-tool-call-flush.md` | new | Root-cause analysis + fix details |
-| `docs/devlog.md` | modified | Session handoff entry |
+| File                                                   | Status          | Purpose                                                       |
+| ------------------------------------------------------ | --------------- | ------------------------------------------------------------- |
+| `src/toolCallAccumulator.ts`                           | new (141 lines) | Pure tool-call accumulator module                             |
+| `src/test/toolCallAccumulator.test.ts`                 | new (197 lines) | 15 unit test cases                                            |
+| `src/streaming.ts`                                     | modified        | `OpenAiResponseExtractor` integration + transport flush calls |
+| `package.json`                                         | modified        | Version bump 0.4.4 → 0.4.5                                    |
+| `package-lock.json`                                    | modified        | Version bump 0.4.4 → 0.4.5 (2 locations)                      |
+| `CHANGELOG.md`                                         | modified        | 0.4.5 entry                                                   |
+| `docs/issues/42-20260803-premature-tool-call-flush.md` | new             | Root-cause analysis + fix details                             |
+| `docs/devlog.md`                                       | modified        | Session handoff entry                                         |
 
 ---
 

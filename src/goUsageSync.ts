@@ -37,9 +37,7 @@ export interface GoUsageApiResponse {
 
 export type GoUsageSyncFailureReason = "no-key" | "unauthorized" | "no-subscription" | "not-found" | "network" | "invalid";
 
-export type GoUsageSyncResult =
-  | { ok: true; data: GoUsageApiResponse }
-  | { ok: false; reason: GoUsageSyncFailureReason };
+export type GoUsageSyncResult = { ok: true; data: GoUsageApiResponse } | { ok: false; reason: GoUsageSyncFailureReason };
 
 /** Minimal structural guard for the endpoint payload. */
 function isGoUsageApiResponse(value: unknown): value is GoUsageApiResponse {
