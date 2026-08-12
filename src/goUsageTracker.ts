@@ -15,6 +15,7 @@ export type CostResolver = (modelId: string) => ModelCost | undefined;
 
 const STORAGE_KEY = "opencodego.usageLog.v1";
 const BASELINE_STORAGE_KEY = "opencodego.usageBaseline.v1";
+const EVER_TRACKED_KEY = "opencodego.everTracked.v1";
 const SESSION_COSTS_KEY = "opencodego.sessionCosts.v1";
 const MAX_LOG_ENTRIES = 2000;
 
@@ -32,7 +33,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 // This table is a static snapshot kept as a last resort. The primary source
 // is the live models.dev metadata cache injected via CostResolver.
 
-const GO_MODEL_PRICING: Record<string, ModelCost> = {
+const GO_MODEL_PRICING: Record<string, ModelCost | undefined> = {
   "glm-5.1": { input: 1.4, output: 4.4, cache_read: 0.26 },
   "glm-5": { input: 1.0, output: 3.2, cache_read: 0.2 },
   "kimi-k2.6": { input: 0.95, output: 4.0, cache_read: 0.16 },
@@ -291,6 +292,12 @@ function readOpenCodeHistory(): HistoryRow[] | null {
 
 export class GoUsageTracker {
   private entries: UsageLogEntry[] = [];
+  /**
+   * Whether this profile has ever recorded (or had cleared) local usage.
+   * Kept true after a reset so the usage card shows zeroed local values
+   * instead of collapsing into the first-run "no data" state.
+   */
+  private everTracked = false;
   private baseline: UsageBaseline = {};
   private readonly log?: (msg: string) => void;
   private costResolver?: CostResolver;
@@ -406,6 +413,7 @@ export class GoUsageTracker {
       sessionId: summary.sessionId,
       copilotCredits,
     });
+    this.markEverTracked();
 
     // Accumulate per-session cost
     if (summary.sessionId) {
@@ -696,7 +704,7 @@ export class GoUsageTracker {
         requests: yestReq,
         tokens: yestTokens,
       },
-      hasData: this.entries.length > 0,
+      hasData: this.entries.length > 0 || this.everTracked,
       sqliteAvailable: false,
     };
   }
@@ -814,6 +822,16 @@ export class GoUsageTracker {
     this.sessionCosts.clear();
     this.persist();
     this.persistBaseline();
+    // Keep the usage card alive with zeroed values instead of falling back
+    // to the first-run "no data" state.
+    this.markEverTracked();
+  }
+
+  /** Mark (and persist) that this profile has local usage history. */
+  private markEverTracked(): void {
+    if (this.everTracked) return;
+    this.everTracked = true;
+    void this.context.globalState.update(this.storageKey(EVER_TRACKED_KEY), true);
   }
 
   /** Whether a server-accurate usage snapshot is currently in effect. */
@@ -886,6 +904,8 @@ export class GoUsageTracker {
     if (Array.isArray(stored)) {
       this.entries = stored.filter((e) => typeof e.timestamp === "number" && typeof e.cost === "number");
     }
+
+    this.everTracked = this.context.globalState.get<boolean>(this.storageKey(EVER_TRACKED_KEY), this.entries.length > 0);
 
     const baseline = this.context.globalState.get<UsageBaseline>(this.storageKey(BASELINE_STORAGE_KEY), {});
     if (baseline && typeof baseline === "object") {
