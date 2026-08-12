@@ -1310,7 +1310,6 @@ function updateWebviewContent(): void {
     return;
   }
   const s = tracker.getSummary();
-  const sc = tracker.getCurrentSessionCost();
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const profileLabel = activeProfile?.label ?? "OpenCode Go";
 
@@ -1322,43 +1321,135 @@ function updateWebviewContent(): void {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>OpenCode Usage Summary — ${escapeSvg(profileLabel)}</title>
       <style>
+        :root {
+          --bg: var(--vscode-editorWidget-background, #252526);
+          --border: var(--vscode-widget-border, #3c3c3c);
+          --text: var(--vscode-foreground, #cccccc);
+          --text-dim: var(--vscode-descriptionForeground, #9d9d9d);
+          --accent: var(--vscode-textLink-foreground, #3794ff);
+          --track: var(--vscode-widget-border, #3c3c3c);
+          --divider: var(--vscode-widget-border, #3c3c3c);
+        }
+        * { box-sizing: border-box; }
         body {
-          display: flex;
-          justify-content: center;
-          align-items: flex-start;
-          height: 100vh;
-          background-color: var(--vscode-editor-background);
-          color: var(--vscode-editor-foreground);
           margin: 0;
-          padding: 20px;
-          box-sizing: border-box;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
-        .container {
-          width: 100%;
-          max-width: 440px;
+          background: var(--vscode-editor-background, #1e1e1e);
           display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 15px;
+          align-items: flex-start;
+          justify-content: center;
+          padding: 16px;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif;
         }
-        svg {
+        .card {
+          width: 320px;
+          background: var(--bg);
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          color: var(--text);
+          font-size: 13px;
+          padding: 14px 16px;
+        }
+        .title {
+          font-size: 13px;
+          font-weight: 600;
+          margin-bottom: 14px;
+        }
+        .row-label {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          margin-bottom: 6px;
+        }
+        .row-label .name { font-weight: 600; font-size: 13px; }
+        .row-label .resets { font-size: 11px; color: var(--text-dim); }
+        .bar {
+          height: 4px;
           width: 100%;
-          max-width: 440px;
-          height: auto;
-          border-radius: 8px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-          background-color: #1e1e1e;
+          background: var(--track);
+          border-radius: 2px;
+          overflow: hidden;
+          margin-bottom: 6px;
         }
+        .bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+        .row-sub {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          margin-bottom: 16px;
+          font-size: 12px;
+        }
+        .row-sub .used { color: var(--text-dim); }
+        .row-sub .pct { font-weight: 600; }
+        .section:last-of-type .row-sub { margin-bottom: 14px; }
+        .divider { border-top: 1px solid var(--divider); margin: 0 -16px 12px; }
+        .stats { display: flex; justify-content: space-between; margin-bottom: 10px; }
+        .stats:last-of-type { margin-bottom: 14px; }
+        .stat { flex: 1; }
+        .stat .label { color: var(--text-dim); font-size: 11px; margin-bottom: 2px; }
+        .stat .value { font-weight: 600; font-size: 13px; }
+        .footer {
+          display: flex;
+          gap: 16px;
+          padding-top: 12px;
+          border-top: 1px solid var(--divider);
+          margin: 0 -16px;
+          padding-left: 16px;
+        }
+        .footer a { color: var(--accent); font-size: 12px; text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
       </style>
     </head>
     <body>
-      <div class="container">
-        ${buildUsageTooltipSvg(s, sc)}
+      <div class="card">
+        <div class="title">${escapeSvg(profileLabel)} - Usage</div>
+
+        ${usageCardSectionHtml("Session (5h rolling)", s.session)}
+        ${usageCardSectionHtml("Weekly", s.weekly)}
+        ${usageCardSectionHtml("Monthly", s.monthly)}
+
+        <div class="divider"></div>
+
+        ${usageCardStatsHtml("Today", s.today)}
+        ${usageCardStatsHtml("Yesterday", s.yesterday)}
+
+        <div class="footer">
+          <a href="command:opencodego.setUsageTargets">Set spent targets</a>
+          ${nonLegacyCount(profilesCache) > 0 ? '<a href="command:opencodego.renameActiveProfile">Rename</a>' : ""}
+        </div>
       </div>
     </body>
     </html>
   `;
+}
+
+/** One meter section: label + resets, bar, used + percent. */
+function usageCardSectionHtml(label: string, p: _UsageSummary["session"]): string {
+  const pct = p.percent.toFixed(1);
+  const width = Math.min(Math.max(p.percent, 0), 100);
+  return [
+    '<div class="section">',
+    '<div class="row-label">',
+    `<span class="name">${escapeSvg(label)}</span>`,
+    `<span class="resets">Resets in ${escapeSvg(rel(p.resetsAt))}</span>`,
+    "</div>",
+    `<div class="bar"><div class="bar-fill" style="width:${width}%"></div></div>`,
+    '<div class="row-sub">',
+    `<span class="used">${escapeSvg(`${usd(p.spent)} / ${usd(p.limit)} used`)}</span>`,
+    `<span class="pct">${pct}%</span>`,
+    "</div>",
+    "</div>",
+  ].join("");
+}
+
+/** One stats row: three label-over-value columns. */
+function usageCardStatsHtml(label: string, day: _UsageSummary["today"]): string {
+  return [
+    '<div class="stats">',
+    `<div class="stat"><div class="label">${escapeSvg(label)}</div><div class="value">${escapeSvg(usd(day.cost))}</div></div>`,
+    `<div class="stat"><div class="label">Requests</div><div class="value">${day.requests}</div></div>`,
+    `<div class="stat"><div class="label">Tokens</div><div class="value">${escapeSvg(tokens(day.tokens))}</div></div>`,
+    "</div>",
+  ].join("");
 }
 
 function buildUsageTooltip(
