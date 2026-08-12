@@ -13,5 +13,6 @@
     "types": ["node"]
   },
   "include": ["src"],
-  "exclude": ["node_modules", ".vscode-test", "scripts"]
+  // Mirrors .gitignore: nothing gitignored may enter the TS projects.
+  "exclude": ["node_modules", ".vscode-test", "scripts", "out", "tmp"]
 }
