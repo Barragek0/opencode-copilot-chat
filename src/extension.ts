@@ -1620,7 +1620,6 @@ function buildUsageTooltipSvg(
   sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
   profileLabel?: string,
 ): string {
-  const hasSession = sc && sc.cost > 0;
   // Stable geometry: fixed card width and fixed columns, so the layout never
   // shifts when session data appears or a day has no usage yet.
   const width = 440;
@@ -1688,11 +1687,18 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   const dividerY = 226;
   const firstRowY = 248;
   const rowGap = 24;
-  const session = sc && sc.cost > 0 ? sc : undefined;
+  // All three rows are always rendered (zeros included) so the card is
+  // stable regardless of whether a session is currently active.
+  const sessionCost = sc && sc.cost > 0 ? sc : { cost: 0, requests: 0, promptTokens: 0, completionTokens: 0 };
   const deviceRows: Array<[string, number, number, number, number]> = [];
-  if (session)
-    deviceRows.push(["Session (est):", session.cost, session.requests, session.promptTokens + session.completionTokens, firstRowY]);
-  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + (hasSession ? rowGap : 0)]);
+  deviceRows.push([
+    "Session (est):",
+    sessionCost.cost,
+    sessionCost.requests,
+    sessionCost.promptTokens + sessionCost.completionTokens,
+    firstRowY,
+  ]);
+  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + rowGap]);
   deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + 2 * rowGap]);
 
   const height = firstRowY + 2 * rowGap + 14;
