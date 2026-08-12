@@ -23,6 +23,18 @@ import yml from "eslint-plugin-yml";
 import jsonc from "eslint-plugin-jsonc";
 import { gitignorePatterns } from "./scripts/gitignore";
 
+// eslint.config.ts is loaded as ESM by ESLint (via jiti) but lives outside
+// both tsconfig projects, so the editor's inferred CommonJS project does not
+// see @types/node's `import.meta.dirname` (declared only for node16/nodenext
+// modules). It exists at runtime; declare it explicitly to silence the
+// editor diagnostic. Matches @types/node's own declaration, so type-checked
+// consumers merge cleanly.
+declare global {
+  interface ImportMeta {
+    dirname: string;
+  }
+}
+
 const gitignore = gitignorePatterns();
 // Files not covered by tsconfig (which only includes src/), type-checked via
 // the default project so strictTypeChecked rules still apply to them.
