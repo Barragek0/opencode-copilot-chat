@@ -1633,7 +1633,6 @@ function buildUsageTooltipSvg(
   const width = 440;
   const padX = 14;
   const right = width - padX;
-  const bg = "#1e1e1e";
   const fg = "#d4d4d4";
   const muted = "#a6a6a6";
   const track = "#3c3c3c";
@@ -1681,8 +1680,7 @@ function buildUsageTooltipSvg(
     ].join("");
 
   if (!s.hasData) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="70" viewBox="0 0 ${width} 70"><rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text(svgTitle, padX, 28, 16, 700)}
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="70" viewBox="0 0 ${width} 70">${text(svgTitle, padX, 28, 16, 700)}
 ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", padX, 52, 12, 400, muted)}
 </svg>`;
   }
@@ -1696,7 +1694,7 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   ] as const;
   const dividerY = 226;
   const firstRowY = 248;
-  const rowGap = 24;
+  const rowGap = 10;
   const session = sc && sc.cost > 0 ? sc : undefined;
   const deviceRows: Array<[string, number, number, number, number]> = [];
   if (session)
@@ -1707,7 +1705,6 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   const height = firstRowY + 2 * rowGap + 14;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-<rect width="100%" height="100%" rx="4" fill="${bg}"/>
 ${text(svgTitle, padX, 28, 16, 700)}
 ${meterRows.map(([label, periodValue, y]) => period(label, periodValue, y)).join("")}
 <line x1="${padX}" y1="${dividerY}" x2="${right}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
