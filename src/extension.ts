@@ -1594,19 +1594,17 @@ function buildUsageTooltipSvg(
   sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
   profileLabel?: string,
 ): string {
-  const hasSession = sc && sc.cost > 0;
-  // Stable geometry: fixed card width and fixed columns, so the layout never
-  // shifts when session data appears or a day has no usage yet.
-  const width = 440;
-  const padX = 14;
+  // Compact 320px card with a uniform 16px gutter, matching the usage panel.
+  const width = 320;
+  const padX = 16;
   const right = width - padX;
-  const bg = "#1e1e1e";
-  const fg = "#d4d4d4";
-  const muted = "#a6a6a6";
+  const bg = "#252526";
+  const fg = "#cccccc";
+  const muted = "#9d9d9d";
   const track = "#3c3c3c";
-  const accent = "#73c991";
-  const line = "#333333";
-  const font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  const accent = "#3794ff";
+  const line = "#3c3c3c";
+  const font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Ubuntu, sans-serif";
 
   const svgTitle = escapeSvg(profileLabel ? `${profileLabel} - Usage` : "OpenCode Go - Usage");
   const noDataMsg = s.hasData ? null : nonLegacyCount(profilesCache) > 0 ? "No data yet for this profile." : "No usage data yet.";
@@ -1618,62 +1616,54 @@ function buildUsageTooltipSvg(
     const clamped = Math.min(Math.max(pct, 0), 100);
     const fillWidth = Math.max(0, Math.round((clamped / 100) * barWidth));
     return [
-      `<rect x="${x}" y="${y}" width="${barWidth}" height="5" rx="2.5" fill="${track}"/>`,
-      fillWidth > 0 ? `<rect x="${x}" y="${y}" width="${fillWidth}" height="5" rx="2.5" fill="${accent}"/>` : "",
+      `<rect x="${x}" y="${y}" width="${barWidth}" height="4" rx="2" fill="${track}"/>`,
+      fillWidth > 0 ? `<rect x="${x}" y="${y}" width="${fillWidth}" height="4" rx="2" fill="${accent}"/>` : "",
     ].join("");
   };
 
-  // Meter block with a uniform 14px gutter between blocks: label row with the
-  // reset time right-aligned at the card's right padding, then the bar and
-  // the spent/limit line below it.
+  // Meter section: label + resets row (6px), 4px bar (6px), used + percent
+  // row (16px), next section 2px later — a 38px pitch.
   const period = (label: string, p: _UsageSummary["session"], y: number): string =>
     [
-      text(label, padX, y, 14, 700),
-      text(`Resets in ${rel(p.resetsAt)}`, right, y, 12, 400, muted, "end"),
-      bar(p.percent, padX, y + 14, 340),
-      text(`${p.percent.toFixed(1)}%`, right, y + 21, 14, 700, fg, "end"),
-      text(`${usd(p.spent)} / ${usd(p.limit)} used`, padX, y + 36, 13, 400, fg),
+      text(label, padX, y, 13, 600),
+      text(`Resets in ${rel(p.resetsAt)}`, right, y, 11, 400, muted, "end"),
+      bar(p.percent, padX, y + 10, right - padX),
+      text(`${usd(p.spent)} / ${usd(p.limit)} used`, padX, y + 22, 12, 400, muted),
+      text(`${p.percent.toFixed(1)}%`, right, y + 22, 12, 600),
     ].join("");
 
-  // Device-local rows share one fixed column grid: label, cost, requests,
-  // tokens. Always rendered (zeros included) so the card height is stable.
-  const deviceRow = (label: string, cost: number, requests: number, tokenCount: number, y: number): string =>
+  // Stats row: three label-over-value columns (Today / Yesterday).
+  const statsRow = (label: string, cost: number, requests: number, tokenCount: number, labelY: number, valueY: number): string =>
     [
-      text(label, padX, y, 13, 400, muted),
-      text(usd(cost), 120, y, 13, 700),
-      text("Requests:", 190, y, 13, 400, muted),
-      text(String(requests), 262, y, 13, 700),
-      text("Tokens:", 305, y, 13, 400, muted),
-      text(tokens(tokenCount), 385, y, 13, 700),
+      text(label, padX, labelY, 11, 400, muted),
+      text(usd(cost), padX, valueY, 13, 600),
+      text("Requests", 140, labelY, 11, 400, muted),
+      text(String(requests), 140, valueY, 13, 600),
+      text("Tokens", right, labelY, 11, 400, muted, "end"),
+      text(tokens(tokenCount), right, valueY, 13, 600, "end"),
     ].join("");
 
   if (!s.hasData) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="70" viewBox="0 0 ${width} 70">
-<rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text(svgTitle, padX, 28, 16, 700)}
-${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", padX, 52, 12, 400, muted)}
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="66" viewBox="0 0 ${width} 66">
+<rect width="100%" height="100%" rx="6" fill="${bg}"/>
+${text(svgTitle, padX, 24, 13, 600)}
+${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", padX, 48, 12, 400, muted)}
 </svg>`;
   }
 
-  // Title starts at the same 14px gutter as the sides. Meter rows, the
-  // divider and the device rows keep a consistent 14px rhythm.
-  const meterRows = [["Session (5h rolling)", s.session, 56], ["Weekly", s.weekly, 116], ["Monthly", s.monthly, 176]] as const;
-  const dividerY = 226;
-  const firstRowY = 248;
-  const rowGap = 24;
-  const deviceRows: Array<[string, number, number, number, number]> = [];
-  if (hasSession) deviceRows.push(["Session (est):", sc!.cost, sc!.requests, sc!.promptTokens + sc!.completionTokens, firstRowY]);
-  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + (hasSession ? rowGap : 0)]);
-  deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + 2 * rowGap]);
-
-  const height = firstRowY + 2 * rowGap + 14;
+  // Title (y=24), three sections at 38/76/114, divider at 150, stats rows
+  // with a 26px pitch, and a 14px bottom gutter.
+  const meterRows = [["Session (5h rolling)", s.session, 38], ["Weekly", s.weekly, 76], ["Monthly", s.monthly, 114]] as const;
+  const dividerY = 150;
+  const height = 215;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-<rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text(svgTitle, padX, 28, 16, 700)}
+<rect width="100%" height="100%" rx="6" fill="${bg}"/>
+${text(svgTitle, padX, 24, 13, 600)}
 ${meterRows.map(([label, periodValue, y]) => period(label, periodValue, y)).join("")}
-<line x1="${padX}" y1="${dividerY}" x2="${right}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
-${deviceRows.map(([label, cost, requests, tokenCount, y]) => deviceRow(label, cost, requests, tokenCount, y)).join("")}
+<line x1="0" y1="${dividerY}" x2="${width}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
+${statsRow("Today", s.today.cost, s.today.requests, s.today.tokens, 162, 176)}
+${statsRow("Yesterday", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, 188, 202)}
 </svg>`;
 }
 
