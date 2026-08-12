@@ -51,6 +51,9 @@ export default defineConfig([
       parserOptions: {
         projectService: {
           allowDefaultProject: nonProjectFiles,
+          // scripts/ (and eslint.config.ts) are type-checked via the default
+          // project; keep the cap above the script count as it grows.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 64,
         },
         tsconfigRootDir: import.meta.dirname,
       },
