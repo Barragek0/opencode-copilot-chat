@@ -27,7 +27,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const bin = (name) => path.join(root, "node_modules", ".bin", name);
 
 const SRC_DIRS = ["src", "scripts"];
-const TS_EXT = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".mts", ".cts"]);
+const TS_EXT = new Set([".ts", ".tsx", ".js", ".cjs", ".cts"]);
 const IMPORT_RE = /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'](\.[^"']+)["']/g;
 
 /** @param {string} text @returns {string} */
@@ -80,16 +80,7 @@ function collectSourceFiles() {
  */
 function resolveImport(fromFile, spec) {
   const base = path.resolve(path.dirname(fromFile), spec);
-  const candidates = [
-    base,
-    `${base}.ts`,
-    `${base}.tsx`,
-    `${base}.js`,
-    `${base}.mjs`,
-    `${base}.mts`,
-    path.join(base, "index.ts"),
-    path.join(base, "index.js"),
-  ];
+  const candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, path.join(base, "index.ts"), path.join(base, "index.js")];
   for (const candidate of candidates) {
     try {
       statSync(candidate);

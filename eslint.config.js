@@ -15,28 +15,29 @@
 // via `--max-warnings 0`. The only rules disabled here are ones whose noise
 // outweighs their value (see the scoped overrides below).
 
-import { readFileSync } from "node:fs";
-import { defineConfig } from "eslint/config";
-import tseslint from "typescript-eslint";
-import yml from "eslint-plugin-yml";
-import jsonc from "eslint-plugin-jsonc";
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
+const { defineConfig } = require("eslint/config");
+const tseslint = require("typescript-eslint");
+const yml = require("eslint-plugin-yml");
+const jsonc = require("eslint-plugin-jsonc");
 
-const gitignore = readFileSync(new URL(".gitignore", import.meta.url), "utf8")
+const gitignore = readFileSync(path.join(__dirname, ".gitignore"), "utf8")
   .split(/\r?\n/)
   .map((line) => line.trim())
   .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"));
 
 // Files not covered by tsconfig (which only includes src/), type-checked via
 // the default project so strictTypeChecked rules still apply to them.
-const nonProjectFiles = ["eslint.config.mjs", "scripts/*.js", "scripts/*.mjs", "scripts/*.ts"];
+const nonProjectFiles = ["eslint.config.js", "scripts/*.js", "scripts/*.ts"];
 
 // The typescript-eslint `config()` helper is deprecated; ESLint core now
 // provides `defineConfig()`. We replicate the helper's `extends` expansion
 // explicitly by applying the TS `files` glob to each config object.
-const tsFiles = ["**/*.{ts,mts,cts,js,mjs,cjs}"];
-const testFiles = ["**/*.test.{ts,tsx,js,mjs,cjs}"];
+const tsFiles = ["**/*.{ts,js,cjs}"];
+const testFiles = ["**/*.test.{ts,tsx,js,cjs}"];
 
-export default defineConfig([
+module.exports = defineConfig([
   {
     ignores: gitignore,
   },
@@ -50,7 +51,7 @@ export default defineConfig([
         projectService: {
           allowDefaultProject: nonProjectFiles,
         },
-        tsconfigRootDir: import.meta.dirname,
+        tsconfigRootDir: __dirname,
       },
     },
     rules: {
@@ -84,6 +85,14 @@ export default defineConfig([
     files: testFiles,
     rules: {
       "@typescript-eslint/no-floating-promises": "off",
+    },
+  },
+  {
+    // The ESLint config file itself must be CommonJS (the repo root has no
+    // "type": "module"), so `require()` is the only option there.
+    files: ["eslint.config.js"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
     },
   },
   // --- YAML: strict rules from eslint-plugin-yml ---------------------------

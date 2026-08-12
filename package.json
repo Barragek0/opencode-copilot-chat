@@ -382,7 +382,7 @@
   },
   "lint-staged": {
     "*": "prettier --write --ignore-unknown",
-    "*.{js,mjs,cjs,ts,mts,cts}": "eslint --fix --max-warnings 0",
+    "*.{js,cjs,ts}": "eslint --fix --max-warnings 0",
     "*.md": "markdownlint-cli2 --config .markdownlint-cli2.jsonc --fix",
     ".husky/*": "shellcheck"
   },
