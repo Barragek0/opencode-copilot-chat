@@ -226,8 +226,20 @@
         },
         "opencodego.inlineSuggestionsModel": {
           "type": "string",
+          "enum": [
+            "qwen3.5-plus",
+            "qwen3.6-plus",
+            "qwen3.7-plus",
+            "deepseek-v4-flash"
+          ],
+          "enumDescriptions": [
+            "Fastest verified option: enable_thinking=false yields ~1.5s with zero hidden reasoning.",
+            "Qwen3.6 hybrid — same non-thinking mode, slightly larger context budget.",
+            "Qwen3.7 hybrid — newest Qwen on OpenCode Go, same non-thinking behavior.",
+            "Works but measurably slower — burns hidden reasoning tokens even with thinking off (~2s+)."
+          ],
           "default": "qwen3.5-plus",
-          "markdownDescription": "Model used for inline code suggestions. Prefer non-thinking models — measured: `qwen3.5-plus` with `enable_thinking=false` returns in ~1.5s with zero hidden reasoning, while reasoning models (e.g. `deepseek-v4-flash`) burn 100+ reasoning tokens even with thinking off and take 2s+."
+          "markdownDescription": "Model used for inline code suggestions. Prefer the non-thinking Qwen options — measured: `qwen3.5-plus` with `enable_thinking=false` returns in ~1.5s with zero hidden reasoning, while reasoning models (e.g. `deepseek-v4-flash`) burn 100+ reasoning tokens even with thinking off."
         },
         "opencodego.stripThinkTags": {
           "type": "string",
