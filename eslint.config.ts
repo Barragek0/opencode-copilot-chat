@@ -17,17 +17,13 @@
 // via `--max-warnings 0`. The only rules disabled here are ones whose noise
 // outweighs their value (see the scoped overrides below).
 
-import { readFileSync } from "node:fs";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 import yml from "eslint-plugin-yml";
 import jsonc from "eslint-plugin-jsonc";
+import { gitignorePatterns } from "./scripts/gitignore";
 
-const gitignore = readFileSync(new URL(".gitignore", import.meta.url), "utf8")
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"));
-
+const gitignore = gitignorePatterns();
 // Files not covered by tsconfig (which only includes src/), type-checked via
 // the default project so strictTypeChecked rules still apply to them.
 // eslint.config.ts is ESM-only (loaded via jiti) and lives outside both
