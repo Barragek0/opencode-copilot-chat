@@ -20,7 +20,7 @@ import {
   normalizeResponsesFullResponse,
   normalizeResponsesStreamEvent,
 } from "./routing";
-import { createUsageDataParts } from "./chatParts";
+import { createReasoningMarkerPart, createUsageDataParts } from "./chatParts";
 import {
   clearContextWindowRequest,
   reportProgressWithContextWindowRequest,
@@ -120,6 +120,12 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
 
   extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
   extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
+  // Thinking-off responses surfaced the reasoning as visible text (gateway
+  // bug #37635); attach the marker so the next turn echoes reasoning_content.
+  const reasoningMarker = extractor.flushReasoningMarker();
+  if (reasoningMarker) {
+    options.progress.report(reasoningMarker);
+  }
   options.output?.appendLine(
     `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,
   );
@@ -953,6 +959,23 @@ class OpenAiResponseExtractor {
    *
    * Returns the reasoning string that was handled (for logging/debug).
    */
+  /** Reasoning emitted as visible text (gateway bug #37635, thinking OFF). */
+  private reasoningAsContent = "";
+
+  /**
+   * Emit an internal marker part carrying the reasoning that was surfaced as
+   * visible text, so the next turn can echo it back as reasoning_content.
+   * Called after the stream completes; the transcript keeps the marker.
+   */
+  flushReasoningMarker(): vscode.LanguageModelResponsePart2 | undefined {
+    if (!this.treatReasoningAsContent || !this.reasoningAsContent) {
+      return undefined;
+    }
+    const part = createReasoningMarkerPart(this.reasoningAsContent);
+    this.reasoningAsContent = "";
+    return part;
+  }
+
   private handleReasoning(reasoning: string): string {
     if (!reasoning) {
       return "";
@@ -1047,6 +1070,7 @@ class OpenAiResponseExtractor {
         if (this.treatReasoningAsContent && !visible && text.length === 0) {
           if (!this.shouldSuppressThinkingEmit(reasoning)) {
             this.emittedTextLength += reasoning.length;
+            this.reasoningAsContent += reasoning;
             parts.push(new vscode.LanguageModelTextPart(reasoning));
           }
         } else {

@@ -46,7 +46,7 @@ import {
   type ProviderVendor,
 } from "./providerTypes";
 import { providerEnabledSetting } from "./providerEnablement";
-import { isInternalDataPart } from "./chatParts";
+import { isInternalDataPart, isReasoningMarkerPart, readReasoningMarker } from "./chatParts";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
 import { providerModelDisplayName } from "./modelNames";
@@ -3743,6 +3743,17 @@ async function convertMessage(
       const thinking = thinkingPartText(part);
       if (thinking) {
         thinkingTextParts.push(thinking);
+      }
+      continue;
+    }
+
+    if (part instanceof vscode.LanguageModelDataPart && isReasoningMarkerPart(part)) {
+      // Thinking-off responses carry their reasoning in a marker data part
+      // (see streaming.ts / gateway bug #37635); echo it as reasoning_content
+      // on the next turn or DeepSeek's validator 400s.
+      const reasoning = readReasoningMarker(part);
+      if (reasoning) {
+        thinkingTextParts.push(reasoning);
       }
       continue;
     }
