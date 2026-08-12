@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { fetchGoUsage, mergeServerUsage, GO_USAGE_API_URL, type GoUsageApiResponse } from "../goUsageSync";
+import type { UsageSummary } from "../goUsageTracker";
+
+/** Mirrors GO_LIMITS — kept literal so the test never loads goUsageTracker (vscode). */
+const LIMITS = { session: 12, weekly: 30, monthly: 60 };
+
+/** Minimal locally-computed summary used as the merge input. */
+function localSummary(): UsageSummary {
+  return {
+    session: { spent: 1, limit: LIMITS.session, percent: 8.3, resetsAt: new Date("2026-08-11T12:00:00Z") },
+    weekly: { spent: 5, limit: LIMITS.weekly, percent: 16.7, resetsAt: new Date("2026-08-17T00:00:00Z") },
+    monthly: { spent: 9, limit: LIMITS.monthly, percent: 15, resetsAt: new Date("2026-08-31T00:00:00Z") },
+    today: { cost: 0.4, requests: 3, tokens: 4200 },
+    yesterday: { cost: 1.1, requests: 8, tokens: 9800 },
+    hasData: true,
+    sqliteAvailable: false,
+  };
+}
+
+function apiResponse(): GoUsageApiResponse {
+  return {
+    usage: {
+      rolling: { status: "ok", percent: 27, resetsAt: "2026-08-11T14:32:10.000Z" },
+      weekly: { status: "ok", percent: 62, resetsAt: "2026-08-17T00:00:00.000Z" },
+      monthly: { status: "rate-limited", percent: 100, resetsAt: "2026-08-31T00:00:00.000Z" },
+    },
+  };
+}
+
+function stubFetch(status: number, body: unknown): typeof fetch {
+  return (async () =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    })) as unknown as typeof fetch;
+}
+
+test("fetchGoUsage — sends the key as Bearer to the official endpoint", async () => {
+  let requestedUrl = "";
+  let authHeader = "";
+  const fetcher = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(url);
+    authHeader = String((init?.headers && (init.headers as Record<string, string>).Authorization) ?? "");
+    return new Response(JSON.stringify(apiResponse()), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const result = await fetchGoUsage("sk-test", fetcher);
+  assert.equal(requestedUrl, GO_USAGE_API_URL);
+  assert.equal(authHeader, "Bearer sk-test");
+  assert.equal(result.ok, true);
+});
+
+test("fetchGoUsage — parses a 200 payload", async () => {
+  const result = await fetchGoUsage("sk-test", stubFetch(200, apiResponse()));
+  assert.ok(result.ok);
+  if (result.ok) {
+    assert.equal(result.data.usage.rolling.percent, 27);
+    assert.equal(result.data.usage.monthly.status, "rate-limited");
+  }
+});
+
+test("fetchGoUsage — classifies failures so callers can fall back", async () => {
+  assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(401, {})), { ok: false, reason: "unauthorized" });
+  assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(403, {})), { ok: false, reason: "no-subscription" });
+  assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(404, {})), { ok: false, reason: "not-found" });
+  assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(500, {})), { ok: false, reason: "network" });
+});
+
+test("fetchGoUsage — missing key is refused without any request", async () => {
+  let called = false;
+  const fetcher = (async () => {
+    called = true;
+    return new Response("", { status: 200 });
+  }) as unknown as typeof fetch;
+  assert.deepEqual(await fetchGoUsage("", fetcher), { ok: false, reason: "no-key" });
+  assert.equal(called, false);
+});
+
+test("fetchGoUsage — malformed payloads and network errors are classified", async () => {
+  assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(200, { nope: true })), { ok: false, reason: "invalid" });
+  assert.deepEqual(await fetchGoUsage("sk-test", stubFetch(200, "not json")), { ok: false, reason: "invalid" });
+  const throwing = (async () => {
+    throw new TypeError("fetch failed");
+  }) as unknown as typeof fetch;
+  assert.deepEqual(await fetchGoUsage("sk-test", throwing), { ok: false, reason: "network" });
+});
+
+test("mergeServerUsage — overlays server percent and resetsAt per period", () => {
+  const merged = mergeServerUsage(localSummary(), apiResponse(), LIMITS);
+  assert.equal(merged.session.percent, 27);
+  assert.equal(merged.session.resetsAt.toISOString(), "2026-08-11T14:32:10.000Z");
+  assert.equal(merged.weekly.percent, 62);
+  assert.equal(merged.monthly.percent, 100);
+  assert.equal(merged.monthly.resetsAt.toISOString(), "2026-08-31T00:00:00.000Z");
+});
+
+test("mergeServerUsage — derives spent from the authoritative percent", () => {
+  const merged = mergeServerUsage(localSummary(), apiResponse(), LIMITS);
+  assert.equal(merged.session.spent, Math.round(LIMITS.session * 0.27 * 100) / 100);
+  assert.equal(merged.weekly.spent, Math.round(LIMITS.weekly * 0.62 * 100) / 100);
+  // rate-limited → 100% → full limit
+  assert.equal(merged.monthly.spent, LIMITS.monthly);
+});
+
+test("mergeServerUsage — keeps local today/yesterday and metadata", () => {
+  const merged = mergeServerUsage(localSummary(), apiResponse(), LIMITS);
+  assert.deepEqual(merged.today, localSummary().today);
+  assert.deepEqual(merged.yesterday, localSummary().yesterday);
+  assert.equal(merged.hasData, true);
+  assert.equal(merged.sqliteAvailable, false);
+});
