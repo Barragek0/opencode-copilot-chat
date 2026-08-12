@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { estimatePromptTokenCount, estimateTokenCount } from "../tokenEstimate.js";
 
-void describe("token estimates", () => {
-  void it("returns zero for empty content", () => {
+describe("token estimates", () => {
+  it("returns zero for empty content", () => {
     assert.equal(estimateTokenCount(""), 0);
     assert.equal(estimateTokenCount("   \n\t"), 0);
   });
 
-  void it("includes tool schemas in the prompt estimate", () => {
+  it("includes tool schemas in the prompt estimate", () => {
     const messages = [{ role: "user", content: "inspect the workspace" }];
     const withoutTools = estimatePromptTokenCount(messages);
     const withTools = estimatePromptTokenCount(messages, [

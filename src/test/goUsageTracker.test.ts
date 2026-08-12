@@ -121,7 +121,7 @@ moduleResolver._resolveFilename = function (request: string, parent: unknown, ..
 // properly awaited by the test runner before any child tests execute.
 // ════════════════════════════════════════════════════════════════════════════
 
-void describe("goUsageTracker", () => {
+describe("goUsageTracker", () => {
   // ── Bootstrap: dynamically import module under test ──
   // (vscode mock is already installed via Module._resolveFilename above)
 
@@ -135,8 +135,8 @@ void describe("goUsageTracker", () => {
   // estimateCost()
   // ════════════════════════════════════════════════════════════════════════
 
-  void describe("estimateCost()", () => {
-    void it("uses bundled snapshot pricing for a known model (qwen3.6-plus)", () => {
+  describe("estimateCost()", () => {
+    it("uses bundled snapshot pricing for a known model (qwen3.6-plus)", () => {
       const cost = estimateCost("qwen3.6-plus", 100, 50, 10);
       // billablePrompt = max(0, 100-10) = 90
       // pricing: { input: 0.50, output: 3.00, cache_read: 0.05 }
@@ -146,7 +146,7 @@ void describe("goUsageTracker", () => {
       assert.equal(cost, 0.0001955);
     });
 
-    void it("uses bundled snapshot pricing for deepseek-v4-flash", () => {
+    it("uses bundled snapshot pricing for deepseek-v4-flash", () => {
       const cost = estimateCost("deepseek-v4-flash", 1000, 500, 200);
       // billablePrompt = 800
       // pricing: { input: 0.14, output: 0.28, cache_read: 0.003 }
@@ -156,12 +156,12 @@ void describe("goUsageTracker", () => {
       assert.equal(cost, 0.0002526);
     });
 
-    void it("returns 0 for an unknown model with no resolver", () => {
+    it("returns 0 for an unknown model with no resolver", () => {
       const cost = estimateCost("nonexistent-model-v99", 100, 50, 0);
       assert.equal(cost, 0);
     });
 
-    void it("prefers externalCost over the bundled table", () => {
+    it("prefers externalCost over the bundled table", () => {
       const external: ModelCost = { input: 1.0, output: 2.0, cache_read: 0.1 };
       const cost = estimateCost("qwen3.6-plus", 100, 50, 10, external);
       // billablePrompt = 90
@@ -171,7 +171,7 @@ void describe("goUsageTracker", () => {
       assert.equal(cost, 0.000191);
     });
 
-    void it("prefers liveCostResolver over the bundled table when externalCost absent", () => {
+    it("prefers liveCostResolver over the bundled table when externalCost absent", () => {
       const resolver = (id: string): ModelCost | undefined => (id === "custom-model" ? { input: 2.0, output: 4.0 } : undefined);
       const cost = estimateCost("custom-model", 100, 50, 0, undefined, resolver);
       // billablePrompt = 100
@@ -180,7 +180,7 @@ void describe("goUsageTracker", () => {
       assert.equal(cost, 0.0004);
     });
 
-    void it("falls back to bundled table when resolver returns undefined", () => {
+    it("falls back to bundled table when resolver returns undefined", () => {
       const resolver = (): ModelCost | undefined => undefined;
       const cost = estimateCost("qwen3.6-plus", 100, 50, 0, undefined, resolver);
       // 100 * 0.5/1M  = 0.00005
@@ -189,7 +189,7 @@ void describe("goUsageTracker", () => {
       assert.ok(Math.abs(cost - 0.0002) < 1e-12, `expected ~0.0002, got ${String(cost)}`);
     });
 
-    void it("subtracts cached tokens from prompt tokens for billing", () => {
+    it("subtracts cached tokens from prompt tokens for billing", () => {
       const cost = estimateCost("qwen3.6-plus", 100, 50, 40);
       // billablePrompt = 60
       // 60 * 0.5/1M   = 0.00003
@@ -199,7 +199,7 @@ void describe("goUsageTracker", () => {
       assert.ok(Math.abs(cost - 0.000182) < 1e-12, `expected ~0.000182, got ${String(cost)}`);
     });
 
-    void it("handles all-cached requests (billable prompt = 0)", () => {
+    it("handles all-cached requests (billable prompt = 0)", () => {
       const cost = estimateCost("qwen3.6-plus", 100, 50, 200);
       // billablePrompt = max(0, 100-200) = 0
       // 0 * 0.5/1M    = 0
@@ -209,12 +209,12 @@ void describe("goUsageTracker", () => {
       assert.ok(Math.abs(cost - 0.00016) < 1e-12, `expected ~0.00016, got ${String(cost)}`);
     });
 
-    void it("handles zero tokens gracefully", () => {
+    it("handles zero tokens gracefully", () => {
       const cost = estimateCost("qwen3.6-plus", 0, 0, 0);
       assert.equal(cost, 0);
     });
 
-    void it("uses explicit cache_read when provided in pricing", () => {
+    it("uses explicit cache_read when provided in pricing", () => {
       const external: ModelCost = { input: 1.0, output: 2.0, cache_read: 0.5 };
       const cost = estimateCost("any-model", 200, 100, 50, external);
       // billablePrompt = 150
@@ -224,7 +224,7 @@ void describe("goUsageTracker", () => {
       assert.equal(cost, 0.000375);
     });
 
-    void it("falls back to input * 0.1 when cache_read is missing", () => {
+    it("falls back to input * 0.1 when cache_read is missing", () => {
       const external: ModelCost = { input: 2.0, output: 4.0 }; // no cache_read
       const cost = estimateCost("any-model", 100, 50, 10, external);
       // billablePrompt = 90
@@ -239,11 +239,11 @@ void describe("goUsageTracker", () => {
   // GoUsageTracker
   // ════════════════════════════════════════════════════════════════════════
 
-  void describe("GoUsageTracker", () => {
+  describe("GoUsageTracker", () => {
     // ── record() ────────────────────────────────────────────────────────
 
-    void describe("record()", () => {
-      void it("accumulates cost for the same sessionId", () => {
+    describe("record()", () => {
+      it("accumulates cost for the same sessionId", () => {
         const tracker = new GoUsageTracker(createMockContext());
 
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 100, completionTokens: 50, cachedTokens: 0 }));
@@ -261,21 +261,21 @@ void describe("goUsageTracker", () => {
         assert.equal(session.completionTokens, 150);
       });
 
-      void it("skips records when providerDisplayName does not contain 'go'", () => {
+      it("skips records when providerDisplayName does not contain 'go'", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ providerDisplayName: "OpenCode Zen", sessionId: "s1" }));
 
         assert.equal(tracker.getCurrentSessionCost(), undefined);
       });
 
-      void it("skips records when prompt+completion tokens are zero", () => {
+      it("skips records when prompt+completion tokens are zero", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 0, completionTokens: 0, cachedTokens: 0 }));
 
         assert.equal(tracker.getCurrentSessionCost(), undefined);
       });
 
-      void it("creates separate entries for different sessionIds", () => {
+      it("creates separate entries for different sessionIds", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 100, completionTokens: 50 }));
         tracker.record(makeSummary({ sessionId: "s2", promptTokens: 10, completionTokens: 5 }));
@@ -283,7 +283,7 @@ void describe("goUsageTracker", () => {
         assert.equal(tracker.getRecentSessionCosts(5).length, 2);
       });
 
-      void it("accepts an externalCost override", () => {
+      it("accepts an externalCost override", () => {
         const tracker = new GoUsageTracker(createMockContext());
         const externalCost: ModelCost = { input: 10, output: 20 };
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 100, completionTokens: 50, cachedTokens: 0 }), externalCost);
@@ -293,7 +293,7 @@ void describe("goUsageTracker", () => {
         assert.equal(session?.cost, 0.002);
       });
 
-      void it("delegates to costResolver when no externalCost is passed", () => {
+      it("delegates to costResolver when no externalCost is passed", () => {
         const resolver = (id: string): ModelCost | undefined => (id === "custom-resolved" ? { input: 5, output: 10 } : undefined);
         const tracker = new GoUsageTracker(createMockContext(), undefined, resolver);
 
@@ -306,7 +306,7 @@ void describe("goUsageTracker", () => {
         assert.equal(session?.cost, 0.001);
       });
 
-      void it("persists data to globalState after record()", () => {
+      it("persists data to globalState after record()", () => {
         const context = createMockContext();
         const tracker = new GoUsageTracker(context);
 
@@ -323,8 +323,8 @@ void describe("goUsageTracker", () => {
 
     // ── getCurrentSessionCost() ─────────────────────────────────────────
 
-    void describe("getCurrentSessionCost()", () => {
-      void it("returns the most recently active session", () => {
+    describe("getCurrentSessionCost()", () => {
+      it("returns the most recently active session", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ sessionId: "old", promptTokens: 1, completionTokens: 0 }));
         // Ensure distinct timestamps for deterministic ordering
@@ -335,7 +335,7 @@ void describe("goUsageTracker", () => {
         assert.equal(tracker.getCurrentSessionCost()?.sessionId, "new");
       });
 
-      void it("returns the aggregated cost for the most recent session", () => {
+      it("returns the aggregated cost for the most recent session", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 100, completionTokens: 50, cachedTokens: 0 }));
         tracker.record(makeSummary({ sessionId: "s2", promptTokens: 200, completionTokens: 100, cachedTokens: 0 }));
@@ -349,7 +349,7 @@ void describe("goUsageTracker", () => {
         assert.equal(session.requests, 2);
       });
 
-      void it("returns undefined when no sessions have been recorded", () => {
+      it("returns undefined when no sessions have been recorded", () => {
         const tracker = new GoUsageTracker(createMockContext());
         assert.equal(tracker.getCurrentSessionCost(), undefined);
       });
@@ -357,7 +357,7 @@ void describe("goUsageTracker", () => {
 
     // ── getRecentSessionCosts() ─────────────────────────────────────────
 
-    void describe("getRecentSessionCosts()", () => {
+    describe("getRecentSessionCosts()", () => {
       /** Ensure each record gets a distinct timestamp for deterministic ordering. */
       function recordWithDistinctTimestamp(tracker: GoUsageTrackerInstance, sessionId: string): void {
         tracker.record(makeSummary({ sessionId, promptTokens: 1, completionTokens: 0 }));
@@ -365,7 +365,7 @@ void describe("goUsageTracker", () => {
         while (Date.now() === t) {} // wait for next millisecond
       }
 
-      void it("returns sessions ordered by lastActivity descending", () => {
+      it("returns sessions ordered by lastActivity descending", () => {
         const tracker = new GoUsageTracker(createMockContext());
         recordWithDistinctTimestamp(tracker, "a");
         recordWithDistinctTimestamp(tracker, "b");
@@ -378,7 +378,7 @@ void describe("goUsageTracker", () => {
         assert.equal(sessions[2].sessionId, "a");
       });
 
-      void it("respects the limit parameter", () => {
+      it("respects the limit parameter", () => {
         const tracker = new GoUsageTracker(createMockContext());
         for (let i = 0; i < 10; i++) {
           tracker.record(makeSummary({ sessionId: `s${String(i)}`, promptTokens: 1, completionTokens: 0 }));
@@ -390,7 +390,7 @@ void describe("goUsageTracker", () => {
         assert.equal(tracker.getRecentSessionCosts(100).length, 10);
       });
 
-      void it("returns empty array when no sessions exist", () => {
+      it("returns empty array when no sessions exist", () => {
         const tracker = new GoUsageTracker(createMockContext());
         assert.deepEqual(tracker.getRecentSessionCosts(), []);
       });
@@ -398,8 +398,8 @@ void describe("goUsageTracker", () => {
 
     // ── State restoration from globalState ──────────────────────────────
 
-    void describe("state restoration from globalState", () => {
-      void it("restores entries and session costs from stored state", () => {
+    describe("state restoration from globalState", () => {
+      it("restores entries and session costs from stored state", () => {
         const now = Date.now();
         const initial: Record<string, unknown> = {
           "opencodego.usageLog.v1": [
@@ -436,7 +436,7 @@ void describe("goUsageTracker", () => {
         assert.equal(session.completionTokens, 75);
       });
 
-      void it("filters invalid entries during restore", () => {
+      it("filters invalid entries during restore", () => {
         const initial: Record<string, unknown> = {
           "opencodego.usageLog.v1": [
             { timestamp: Date.now(), modelId: "valid", cost: 0.1, promptTokens: 10, completionTokens: 5, cachedTokens: 0, sessionId: "s1" },
@@ -459,7 +459,7 @@ void describe("goUsageTracker", () => {
         assert.equal(sessions.length, 1);
       });
 
-      void it("starts clean when no state is stored", () => {
+      it("starts clean when no state is stored", () => {
         const tracker = new GoUsageTracker(createMockContext());
         assert.equal(tracker.getCurrentSessionCost(), undefined);
         assert.deepEqual(tracker.getRecentSessionCosts(), []);
@@ -468,12 +468,12 @@ void describe("goUsageTracker", () => {
 
     // ── Pruning behavior ────────────────────────────────────────────────
 
-    void describe("pruning behavior", () => {
+    describe("pruning behavior", () => {
       afterEach(() => {
         mock.timers.reset();
       });
 
-      void it("removes idle sessions (older than 2h) on record()", () => {
+      it("removes idle sessions (older than 2h) on record()", () => {
         mock.timers.enable({ apis: ["Date"] });
         const baseTime = 1_000_000_000_000;
         mock.timers.setTime(baseTime);
@@ -493,7 +493,7 @@ void describe("goUsageTracker", () => {
         assert.equal(sessions.length, 1);
       });
 
-      void it("removes multiple idle sessions at once", () => {
+      it("removes multiple idle sessions at once", () => {
         mock.timers.enable({ apis: ["Date"] });
         mock.timers.setTime(1_000_000_000_000);
 
@@ -510,7 +510,7 @@ void describe("goUsageTracker", () => {
         assert.equal(tracker.getCurrentSessionCost()?.sessionId, "s3");
       });
 
-      void it("caps at MAX_SESSIONS (50) and removes oldest", () => {
+      it("caps at MAX_SESSIONS (50) and removes oldest", () => {
         const tracker = new GoUsageTracker(createMockContext());
         // Create 51 sessions
         for (let i = 0; i < 51; i++) {
@@ -535,8 +535,8 @@ void describe("goUsageTracker", () => {
 
     // ── Edge cases ──────────────────────────────────────────────────────
 
-    void describe("edge cases", () => {
-      void it("handles missing sessionId (no session cost tracked)", () => {
+    describe("edge cases", () => {
+      it("handles missing sessionId (no session cost tracked)", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ sessionId: undefined, promptTokens: 100, completionTokens: 50 }));
 
@@ -544,7 +544,7 @@ void describe("goUsageTracker", () => {
         assert.equal(tracker.getRecentSessionCosts().length, 0);
       });
 
-      void it("handles unknown modelId (cost = 0)", () => {
+      it("handles unknown modelId (cost = 0)", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(
           makeSummary({
@@ -561,7 +561,7 @@ void describe("goUsageTracker", () => {
         assert.equal(session.requests, 1);
       });
 
-      void it("handles record with only cached tokens (no prompt or completion)", () => {
+      it("handles record with only cached tokens (no prompt or completion)", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 0, completionTokens: 0, cachedTokens: 100 }));
 
@@ -569,7 +569,7 @@ void describe("goUsageTracker", () => {
         assert.equal(tracker.getCurrentSessionCost(), undefined);
       });
 
-      void it("handles record with only cached tokens but non-zero prompt", () => {
+      it("handles record with only cached tokens but non-zero prompt", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 50, completionTokens: 0, cachedTokens: 50 }));
 
@@ -581,7 +581,7 @@ void describe("goUsageTracker", () => {
         assert.equal(session.cost, 0.0000025);
       });
 
-      void it("handles multiple records in the same session with reset in between", () => {
+      it("handles multiple records in the same session with reset in between", () => {
         const context = createMockContext();
         const tracker1 = new GoUsageTracker(context);
         tracker1.record(makeSummary({ sessionId: "shared", promptTokens: 100, completionTokens: 50, cachedTokens: 0 }));

@@ -2,16 +2,16 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { formatModelName, providerModelDisplayName } from "../modelNames.js";
 
-void describe("provider model display names", () => {
-  void it("formats numeric model versions like the existing picker", () => {
+describe("provider model display names", () => {
+  it("formats numeric model versions like the existing picker", () => {
     assert.equal(formatModelName("gpt-5-6-luna"), "Gpt 5.6 Luna");
   });
 
-  void it("includes the provider prefix by default", () => {
+  it("includes the provider prefix by default", () => {
     assert.equal(providerModelDisplayName("OpenCode Go", "kimi-k3"), "OpenCode Go / Kimi K3");
   });
 
-  void it("can hide the provider prefix without changing the model name", () => {
+  it("can hide the provider prefix without changing the model name", () => {
     assert.equal(providerModelDisplayName("OpenCode Zen", "kimi-k3", false), "Kimi K3");
   });
 });

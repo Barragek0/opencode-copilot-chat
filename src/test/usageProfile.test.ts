@@ -45,31 +45,31 @@ before(async () => {
   mod = await import("../usageProfile.js");
 });
 
-void describe("keyFingerprint", () => {
-  void it("returns 'legacy' for empty input", () => {
+describe("keyFingerprint", () => {
+  it("returns 'legacy' for empty input", () => {
     assert.equal(mod.keyFingerprint(""), mod.LEGACY_FINGERPRINT);
   });
-  void it("takes 8 leading + 8 trailing chars", () => {
+  it("takes 8 leading + 8 trailing chars", () => {
     assert.equal(mod.keyFingerprint("sk-90UzXXab-XXXXXXXX-cdWToa"), "sk-90UzX-X-cdWToa");
   });
-  void it("is stable (same key, same fingerprint)", () => {
+  it("is stable (same key, same fingerprint)", () => {
     const k = "sk-aaaabbbb-cccccccc-dddd-eeee-ffff-12345678";
     assert.equal(mod.keyFingerprint(k), mod.keyFingerprint(k));
   });
 });
 
-void describe("profile registry", () => {
-  void it("returns empty when no profiles stored", () => {
+describe("profile registry", () => {
+  it("returns empty when no profiles stored", () => {
     assert.deepEqual(mod.readProfiles(createMockContext()), []);
   });
-  void it("round-trips profiles through writeProfiles/readProfiles", async () => {
+  it("round-trips profiles through writeProfiles/readProfiles", async () => {
     const ctx = createMockContext();
     const p = { fingerprint: "fp1", label: "Profile 1", lastSeenAt: Date.now(), isLegacy: false };
     await mod.writeProfiles(ctx, [p]);
     assert.equal(mod.readProfiles(ctx).length, 1);
     assert.equal(mod.readProfiles(ctx)[0].fingerprint, "fp1");
   });
-  void it("findProfile returns matching profile or undefined", () => {
+  it("findProfile returns matching profile or undefined", () => {
     const profiles = [
       { fingerprint: "a", label: "A", lastSeenAt: 0, isLegacy: false },
       { fingerprint: "b", label: "B", lastSeenAt: 0, isLegacy: false },
@@ -77,7 +77,7 @@ void describe("profile registry", () => {
     assert.equal(mod.findProfile(profiles, "a")?.label, "A");
     assert.equal(mod.findProfile(profiles, "missing"), undefined);
   });
-  void it("renameProfile updates label", async () => {
+  it("renameProfile updates label", async () => {
     const ctx = createMockContext();
     const p = { fingerprint: "fp1", label: "Profile 1", lastSeenAt: Date.now(), isLegacy: false };
     await mod.writeProfiles(ctx, [p]);
@@ -86,11 +86,11 @@ void describe("profile registry", () => {
   });
 });
 
-void describe("active profile", () => {
-  void it("defaults to legacy when not stored", () => {
+describe("active profile", () => {
+  it("defaults to legacy when not stored", () => {
     assert.equal(mod.readActiveProfile(createMockContext()), mod.LEGACY_FINGERPRINT);
   });
-  void it("round-trips through writeActiveProfile", async () => {
+  it("round-trips through writeActiveProfile", async () => {
     const ctx = createMockContext();
     await mod.writeActiveProfile(ctx, "my-fp");
     assert.equal(mod.readActiveProfile(ctx), "my-fp");

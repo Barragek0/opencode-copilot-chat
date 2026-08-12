@@ -33,28 +33,28 @@ function shouldProxy({ hasImageInput, actuallySupportsVision, visionProxyModelId
   return Boolean(hasImageInput && !actuallySupportsVision && visionProxyModelId);
 }
 
-void describe("vision proxy condition (shouldProxy)", () => {
-  void it("enters proxy when text-only model receives images with proxy configured", () => {
+describe("vision proxy condition (shouldProxy)", () => {
+  it("enters proxy when text-only model receives images with proxy configured", () => {
     assert.ok(shouldProxy({ hasImageInput: true, actuallySupportsVision: false, visionProxyModelId: "gpt-5.5" }));
   });
 
-  void it("skips proxy when no images present", () => {
+  it("skips proxy when no images present", () => {
     assert.ok(!shouldProxy({ hasImageInput: false, actuallySupportsVision: false, visionProxyModelId: "gpt-5.5" }));
   });
 
-  void it("skips proxy when model natively supports vision", () => {
+  it("skips proxy when model natively supports vision", () => {
     assert.ok(!shouldProxy({ hasImageInput: true, actuallySupportsVision: true, visionProxyModelId: "gpt-5.5" }));
   });
 
-  void it("skips proxy when no vision model is configured (empty string)", () => {
+  it("skips proxy when no vision model is configured (empty string)", () => {
     assert.ok(!shouldProxy({ hasImageInput: true, actuallySupportsVision: false, visionProxyModelId: "" }));
   });
 
-  void it("skips proxy when all conditions are false", () => {
+  it("skips proxy when all conditions are false", () => {
     assert.ok(!shouldProxy({ hasImageInput: false, actuallySupportsVision: true, visionProxyModelId: "" }));
   });
 
-  void it("cached supportsVision (actuallySupportsVision) prevents circular regression", () => {
+  it("cached supportsVision (actuallySupportsVision) prevents circular regression", () => {
     // This is the fix for #74: even if modelCapabilities overrides
     // metadata.supportsVision to true (because proxy is enabled),
     // the CACHED value (actuallySupportsVision) stays false for
@@ -69,27 +69,27 @@ void describe("vision proxy condition (shouldProxy)", () => {
   });
 });
 
-void describe("modelCapabilities vision proxy flag", () => {
+describe("modelCapabilities vision proxy flag", () => {
   // modelCapabilities() returns imageInput: true when:
   //   metadata.supportsVision (native) OR isVisionProxyEnabled()
   // This tells VS Code NOT to strip images from requests.
 
-  void it("returns imageInput: true when proxy is enabled on text-only models", () => {
+  it("returns imageInput: true when proxy is enabled on text-only models", () => {
     const capabilities = buildStableModelCapabilities(true);
     assert.equal(capabilities.imageInput, true);
   });
 
-  void it("returns imageInput: true when model natively supports vision", () => {
+  it("returns imageInput: true when model natively supports vision", () => {
     const capabilities = buildStableModelCapabilities(true);
     assert.equal(capabilities.imageInput, true);
   });
 
-  void it("returns imageInput: false only when no vision support and no proxy", () => {
+  it("returns imageInput: false only when no vision support and no proxy", () => {
     const capabilities = buildStableModelCapabilities(false);
     assert.equal(capabilities.imageInput, false);
   });
 
-  void it("keeps tool calling enabled without proposal-gated edit tool hints", () => {
+  it("keeps tool calling enabled without proposal-gated edit tool hints", () => {
     const capabilities = buildStableModelCapabilities(true);
 
     assert.equal(capabilities.toolCalling, true);
@@ -98,8 +98,8 @@ void describe("modelCapabilities vision proxy flag", () => {
   });
 });
 
-void describe("vision proxy image description cache", () => {
-  void it("imageDescriptionKey is a stable sha-256 hash of the base64 bytes", () => {
+describe("vision proxy image description cache", () => {
+  it("imageDescriptionKey is a stable sha-256 hash of the base64 bytes", () => {
     const key = imageDescriptionKey("aGVsbG8=");
 
     assert.equal(imageDescriptionKey("aGVsbG8="), key, "same bytes produce the same key");
@@ -107,12 +107,12 @@ void describe("vision proxy image description cache", () => {
     assert.notEqual(imageDescriptionKey("aGVsbG8="), imageDescriptionKey("d29ybGQ="), "different bytes produce different keys");
   });
 
-  void it("lookupImageDescriptions returns undefined when nothing is cached", () => {
+  it("lookupImageDescriptions returns undefined when nothing is cached", () => {
     clearImageDescriptionCache();
     assert.equal(lookupImageDescriptions([imageDescriptionKey("aGVsbG8=")]), undefined);
   });
 
-  void it("stores and looks up a description under every image hash", () => {
+  it("stores and looks up a description under every image hash", () => {
     clearImageDescriptionCache();
     const h1 = imageDescriptionKey("aGVsbG8=");
     const h2 = imageDescriptionKey("d29ybGQ=");
@@ -125,7 +125,7 @@ void describe("vision proxy image description cache", () => {
     assert.equal(lookupImageDescriptions([h1, h2]), description);
   });
 
-  void it("lookupImageDescriptions returns undefined when only some hashes are cached", () => {
+  it("lookupImageDescriptions returns undefined when only some hashes are cached", () => {
     clearImageDescriptionCache();
     const h1 = imageDescriptionKey("aGVsbG8=");
     const h2 = imageDescriptionKey("d29ybGQ=");
@@ -135,7 +135,7 @@ void describe("vision proxy image description cache", () => {
     assert.equal(lookupImageDescriptions([h1, h2]), undefined);
   });
 
-  void it("reuses the cached description instead of re-describing (same image twice)", () => {
+  it("reuses the cached description instead of re-describing (same image twice)", () => {
     clearImageDescriptionCache();
     const hash = imageDescriptionKey("cmV1c2UtbWU=");
     const description = "Description cached on the first turn.";
@@ -149,7 +149,7 @@ void describe("vision proxy image description cache", () => {
     assert.equal(imageDescriptionCache.size, 1);
   });
 
-  void it("evicts the oldest entries once the cache exceeds its limit", () => {
+  it("evicts the oldest entries once the cache exceeds its limit", () => {
     clearImageDescriptionCache();
     const firstKey = imageDescriptionKey("Zmlyc3Q=");
 
@@ -166,7 +166,7 @@ void describe("vision proxy image description cache", () => {
     );
   });
 
-  void it("clearImageDescriptionCache empties the cache", () => {
+  it("clearImageDescriptionCache empties the cache", () => {
     clearImageDescriptionCache();
     storeImageDescriptions([imageDescriptionKey("aGVsbG8=")], "hello description");
     assert.equal(imageDescriptionCache.size, 1);
