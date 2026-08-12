@@ -25,17 +25,27 @@ export interface InlineCompletionsDeps {
 }
 
 export function registerInlineCompletions(context: vscode.ExtensionContext, deps: InlineCompletionsDeps): vscode.Disposable {
+  const output = vscode.window.createOutputChannel("OpenCode Completions");
+  context.subscriptions.push(output);
+  const log = (msg: string): void => {
+    output.appendLine(msg);
+  };
+
   const engine: CompletionEngine = {
     id: "chat-completions",
     async complete(ctx: CompletionContext, signal: AbortSignal): Promise<CompletionResult> {
       const apiKey = await deps.resolveApiKey();
       if (!apiKey) {
+        log("[completions] no API key — skipping");
         return { text: undefined, durationMs: 0 };
       }
+      log(`[completions] model=${ctx.modelId} prefixChars=${String(ctx.prefix.length)} suffixChars=${String(ctx.suffix.length)}`);
       const keyed = new ChatCompletionEngine({
         chatCompletionsUrl: deps.chatCompletionsUrl,
         apiKey,
-        log: deps.log,
+        log: (msg) => {
+          log(msg);
+        },
       });
       return keyed.complete(ctx, signal);
     },
