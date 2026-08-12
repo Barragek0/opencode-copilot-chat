@@ -122,5 +122,8 @@ export function mergeServerUsage(
     session: period(api.usage.rolling, limits.session),
     weekly: period(api.usage.weekly, limits.weekly),
     monthly: period(api.usage.monthly, limits.monthly),
+    // Server meters are real account-wide data — never report "no data"
+    // when a snapshot exists (e.g. a fresh install with CLI usage).
+    hasData: true,
   };
 }

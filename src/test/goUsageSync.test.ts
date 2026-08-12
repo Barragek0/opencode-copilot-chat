@@ -111,3 +111,10 @@ test("mergeServerUsage — keeps local today/yesterday and metadata", () => {
   assert.equal(merged.hasData, true);
   assert.equal(merged.sqliteAvailable, false);
 });
+
+test("mergeServerUsage — server meters imply hasData (fresh install with CLI usage)", () => {
+  const empty: UsageSummary = { ...localSummary(), hasData: false };
+  const merged = mergeServerUsage(empty, apiResponse(), LIMITS);
+  assert.equal(merged.hasData, true, "status bar must not say 'no data' when server meters exist");
+  assert.equal(merged.monthly.percent, 100);
+});
