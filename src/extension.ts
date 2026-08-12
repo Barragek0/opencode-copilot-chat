@@ -114,6 +114,8 @@ let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageTracker: GoUsageTracker | undefined;
 /** Per-profile trackers indexed by key fingerprint. */
 const goUsageTrackers = new Map<string, GoUsageTracker>();
+/** API key per profile fingerprint — lets refreshes sync the active profile's own key. */
+const profileApiKeys = new Map<string, string>();
 let usageWebviewPanel: vscode.WebviewPanel | undefined;
 
 let profilesCache: UsageProfile[] = [];
@@ -192,6 +194,10 @@ function ensureProfileSync(apiKey: string): void {
  */
 function ensureProfileForApiKey(apiKey: string): GoUsageTracker {
   ensureProfileSync(apiKey);
+  // Remember which API key owns each profile, so status-bar refreshes can
+  // sync the ACTIVE profile's meters with its own key instead of the
+  // extension secret (which may belong to another account).
+  profileApiKeys.set(keyFingerprint(apiKey), apiKey);
   return getOrCreateTracker(keyFingerprint(apiKey));
 }
 
@@ -1291,9 +1297,10 @@ function refreshGoUsageStatusBar(): void {
   updateWebviewContent();
 
   // Refresh the server-accurate meters in the background (TTL-guarded); when
-  // a new snapshot lands, rebuild the status bar with it.
+  // a new snapshot lands, rebuild the status bar with it. Use the active
+  // profile's own key when known, falling back to the extension secret.
   void (async () => {
-    const apiKey = await _extensionContext?.secrets.get(SECRET_KEY);
+    const apiKey = profileApiKeys.get(activeProfileFingerprint) ?? (await _extensionContext?.secrets.get(SECRET_KEY));
     if (!apiKey) return;
     const changed = await tracker.syncServerUsage(apiKey);
     if (changed) refreshGoUsageStatusBar();
