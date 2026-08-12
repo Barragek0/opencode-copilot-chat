@@ -6,7 +6,7 @@
 .vscode/**
 .vscode-test/**
 docs/**/*.md
-eslint.config.js
+eslint.config.ts
 node_modules/**
 !node_modules/@silvia-odwyer/
 !node_modules/@silvia-odwyer/photon-node/

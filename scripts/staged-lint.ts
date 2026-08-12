@@ -16,36 +16,31 @@
 // lint-staged, which runs after this gate. The full-tree lint (including
 // tests) stays available as `npm run lint` and is enforced in CI.
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import pc from "picocolors";
 
 const root = path.resolve(import.meta.dirname, "..");
 
-/** @param {string} name @returns {string} */
-const bin = (name) => path.join(root, "node_modules", ".bin", name);
+const bin = (name: string): string => path.join(root, "node_modules", ".bin", name);
 
 const SRC_DIRS = ["src", "scripts"];
 const TS_EXT = new Set([".ts", ".tsx", ".js", ".cjs", ".cts"]);
 const IMPORT_RE = /(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'](\.[^"']+)["']/g;
 
-/** @param {string} text @returns {string} */
-function indent(text) {
-  return text
-    .split("\n")
-    .map((line) => `    ${line}`)
-    .join("\n");
+interface CommandResult {
+  status: number | null;
+  output: string;
 }
 
-/** @param {string} cmd @param {string[]} args @returns {{status: number|null, output: string}} */
-function run(cmd, args) {
-  const res = /** @type {import("node:child_process").SpawnSyncReturns<string>} */ (spawnSync(cmd, args, { cwd: root, encoding: "utf8" }));
+function run(cmd: string, args: string[]): CommandResult {
+  const res: SpawnSyncReturns<string> = spawnSync(cmd, args, { cwd: root, encoding: "utf8" });
   return { status: res.status, output: `${res.stdout}${res.stderr}`.trim() };
 }
 
-/** Staged (added/copied/modified) file paths relative to the repo root. @returns {string[]} */
-function stagedFiles() {
+/** Staged (added/copied/modified) file paths relative to the repo root. */
+function stagedFiles(): string[] {
   const res = run("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACM"]);
   if (res.status !== 0) {
     return [];
@@ -53,13 +48,11 @@ function stagedFiles() {
   return res.output.split("\0").filter(Boolean);
 }
 
-/** Every TS/JS source file under src/ and scripts/. @returns {string[]} */
-function collectSourceFiles() {
-  /** @type {string[]} */
-  const out = [];
+/** Every TS/JS source file under src/ and scripts/. */
+function collectSourceFiles(): string[] {
+  const out: string[] = [];
   for (const dir of SRC_DIRS) {
-    /** @param {string} dirPath */
-    const walk = (dirPath) => {
+    const walk = (dirPath: string): void => {
       for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
         if (entry.isDirectory()) {
           walk(path.join(dirPath, entry.name));
@@ -73,14 +66,18 @@ function collectSourceFiles() {
   return out;
 }
 
-/** Resolve a relative import specifier to an existing file, if any.
- * @param {string} fromFile
- * @param {string} spec
- * @returns {string | undefined}
- */
-function resolveImport(fromFile, spec) {
+/** Resolve a relative import specifier to an existing file, if any. */
+function resolveImport(fromFile: string, spec: string): string | undefined {
   const base = path.resolve(path.dirname(fromFile), spec);
-  const candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, path.join(base, "index.ts"), path.join(base, "index.js")];
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    `${base}.cjs`,
+    path.join(base, "index.ts"),
+    path.join(base, "index.js"),
+  ];
   for (const candidate of candidates) {
     try {
       statSync(candidate);
@@ -92,10 +89,9 @@ function resolveImport(fromFile, spec) {
   return undefined;
 }
 
-/** resolved file path → set of source files importing it (one level deep). @returns {Map<string, Set<string>>} */
-function buildImporters() {
-  /** @type {Map<string, Set<string>>} */
-  const importers = new Map();
+/** resolved file path → set of source files importing it (one level deep). */
+function buildImporters(): Map<string, Set<string>> {
+  const importers = new Map<string, Set<string>>();
   for (const file of collectSourceFiles()) {
     const text = readFileSync(file, "utf8");
     for (const match of text.matchAll(IMPORT_RE)) {
@@ -117,13 +113,10 @@ function buildImporters() {
 /**
  * Files related to the staged ones: their direct dependents within src/ and
  * scripts/, so changing a module's contract also lints its consumers.
- * @param {string[]} changedFiles
- * @returns {string[]}
  */
-function relatedFiles(changedFiles) {
+function relatedFiles(changedFiles: string[]): string[] {
   const importers = buildImporters();
-  /** @type {Set<string>} */
-  const related = new Set();
+  const related = new Set<string>();
   for (const file of changedFiles) {
     for (const importer of importers.get(file) ?? []) {
       related.add(importer);
@@ -145,8 +138,14 @@ const sourceChanged = staged.some((file) => SRC_DIRS.some((dir) => file.startsWi
 
 const eslintTargets = [...new Set([...jsTsFiles, ...relatedFiles(jsTsFiles)])];
 
-/** @type {Array<{label: string, cmd: string, args: string[], run: boolean}>} */
-const steps = [
+interface StagedStep {
+  label: string;
+  cmd: string;
+  args: string[];
+  run: boolean;
+}
+
+const steps: StagedStep[] = [
   { label: "ESLint", cmd: bin("eslint"), args: ["--max-warnings", "0", ...eslintTargets], run: eslintTargets.length > 0 },
   { label: "Markdown", cmd: bin("markdownlint-cli2"), args: ["--config", ".markdownlint-cli2.jsonc", ...mdFiles], run: mdFiles.length > 0 },
   { label: "Editorconfig", cmd: bin("editorconfig-checker"), args: [...staged], run: true },
@@ -175,3 +174,10 @@ for (const step of steps) {
 }
 console.log(failed ? pc.red("Failed") : pc.green("Passed"));
 process.exit(failed ? 1 : 0);
+
+function indent(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+}

@@ -8,11 +8,15 @@ import pc from "picocolors";
 
 const root = path.resolve(import.meta.dirname, "..");
 
-/** @param {string} name @returns {string} */
-const bin = (name) => path.join(root, "node_modules", ".bin", name);
+const bin = (name: string): string => path.join(root, "node_modules", ".bin", name);
 
-/** @type {Array<{label: string, cmd: string, args: string[]}>} */
-const steps = [
+interface FormatStep {
+  label: string;
+  cmd: string;
+  args: string[];
+}
+
+const steps: FormatStep[] = [
   { label: "ESLint", cmd: bin("eslint"), args: [".", "--fix", "--max-warnings", "0"] },
   { label: "Prettier", cmd: bin("prettier"), args: ["--write", "--log-level", "warn", ".", "--ignore-path", ".gitignore"] },
 ];
@@ -20,9 +24,7 @@ const steps = [
 console.log(pc.bold("Format"));
 let failed = false;
 for (const step of steps) {
-  const res = /** @type {import("node:child_process").SpawnSyncReturns<string>} */ (
-    spawnSync(step.cmd, step.args, { cwd: root, encoding: "utf8" })
-  );
+  const res = spawnSync(step.cmd, step.args, { cwd: root, encoding: "utf8" });
   const output = `${res.stdout}${res.stderr}`.trim();
   if (res.status === 0) {
     console.log(`  ${pc.green("✔")} ${step.label}`);
@@ -37,8 +39,7 @@ for (const step of steps) {
 console.log(failed ? pc.red("Failed") : pc.green("Passed"));
 process.exit(failed ? 1 : 0);
 
-/** @param {string} text @returns {string} */
-function indent(text) {
+function indent(text: string): string {
   return text
     .split("\n")
     .map((line) => `    ${line}`)

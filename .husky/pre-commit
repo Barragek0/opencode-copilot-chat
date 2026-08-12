@@ -15,10 +15,10 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 # Zero-tolerance gate on exactly what this change can affect: the staged
-# files plus the files that import them (see scripts/staged-lint.js). Runs
+# files plus the files that import them (see scripts/staged-lint.ts). Runs
 # BEFORE formatting so the linter sees the file as written. The full-tree
 # lint (including tests) runs in CI and on demand via `npm run lint`.
-node scripts/staged-lint.js
+npx tsx scripts/staged-lint.ts
 
 # Format changed files (code + non-code) after linting passes.
 npx lint-staged

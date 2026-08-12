@@ -19,10 +19,8 @@ process.exit(result.status ?? 1);
 
 /**
  * Recursively collect compiled `*.test.js` files under a directory.
- * @param {string} directory
- * @returns {string[]}
  */
-function collectTests(directory) {
+function collectTests(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true })
     .sort((left, right) => left.name.localeCompare(right.name))
     .flatMap((entry) => {
