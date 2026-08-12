@@ -219,6 +219,16 @@
           "default": false,
           "markdownDescription": "Show agent-host vendors in the Manage Language Models panel. When disabled (default), agent models still work in the Agents window but are hidden from the Manage panel to reduce clutter."
         },
+        "opencodego.inlineSuggestions": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Enable ghost-text inline code suggestions while typing (experimental). Suggestions run through the OpenCode gateway with **thinking forced off** for low latency; non-thinking models (e.g. `qwen3.5-plus`) are recommended. Requires a window reload after enabling."
+        },
+        "opencodego.inlineSuggestionsModel": {
+          "type": "string",
+          "default": "qwen3.5-plus",
+          "markdownDescription": "Model used for inline code suggestions. Prefer non-thinking models — measured: `qwen3.5-plus` with `enable_thinking=false` returns in ~1.5s with zero hidden reasoning, while reasoning models (e.g. `deepseek-v4-flash`) burn 100+ reasoning tokens even with thinking off and take 2s+."
+        },
         "opencodego.stripThinkTags": {
           "type": "string",
           "enum": [
