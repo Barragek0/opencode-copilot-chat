@@ -1,5 +1,4 @@
 import type { UsageSummary } from "./goUsageTracker";
-import { GO_LIMITS } from "./goUsageTracker";
 
 /**
  * Official OpenCode Go usage endpoint (upstream anomalyco/opencode#16513,
@@ -108,7 +107,11 @@ export async function fetchGoUsage(
  * internally consistent (the percent itself is authoritative). Today /
  * Yesterday / per-session spend stay local — the API does not return them.
  */
-export function mergeServerUsage(summary: UsageSummary, api: GoUsageApiResponse): UsageSummary {
+export function mergeServerUsage(
+  summary: UsageSummary,
+  api: GoUsageApiResponse,
+  limits: { session: number; weekly: number; monthly: number },
+): UsageSummary {
   const period = (server: GoUsagePeriod, limit: number): UsageSummary["session"] => ({
     spent: Math.round(limit * (server.percent / 100) * 100) / 100,
     limit,
@@ -118,8 +121,8 @@ export function mergeServerUsage(summary: UsageSummary, api: GoUsageApiResponse)
 
   return {
     ...summary,
-    session: period(api.usage.rolling, GO_LIMITS.session),
-    weekly: period(api.usage.weekly, GO_LIMITS.weekly),
-    monthly: period(api.usage.monthly, GO_LIMITS.monthly),
+    session: period(api.usage.rolling, limits.session),
+    weekly: period(api.usage.weekly, limits.weekly),
+    monthly: period(api.usage.monthly, limits.monthly),
   };
 }

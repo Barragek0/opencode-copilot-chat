@@ -811,8 +811,14 @@ export class GoUsageTracker {
   clear(): void {
     this.entries = [];
     this.baseline = {};
+    this.sessionCosts.clear();
     this.persist();
     this.persistBaseline();
+  }
+
+  /** Whether a server-accurate usage snapshot is currently in effect. */
+  get hasServerUsage(): boolean {
+    return this.serverUsage !== undefined;
   }
 
   private prune(): void {
@@ -1024,7 +1030,7 @@ export function formatGoUsageLanguageStatusDetail(summary: UsageSummary): string
 }
 
 /** Build Quick Pick items for the usage panel */
-export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPickItem[] {
+export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false): vscode.QuickPickItem[] {
   const now = new Date();
   const isEmpty = !summary.hasData;
 
@@ -1047,6 +1053,14 @@ export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPic
     items.push({
       label: "$(info) Ready to track",
       detail: "Send a chat message to any OpenCode Go model to start tracking usage.",
+      alwaysShow: true,
+    });
+  }
+
+  if (syncedFromServer) {
+    items.push({
+      label: "$(cloud) Synced from opencode.ai",
+      detail: "Session/Weekly/Monthly meters are account-wide and server-accurate.",
       alwaysShow: true,
     });
   }
@@ -1095,13 +1109,15 @@ export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPic
     label: "$(link-external) Open OpenCode console",
     description: "View usage at opencode.ai",
     alwaysShow: true,
-  });
+    _action: "openConsole",
+  } as vscode.QuickPickItem & { _action: string });
 
   items.push({
     label: "$(trash) Reset tracked usage data",
     description: "Clears all locally tracked data",
     alwaysShow: true,
-  });
+    _action: "resetTracked",
+  } as vscode.QuickPickItem & { _action: string });
 
   return items;
 }

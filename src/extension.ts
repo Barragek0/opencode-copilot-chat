@@ -770,7 +770,7 @@ export function activate(context: vscode.ExtensionContext) {
       const tracker = activeGoUsageTracker();
       if (!tracker) return;
       const summary = tracker.getSummary();
-      const items = buildUsageQuickPickItems(summary);
+      const items = buildUsageQuickPickItems(summary, tracker.hasServerUsage);
 
       const sessionCost = tracker.getCurrentSessionCost();
       if (sessionCost && sessionCost.cost > 0) {
@@ -832,6 +832,19 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand("opencodego.setUsageTargets");
       } else if (action === "showUsageDetails") {
         vscode.commands.executeCommand("opencodego.showUsageDetails");
+      } else if (action === "openConsole") {
+        void vscode.env.openExternal(vscode.Uri.parse("https://opencode.ai"));
+      } else if (action === "resetTracked") {
+        const confirm = await vscode.window.showWarningMessage(
+          "Reset all locally tracked usage data (Today, Yesterday, session spend)? Server-synced meters are unaffected.",
+          { modal: true },
+          "Reset",
+        );
+        if (confirm !== "Reset") return;
+        tracker.clear();
+        refreshGoUsageStatusBar();
+        updateWebviewContent();
+        vscode.window.showInformationMessage("Locally tracked usage data cleared.");
       } else if (action === "switchProfile" && "_fp" in picked) {
         setActiveProfile((picked as { _fp: string })._fp);
       }
