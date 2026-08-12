@@ -1363,9 +1363,10 @@ function updateWebviewContent(): void {
         * { box-sizing: border-box; }
         body {
           margin: 0;
+          height: 100vh;
           background: var(--vscode-editor-background, #1e1e1e);
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           justify-content: center;
           padding: 16px;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif;
