@@ -1694,7 +1694,7 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   ] as const;
   const dividerY = 226;
   const firstRowY = 248;
-  const rowGap = 10;
+  const rowGap = 24;
   const session = sc && sc.cost > 0 ? sc : undefined;
   const deviceRows: Array<[string, number, number, number, number]> = [];
   if (session)
