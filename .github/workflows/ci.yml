@@ -32,11 +32,13 @@ jobs:
       - name: 🔎 Lint source and maintenance docs
         env:
           # The `shellcheck` npm package downloads its binary from GitHub
-          # releases on first run, which flakes in CI (socket hang up / rate
-          # limits). Use the runner's system binary instead.
-          SHELLCHECKJS_BIN: /usr/bin/shellcheck
+          # releases on first run (flaky in CI), and its SHELLCHECKJS_BIN
+          # validator requires a user-writable binary. Install via apt and
+          # point it at a writable copy in the runner's temp dir.
+          SHELLCHECKJS_BIN: ${{ runner.temp }}/shellcheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
+          cp /usr/bin/shellcheck "$SHELLCHECKJS_BIN"
           npm run lint
 
       - name: 🎨 Check formatting
