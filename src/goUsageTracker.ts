@@ -6,6 +6,7 @@ import { execFileSync } from "child_process";
 import { GO_VENDOR } from "./providerTypes";
 import type { ModelCost } from "./metadata";
 import type { TransportRequestSummary } from "./streaming";
+import { fetchGoUsage, mergeServerUsage, GO_USAGE_SYNC_TTL_MS, type GoUsageApiResponse } from "./goUsageSync";
 
 /** Callback to resolve live model cost from the models.dev metadata cache. */
 export type CostResolver = (modelId: string) => ModelCost | undefined;
@@ -14,6 +15,7 @@ export type CostResolver = (modelId: string) => ModelCost | undefined;
 
 const STORAGE_KEY = "opencodego.usageLog.v1";
 const BASELINE_STORAGE_KEY = "opencodego.usageBaseline.v1";
+const EVER_TRACKED_KEY = "opencodego.everTracked.v1";
 const SESSION_COSTS_KEY = "opencodego.sessionCosts.v1";
 const MAX_LOG_ENTRIES = 2000;
 
@@ -291,11 +293,23 @@ function readOpenCodeHistory(): HistoryRow[] | null {
 
 export class GoUsageTracker {
   private entries: UsageLogEntry[] = [];
+  /**
+   * Whether this profile has ever recorded (or had cleared) local usage.
+   * Kept true after a reset so the usage card shows zeroed local values
+   * instead of collapsing into the first-run "no data" state.
+   */
+  private everTracked = false;
   private baseline: UsageBaseline = {};
   private readonly log?: (msg: string) => void;
   private costResolver?: CostResolver;
   /** Per-chat-session cost accumulator. Key = sessionId. */
   private sessionCosts = new Map<string, SessionCostSummary>();
+  /** Latest server-accurate usage snapshot (account-wide meters). */
+  private serverUsage: GoUsageApiResponse | undefined;
+  /** Unix ms of the last successful {@link syncServerUsage} fetch. */
+  private serverUsageFetchedAt = 0;
+  /** In-flight sync promise per key — prevents duplicate concurrent fetches. */
+  private syncInFlight: { apiKey: string; promise: Promise<boolean> } | undefined;
   private static readonly SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
   private static readonly MAX_SESSIONS = 50;
 
@@ -402,6 +416,7 @@ export class GoUsageTracker {
       sessionId: summary.sessionId,
       copilotCredits,
     });
+    this.markEverTracked();
 
     // Accumulate per-session cost
     if (summary.sessionId) {
@@ -436,15 +451,67 @@ export class GoUsageTracker {
     // When namespaced (per-profile), skip the shared SQLite — it has no
     // key column, so reading it would mix quota from all accounts.
     const isPerProfile = this.storageKeySuffix.length > 0;
+    let summary: UsageSummary;
     if (!isPerProfile) {
       const sqliteRows = readOpenCodeHistory();
       if (sqliteRows) {
-        return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+        summary = this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+      } else {
+        // Fall back to extension-tracked data (works without CLI).
+        summary = this.buildSummaryFromTracked(nowMs, clamp);
       }
+    } else {
+      summary = this.buildSummaryFromTracked(nowMs, clamp);
     }
 
-    // Fall back to extension-tracked data (works without CLI).
-    return this.buildSummaryFromTracked(nowMs, clamp);
+    // Overlay the server-accurate meters when a recent snapshot exists
+    // (fetched via syncServerUsage). Today / Yesterday / per-session spend
+    // remain local.
+    return this.serverUsage ? mergeServerUsage(summary, this.serverUsage, GO_LIMITS) : summary;
+  }
+
+  /**
+   * Fetch server-accurate account-wide usage for this profile's key and
+   * cache it for {@link GO_USAGE_SYNC_TTL_MS}. Safe to call on every
+   * request/status-bar refresh: the TTL guard makes it a no-op while a
+   * fresh snapshot exists. Failures keep the previous snapshot (stale
+   * beats nothing) and the local estimates remain the fallback.
+   *
+   * @returns true when a new snapshot was fetched.
+   */
+  async syncServerUsage(apiKey: string): Promise<boolean> {
+    // Dedupe concurrent calls for the same key (startup + status-bar refresh
+    // can fire at the same moment) — a single in-flight fetch is enough.
+    if (this.syncInFlight && this.syncInFlight.apiKey === apiKey) {
+      return this.syncInFlight.promise;
+    }
+    const promise = this.performServerUsageSync(apiKey);
+    this.syncInFlight = { apiKey, promise };
+    try {
+      return await promise;
+    } finally {
+      if (this.syncInFlight.promise === promise) {
+        this.syncInFlight = undefined;
+      }
+    }
+  }
+
+  private async performServerUsageSync(apiKey: string): Promise<boolean> {
+    const now = Date.now();
+    if (this.serverUsageFetchedAt > 0 && now - this.serverUsageFetchedAt < GO_USAGE_SYNC_TTL_MS) {
+      return false;
+    }
+    const result = await fetchGoUsage(apiKey);
+    // Pace retries after failures too — an invalid key or unreachable
+    // endpoint must not hammer the API on every request.
+    this.serverUsageFetchedAt = Date.now();
+    if (!result.ok) {
+      this.log?.(`[go-usage] Server usage sync skipped (${result.reason}); keeping local estimates.`);
+      return false;
+    }
+    this.serverUsage = result.data;
+    this.log?.("[go-usage] Server usage synced from /zen/go/v1/usage.");
+    return true;
   }
 
   /** Build summary from SQLite, enriched with token/request counts from tracked entries. */
@@ -657,7 +724,7 @@ export class GoUsageTracker {
         requests: yestReq,
         tokens: yestTokens,
       },
-      hasData: this.entries.length > 0,
+      hasData: this.entries.length > 0 || this.everTracked,
       sqliteAvailable: false,
     };
   }
@@ -772,8 +839,24 @@ export class GoUsageTracker {
   clear(): void {
     this.entries = [];
     this.baseline = {};
+    this.sessionCosts.clear();
     this.persist();
     this.persistBaseline();
+    // Keep the usage card alive with zeroed values instead of falling back
+    // to the first-run "no data" state.
+    this.markEverTracked();
+  }
+
+  /** Mark (and persist) that this profile has local usage history. */
+  private markEverTracked(): void {
+    if (this.everTracked) return;
+    this.everTracked = true;
+    void this.context.globalState.update(this.storageKey(EVER_TRACKED_KEY), true);
+  }
+
+  /** Whether a server-accurate usage snapshot is currently in effect. */
+  get hasServerUsage(): boolean {
+    return this.serverUsage !== undefined;
   }
 
   private prune(): void {
@@ -841,6 +924,8 @@ export class GoUsageTracker {
     if (Array.isArray(stored)) {
       this.entries = stored.filter((e) => typeof e.timestamp === "number" && typeof e.cost === "number");
     }
+
+    this.everTracked = this.context.globalState.get<boolean>(this.storageKey(EVER_TRACKED_KEY), this.entries.length > 0);
 
     const baseline = this.context.globalState.get<UsageBaseline>(this.storageKey(BASELINE_STORAGE_KEY), {});
     if (typeof baseline === "object") {
@@ -985,7 +1070,7 @@ export function formatGoUsageLanguageStatusDetail(summary: UsageSummary): string
 }
 
 /** Build Quick Pick items for the usage panel */
-export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPickItem[] {
+export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false): vscode.QuickPickItem[] {
   const now = new Date();
   const isEmpty = !summary.hasData;
 
@@ -1008,6 +1093,14 @@ export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPic
     items.push({
       label: "$(info) Ready to track",
       detail: "Send a chat message to any OpenCode Go model to start tracking usage.",
+      alwaysShow: true,
+    });
+  }
+
+  if (syncedFromServer) {
+    items.push({
+      label: "$(cloud) Synced from opencode.ai",
+      detail: "Session/Weekly/Monthly meters are account-wide and server-accurate.",
       alwaysShow: true,
     });
   }
@@ -1056,13 +1149,15 @@ export function buildUsageQuickPickItems(summary: UsageSummary): vscode.QuickPic
     label: "$(link-external) Open OpenCode console",
     description: "View usage at opencode.ai",
     alwaysShow: true,
-  });
+    _action: "openConsole",
+  } as vscode.QuickPickItem & { _action: string });
 
   items.push({
     label: "$(trash) Reset tracked usage data",
     description: "Clears all locally tracked data",
     alwaysShow: true,
-  });
+    _action: "resetTracked",
+  } as vscode.QuickPickItem & { _action: string });
 
   return items;
 }

@@ -114,6 +114,8 @@ let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageTracker: GoUsageTracker | undefined;
 /** Per-profile trackers indexed by key fingerprint. */
 const goUsageTrackers = new Map<string, GoUsageTracker>();
+/** API key per profile fingerprint — lets refreshes sync the active profile's own key. */
+const profileApiKeys = new Map<string, string>();
 let usageWebviewPanel: vscode.WebviewPanel | undefined;
 
 let profilesCache: UsageProfile[] = [];
@@ -192,6 +194,10 @@ function ensureProfileSync(apiKey: string): void {
  */
 function ensureProfileForApiKey(apiKey: string): GoUsageTracker {
   ensureProfileSync(apiKey);
+  // Remember which API key owns each profile, so status-bar refreshes can
+  // sync the ACTIVE profile's meters with its own key instead of the
+  // extension secret (which may belong to another account).
+  profileApiKeys.set(keyFingerprint(apiKey), apiKey);
   return getOrCreateTracker(keyFingerprint(apiKey));
 }
 
@@ -330,18 +336,19 @@ function isTransientFetchError(error: unknown): boolean {
  *
  * Used to back off between model-list fetch retries without leaking
  * CancellationToken subscriptions.
+ *
+ * A single subscription suffices for already-cancelled tokens: VS Code's
+ * cancellation tokens invoke listeners registered after cancellation
+ * (shortcutEvent), and Promises ignore double settlement.
  */
 function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
   if (token?.isCancellationRequested) {
     return Promise.reject(new DOMException("Aborted", "AbortError"));
   }
   return new Promise((resolve, reject) => {
-    let settled = false;
-    const state: { subscription?: vscode.Disposable } = {};
+    const state: { timer?: ReturnType<typeof setTimeout>; subscription?: vscode.Disposable } = {};
     const finish = (cancelled: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
+      if (state.timer) clearTimeout(state.timer);
       state.subscription?.dispose();
       if (cancelled) {
         reject(new DOMException("Aborted", "AbortError"));
@@ -349,17 +356,13 @@ function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
         resolve();
       }
     };
-    const timer = setTimeout(() => {
+    state.timer = setTimeout(() => {
       finish(false);
     }, ms);
     if (token) {
-      if (token.isCancellationRequested) {
+      state.subscription = token.onCancellationRequested(() => {
         finish(true);
-      } else {
-        state.subscription = token.onCancellationRequested(() => {
-          finish(true);
-        });
-      }
+      });
     }
   });
 }
@@ -748,6 +751,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
+  // Pull the server-accurate account meters once at startup (TTL-guarded).
+  void (async () => {
+    const apiKey = await context.secrets.get(SECRET_KEY);
+    if (!apiKey) return;
+    await syncTrackerUsage(getOrCreateTracker(keyFingerprint(apiKey)), apiKey);
+  })();
   // Read from the root configuration with the FULL setting key: section-scoped
   // reads (getConfiguration("opencodego")) resolve keys relative to the
   // section, which would misread the Zen flag as opencodego.opencodezen.enabled.
@@ -794,7 +803,7 @@ export function activate(context: vscode.ExtensionContext) {
       const tracker = activeGoUsageTracker();
       if (!tracker) return;
       const summary = tracker.getSummary();
-      const items = buildUsageQuickPickItems(summary);
+      const items = buildUsageQuickPickItems(summary, tracker.hasServerUsage);
 
       const sessionCost = tracker.getCurrentSessionCost();
       if (sessionCost && sessionCost.cost > 0) {
@@ -856,6 +865,19 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand("opencodego.setUsageTargets");
       } else if (action === "showUsageDetails") {
         vscode.commands.executeCommand("opencodego.showUsageDetails");
+      } else if (action === "openConsole") {
+        void vscode.env.openExternal(vscode.Uri.parse("https://opencode.ai"));
+      } else if (action === "resetTracked") {
+        const confirm = await vscode.window.showWarningMessage(
+          "Reset all locally tracked usage data (Today, Yesterday, session spend)? Server-synced meters are unaffected.",
+          { modal: true },
+          "Reset",
+        );
+        if (confirm !== "Reset") return;
+        tracker.clear();
+        refreshGoUsageStatusBar();
+        updateWebviewContent();
+        vscode.window.showInformationMessage("Locally tracked usage data cleared.");
       } else if (action === "switchProfile" && "_fp" in picked) {
         void setActiveProfile((picked as { _fp: string })._fp);
       }
@@ -1273,6 +1295,26 @@ function refreshGoUsageStatusBar(): void {
   goUsageStatusBarItem.tooltip = buildUsageTooltip(s, tracker.getCurrentSessionCost());
   goUsageStatusBarItem.show();
   updateWebviewContent();
+
+  // Refresh the server-accurate meters in the background (TTL-guarded); when
+  // a new snapshot lands, rebuild the status bar with it. Use the active
+  // profile's own key when known, falling back to the extension secret.
+  void (async () => {
+    const apiKey = profileApiKeys.get(activeProfileFingerprint) ?? (await _extensionContext?.secrets.get(SECRET_KEY));
+    if (!apiKey) return;
+    const changed = await tracker.syncServerUsage(apiKey);
+    if (changed) refreshGoUsageStatusBar();
+  })();
+}
+
+/**
+ * Fetch server-accurate usage for a key and repaint the status bar when a new
+ * snapshot arrived. Uses the tracker owning that key (creating its profile on
+ * first use), so multi-account setups keep per-key meters.
+ */
+async function syncTrackerUsage(tracker: GoUsageTracker, apiKey: string): Promise<void> {
+  const changed = await tracker.syncServerUsage(apiKey);
+  if (changed) refreshGoUsageStatusBar();
 }
 
 function showUsageWebview(context: vscode.ExtensionContext): void {
@@ -1305,7 +1347,6 @@ function updateWebviewContent(): void {
     return;
   }
   const s = tracker.getSummary();
-  const sc = tracker.getCurrentSessionCost();
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const profileLabel = activeProfile?.label ?? "OpenCode Go";
 
@@ -1317,42 +1358,136 @@ function updateWebviewContent(): void {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>OpenCode Usage Summary — ${escapeSvg(profileLabel)}</title>
       <style>
+        :root {
+          --bg: var(--vscode-editorWidget-background, #252526);
+          --border: var(--vscode-widget-border, #3c3c3c);
+          --text: var(--vscode-foreground, #cccccc);
+          --text-dim: var(--vscode-descriptionForeground, #9d9d9d);
+          --accent: var(--vscode-textLink-foreground, #3794ff);
+          --track: var(--vscode-widget-border, #3c3c3c);
+          --divider: var(--vscode-widget-border, #3c3c3c);
+        }
+        * { box-sizing: border-box; }
         body {
-          display: flex;
-          justify-content: center;
-          align-items: flex-start;
-          height: 100vh;
-          background-color: var(--vscode-editor-background);
-          color: var(--vscode-editor-foreground);
           margin: 0;
-          padding: 20px;
-          box-sizing: border-box;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
-        .container {
-          width: 100%;
-          max-width: 560px;
+          height: 100vh;
+          background: var(--vscode-editor-background, #1e1e1e);
           display: flex;
-          flex-direction: column;
           align-items: center;
-          gap: 15px;
+          justify-content: center;
+          padding: 16px;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif;
         }
-        svg {
+        .card {
+          width: 320px;
+          background: var(--bg);
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          color: var(--text);
+          font-size: 13px;
+          padding: 16px;
+        }
+        .title {
+          font-size: 13px;
+          font-weight: 600;
+          margin-bottom: 14px;
+        }
+        .row-label {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          margin-bottom: 6px;
+        }
+        .row-label .name { font-weight: 600; font-size: 13px; }
+        .row-label .resets { font-size: 11px; color: var(--text-dim); }
+        .bar {
+          height: 4px;
           width: 100%;
-          height: auto;
-          border-radius: 8px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-          background-color: #1e1e1e;
+          background: var(--track);
+          border-radius: 2px;
+          overflow: hidden;
+          margin-bottom: 6px;
         }
+        .bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+        .row-sub {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          margin-bottom: 16px;
+          font-size: 12px;
+        }
+        .row-sub .used { color: var(--text-dim); }
+        .row-sub .pct { font-weight: 600; }
+        .section:last-of-type .row-sub { margin-bottom: 14px; }
+        .divider { border-top: 1px solid var(--divider); margin: 0 -16px 12px; }
+        .stats { display: flex; justify-content: space-between; margin-bottom: 10px; }
+        .stats:last-of-type { margin-bottom: 14px; }
+        .stat { flex: 1; }
+        .stat .label { color: var(--text-dim); font-size: 11px; margin-bottom: 2px; }
+        .stat .value { font-weight: 600; font-size: 13px; }
+        .footer {
+          display: flex;
+          gap: 16px;
+          padding-top: 12px;
+          border-top: 1px solid var(--divider);
+          margin: 0 -16px;
+          padding-left: 16px;
+        }
+        .footer a { color: var(--accent); font-size: 12px; text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
       </style>
     </head>
     <body>
-      <div class="container">
-        ${buildUsageTooltipSvg(s, sc)}
+      <div class="card">
+        <div class="title">${escapeSvg(profileLabel)} - Usage</div>
+
+        ${usageCardSectionHtml("Session (5h rolling)", s.session)}
+        ${usageCardSectionHtml("Weekly", s.weekly)}
+        ${usageCardSectionHtml("Monthly", s.monthly)}
+
+        <div class="divider"></div>
+
+        ${usageCardStatsHtml("Today", s.today)}
+        ${usageCardStatsHtml("Yesterday", s.yesterday)}
+
+        <div class="footer">
+          <a href="command:opencodego.setUsageTargets">Set spent targets</a>
+          ${nonLegacyCount(profilesCache) > 0 ? '<a href="command:opencodego.renameActiveProfile">Rename</a>' : ""}
+        </div>
       </div>
     </body>
     </html>
   `;
+}
+
+/** One meter section: label + resets, bar, used + percent. */
+function usageCardSectionHtml(label: string, p: _UsageSummary["session"]): string {
+  const pct = p.percent.toFixed(1);
+  const width = Math.min(Math.max(p.percent, 0), 100);
+  return [
+    '<div class="section">',
+    '<div class="row-label">',
+    `<span class="name">${escapeSvg(label)}</span>`,
+    `<span class="resets">Resets in ${escapeSvg(rel(p.resetsAt))}</span>`,
+    "</div>",
+    `<div class="bar"><div class="bar-fill" style="width:${width}%"></div></div>`,
+    '<div class="row-sub">',
+    `<span class="used">${escapeSvg(`${usd(p.spent)} / ${usd(p.limit)} used`)}</span>`,
+    `<span class="pct">${pct}%</span>`,
+    "</div>",
+    "</div>",
+  ].join("");
+}
+
+/** One stats row: three label-over-value columns. */
+function usageCardStatsHtml(label: string, day: _UsageSummary["today"]): string {
+  return [
+    '<div class="stats">',
+    `<div class="stat"><div class="label">${escapeSvg(label)}</div><div class="value">${escapeSvg(usd(day.cost))}</div></div>`,
+    `<div class="stat"><div class="label">Requests</div><div class="value">${day.requests}</div></div>`,
+    `<div class="stat"><div class="label">Tokens</div><div class="value">${escapeSvg(tokens(day.tokens))}</div></div>`,
+    "</div>",
+  ].join("");
 }
 
 function buildUsageTooltip(
@@ -1365,17 +1500,10 @@ function buildUsageTooltip(
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const profileLabel = activeProfile?.label ?? "OpenCode Go";
 
-  const commands = ["opencodego.setUsageTargets"];
-  if (nonLegacyCount(profilesCache) > 0) {
-    commands.push("opencodego.renameActiveProfile");
-  }
-  (md as vscode.MarkdownString & { supportedCommands?: string[] }).supportedCommands = commands;
-
-  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="420">`);
-  md.appendMarkdown("\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)");
-  if (nonLegacyCount(profilesCache) > 0) {
-    md.appendMarkdown(" \u00B7 [$(pencil) Rename](command:opencodego.renameActiveProfile)");
-  }
+  // The hover shows the summary card only; Set spent targets / Rename are
+  // available from the Command Palette (opencodego.setUsageTargets,
+  // opencodego.renameActiveProfile).
+  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="440">`);
   return md;
 }
 
@@ -1500,13 +1628,11 @@ function buildUsageTooltipSvg(
   sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
   profileLabel?: string,
 ): string {
-  const hasSession = sc && sc.cost > 0;
-  // Session label is longer ("Session (est):") so widen the card and shift
-  // the cost column right when session data is present.
-  const cx = hasSession ? 120 : 80; // cost value column
-  const width = hasSession ? 440 : 420;
-  const height = s.hasData ? (hasSession ? 310 : 286) : 78;
-  const bg = "#1e1e1e";
+  // Stable geometry: fixed card width and fixed columns, so the layout never
+  // shifts when session data appears or a day has no usage yet.
+  const width = 440;
+  const padX = 14;
+  const right = width - padX;
   const fg = "#d4d4d4";
   const muted = "#a6a6a6";
   const track = "#3c3c3c";
@@ -1529,61 +1655,67 @@ function buildUsageTooltipSvg(
     ].join("");
   };
 
+  // Meter block with a uniform 14px gutter between blocks: label row with the
+  // reset time right-aligned at the card's right padding, then the bar and
+  // the spent/limit line below it.
   const period = (label: string, p: _UsageSummary["session"], y: number): string =>
     [
-      text(label, 14, y, 14, 700),
-      text(`Resets in ${rel(p.resetsAt)}`, 410, y, 12, 400, muted, "end"),
-      bar(p.percent, 14, y + 12, 340),
-      text(`${p.percent.toFixed(1)}%`, 410, y + 19, 14, 700, fg, "end"),
-      text(`${usd(p.spent)} / ${usd(p.limit)} used`, 14, y + 34, 13, 400, fg),
+      text(label, padX, y, 14, 700),
+      text(`Resets in ${rel(p.resetsAt)}`, right, y, 12, 400, muted, "end"),
+      bar(p.percent, padX, y + 14, 340),
+      text(`${p.percent.toFixed(1)}%`, right, y + 21, 14, 700, fg, "end"),
+      text(`${usd(p.spent)} / ${usd(p.limit)} used`, padX, y + 36, 13, 400, fg),
+    ].join("");
+
+  // Device-local rows share one fixed column grid: label, cost, requests,
+  // tokens. Always rendered (zeros included) so the card height is stable.
+  const deviceRow = (label: string, cost: number, requests: number, tokenCount: number, y: number): string =>
+    [
+      text(label, padX, y, 13, 400, muted),
+      text(usd(cost), 120, y, 13, 700),
+      text("Requests:", 190, y, 13, 400, muted),
+      text(String(requests), 262, y, 13, 700),
+      text("Tokens:", 305, y, 13, 400, muted),
+      text(tokens(tokenCount), 385, y, 13, 700),
     ].join("");
 
   if (!s.hasData) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(width)}" height="${String(height)}" viewBox="0 0 ${String(width)} ${String(height)}">
-<rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text(svgTitle, 14, 26, 16, 700)}
-${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", 14, 50, 12, 400, muted)}
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="70" viewBox="0 0 ${width} 70">${text(svgTitle, padX, 28, 16, 700)}
+${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", padX, 52, 12, 400, muted)}
 </svg>`;
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(width)}" height="${String(height)}" viewBox="0 0 ${String(width)} ${String(height)}">
-<rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text(svgTitle, 14, 26, 16, 700)}
-${period("Session (5h rolling)", s.session, 54)}
-${period("Weekly", s.weekly, 116)}
-${period("Monthly", s.monthly, 178)}
-<line x1="14" y1="224" x2="416" y2="224" stroke="${line}" stroke-width="1"/>
-${
-  hasSession
-    ? [
-        text("Session (est):", 14, 250, 13, 400, muted),
-        text(`$${sc.cost.toFixed(4)}`, cx, 250, 13, 700),
-        text("Requests:", 200, 250, 13, 400, muted),
-        text(String(sc.requests), 280, 250, 13, 700),
-        text("Tokens:", 320, 250, 13, 400, muted),
-        text(tokens(sc.promptTokens + sc.completionTokens), 400, 250, 13, 700),
-      ].join("")
-    : ""
-}
-${text("Today:", 14, hasSession ? 274 : 256, 13, 400, muted)}
-${text(usd(s.today.cost), cx, hasSession ? 274 : 256, 13, 700)}
-${text("Requests:", 200, hasSession ? 274 : 256, 13, 400, muted)}
-${text(String(s.today.requests), 280, hasSession ? 274 : 256, 13, 700)}
-${text("Tokens:", 320, hasSession ? 274 : 256, 13, 400, muted)}
-${text(tokens(s.today.tokens), 400, hasSession ? 274 : 256, 13, 700)}
-${
-  s.yesterday.requests > 0
-    ? [
-        text("Yesterday:", 14, hasSession ? 298 : 278, 13, 400, muted),
-        text(usd(s.yesterday.cost), cx, hasSession ? 298 : 278, 13, 700),
-        text("Requests:", 200, hasSession ? 298 : 278, 13, 400, muted),
-        text(String(s.yesterday.requests), 280, hasSession ? 298 : 278, 13, 700),
-        text("Tokens:", 320, hasSession ? 298 : 278, 13, 400, muted),
-        text(tokens(s.yesterday.tokens), 400, hasSession ? 298 : 278, 13, 700),
-      ].join("")
-    : ""
-}
-</svg>`;
+  // Title starts at the same 14px gutter as the sides. Meter rows, the
+  // divider and the device rows keep a consistent 14px rhythm.
+  const meterRows = [
+    ["Session (5h rolling)", s.session, 56],
+    ["Weekly", s.weekly, 116],
+    ["Monthly", s.monthly, 176],
+  ] as const;
+  const dividerY = 226;
+  const firstRowY = 248;
+  const rowGap = 24;
+  // All three rows are always rendered (zeros included) so the card is
+  // stable regardless of whether a session is currently active.
+  const sessionCost = sc && sc.cost > 0 ? sc : { cost: 0, requests: 0, promptTokens: 0, completionTokens: 0 };
+  const deviceRows: Array<[string, number, number, number, number]> = [];
+  deviceRows.push([
+    "Session (est):",
+    sessionCost.cost,
+    sessionCost.requests,
+    sessionCost.promptTokens + sessionCost.completionTokens,
+    firstRowY,
+  ]);
+  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + rowGap]);
+  deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + 2 * rowGap]);
+
+  const height = firstRowY + 2 * rowGap + 14;
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+${text(svgTitle, padX, 28, 16, 700)}
+${meterRows.map(([label, periodValue, y]) => period(label, periodValue, y)).join("")}
+<line x1="${padX}" y1="${dividerY}" x2="${right}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
+${deviceRows.map(([label, cost, requests, tokenCount, y]) => deviceRow(label, cost, requests, tokenCount, y)).join("")}</svg>`;
 }
 
 function escapeSvg(value: string): string {
@@ -2400,11 +2532,14 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       if (this.baseVendor === GO_VENDOR) {
         const tracker = ensureProfileForApiKey(apiKey);
         this.log(
-          `[go-usage] Recording profile=${activeProfileFingerprint}: model=${summary.modelId} promptTokens=${String(prompt)} completionTokens=${String(completion)} cachedTokens=${String(cached)}`,
+          `[go-usage] Recording profile=${activeProfileFingerprint}: model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached}`,
         );
         tracker.record(summary, metadata.cost);
         refreshGoUsageStatusBar();
-        this.log(`[go-usage] After record profile=${activeProfileFingerprint}: entries=${String(tracker.getSummary().today.requests)}`);
+        this.log(`[go-usage] After record profile=${activeProfileFingerprint}: entries=${tracker.getSummary().today.requests}`);
+        // Re-sync the server-accurate account meters (TTL-guarded, uses the
+        // exact key this request ran under — covers BYOK group keys too).
+        void syncTrackerUsage(tracker, apiKey);
       }
     };
 
@@ -2653,6 +2788,8 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     if (token.isCancellationRequested) {
       controller.abort();
     } else {
+      // Already-cancelled tokens still invoke the listener (shortcutEvent),
+      // so this single subscription covers the subscribe-time race too.
       subscription = token.onCancellationRequested(() => {
         controller.abort();
       });
@@ -2779,7 +2916,7 @@ async function refreshOpenCodeModelMetadata(
     modelMetadataSnapshot = snapshot;
     await context.globalState.update(MODEL_METADATA_CACHE_KEY, snapshot);
     output?.appendLine(
-      `[metadata] refreshed models.dev cache go=${String(Object.keys(snapshot.providers[GO_VENDOR] ?? {}).length)} zen=${String(Object.keys(snapshot.providers[ZEN_VENDOR] ?? {}).length)}`,
+      `[metadata] refreshed models.dev cache go=${Object.keys(snapshot.providers[GO_VENDOR] ?? {}).length} zen=${Object.keys(snapshot.providers[ZEN_VENDOR] ?? {}).length}`,
     );
     return snapshot;
   })()

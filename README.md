@@ -236,7 +236,14 @@ Per-model reasoning configuration, dynamically enhanced with `reasoning_options`
 
 - **Go Usage Tracker** — real-time burn-rate of OpenCode Go subscription:
   - Tracks **5-hour rolling** ($12), **weekly** ($30), **monthly** ($60) tiers.
-  - Client-side cost calc: token usage × per-model pricing (input/output/cache_read).
+  - **Server-synced meters** — on startup and after each request the tracker
+    pulls the official `/zen/go/v1/usage` endpoint with your Go key, so the
+    Session/Weekly/Monthly percentages and "resets in" timers are
+    account-wide and server-accurate (includes CLI, other devices, anything
+    before the extension was installed). Falls back to local estimates when
+    the endpoint is unreachable or the key/subscription is invalid.
+  - Today / Yesterday and per-session spend stay **device-local** (the API
+    does not return them).
   - Status bar: `Go: 27%·62%·75%` — ⚠ warning when any tier exceeds 80%.
   - Persisted in VS Code `globalState` — survives restarts.
 - **Response usage bar** — latest prompt/output/total/cache summary after each response.
