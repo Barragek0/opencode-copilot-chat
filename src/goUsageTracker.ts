@@ -456,7 +456,7 @@ export class GoUsageTracker {
     // Overlay the server-accurate meters when a recent snapshot exists
     // (fetched via syncServerUsage). Today / Yesterday / per-session spend
     // remain local.
-    return this.serverUsage ? mergeServerUsage(summary, this.serverUsage) : summary;
+    return this.serverUsage ? mergeServerUsage(summary, this.serverUsage, GO_LIMITS) : summary;
   }
 
   /**
@@ -470,16 +470,18 @@ export class GoUsageTracker {
    */
   async syncServerUsage(apiKey: string): Promise<boolean> {
     const now = Date.now();
-    if (this.serverUsage && now - this.serverUsageFetchedAt < GO_USAGE_SYNC_TTL_MS) {
+    if (this.serverUsageFetchedAt > 0 && now - this.serverUsageFetchedAt < GO_USAGE_SYNC_TTL_MS) {
       return false;
     }
     const result = await fetchGoUsage(apiKey);
+    // Pace retries after failures too — an invalid key or unreachable
+    // endpoint must not hammer the API on every request.
+    this.serverUsageFetchedAt = Date.now();
     if (!result.ok) {
       this.log?.(`[go-usage] Server usage sync skipped (${result.reason}); keeping local estimates.`);
       return false;
     }
     this.serverUsage = result.data;
-    this.serverUsageFetchedAt = Date.now();
     this.log?.("[go-usage] Server usage synced from /zen/go/v1/usage.");
     return true;
   }

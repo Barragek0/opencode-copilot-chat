@@ -6,7 +6,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Added
 
-- _Nothing yet._
+- **`[Usage]` Server-accurate Go meters via the official `/zen/go/v1/usage` endpoint (#130).** The status bar, tooltip, quick-pick and usage webview previously showed locally estimated Session/Weekly/Monthly percentages that drifted from opencode.ai (issue #23) because they missed CLI, cross-device and pre-install usage. The tracker now pulls the official endpoint (upstream anomalyco/opencode#16513, verified live) with the existing Go key on startup and after each request (60s TTL cache): rolling/weekly/monthly percent + reset times are server-computed and account-wide, `spent` is derived from the authoritative percent, and Today/Yesterday + per-session spend stay device-local. Failures (401/403/404/network) fall back to the existing SQLite → tracked estimates. The key is only ever sent as the Authorization header and never logged or persisted. New pure module `src/goUsageSync.ts` with unit tests.
 
 ## [0.5.2] — 2026-08-11
 
