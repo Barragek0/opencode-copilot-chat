@@ -308,6 +308,8 @@ export class GoUsageTracker {
   private serverUsage: GoUsageApiResponse | undefined;
   /** Unix ms of the last successful {@link syncServerUsage} fetch. */
   private serverUsageFetchedAt = 0;
+  /** In-flight sync promise per key — prevents duplicate concurrent fetches. */
+  private syncInFlight: { apiKey: string; promise: Promise<boolean> } | undefined;
   private static readonly SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
   private static readonly MAX_SESSIONS = 50;
 
@@ -478,6 +480,23 @@ export class GoUsageTracker {
    * @returns true when a new snapshot was fetched.
    */
   async syncServerUsage(apiKey: string): Promise<boolean> {
+    // Dedupe concurrent calls for the same key (startup + status-bar refresh
+    // can fire at the same moment) — a single in-flight fetch is enough.
+    if (this.syncInFlight && this.syncInFlight.apiKey === apiKey) {
+      return this.syncInFlight.promise;
+    }
+    const promise = this.performServerUsageSync(apiKey);
+    this.syncInFlight = { apiKey, promise };
+    try {
+      return await promise;
+    } finally {
+      if (this.syncInFlight.promise === promise) {
+        this.syncInFlight = undefined;
+      }
+    }
+  }
+
+  private async performServerUsageSync(apiKey: string): Promise<boolean> {
     const now = Date.now();
     if (this.serverUsageFetchedAt > 0 && now - this.serverUsageFetchedAt < GO_USAGE_SYNC_TTL_MS) {
       return false;
