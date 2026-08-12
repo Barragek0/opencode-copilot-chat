@@ -6,7 +6,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Added
 
-- _Nothing yet._
+- **`[Autocomplete]` Inline code suggestions (experimental, #49).** Ghost-text completions while typing, powered by the OpenCode gateway with thinking forced off. Opt-in via `opencodego.inlineSuggestions` (default `false`); model via `opencodego.inlineSuggestionsModel` (default `qwen3.5-plus`, whose `enable_thinking=false` mode is a genuine no-reasoning path — measured ~1.5s time-to-first-token with zero hidden reasoning). Requests are tiny (10 lines before the cursor + a short suffix), debounced 300ms, time out at 3s and abort on the next keystroke. The gateway exposes no FIM endpoint, so completions emulate fill-in-the-middle with FIM tokens over `/chat/completions`. New `src/autocomplete/` module (context, prompt, throttle, engine, provider, registration) with unit tests; `scripts/probe-completion-latency.ts` measures engine latency live.
 
 ## [0.5.2] — 2026-08-11
 
