@@ -1,6 +1,130 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
 
-**Branch:** `main` | **Updated:** 2026-08-11 Asia/Jakarta | **Current Phase:** Release 0.5.2 cut — PR #123/#124/#125/#126 all merged (reasoning echo, BYOK group flow, Agents window models, reasoning tests); version bumped to `0.5.2`, building + installing locally.
+**Branch:** `main` | **Updated:** 2026-08-13 Asia/Jakarta | **Current Phase:** Post-0.5.2 docs sync — PR #129 (strict lint stack) + PR #132 (Go usage server sync) merged; issue #23 documented end-to-end; PR #133/#135/#136 open (DeepSeek 400 thinking-off, duplicate models, autocomplete). `main` HEAD `4a14b1e`.
+
+---
+
+## ✅ Issue #23 — Full lifecycle documented + upstream reply + tracking issue #130 — 2026-08-13
+
+**Action:** Completed the documentation arc for issue #23 (Go usage status drift), which began with a new comment on the issue from @mderazon on 2026-08-12 pointing at the merged upstream endpoint PR.
+
+**What:**
+
+1. **Upstream reply (2026-08-12):** Posted a reply on [#23](https://github.com/ltmoerdani/opencode-copilot-chat/issues/23) acknowledging the official `GET /zen/go/v1/usage` endpoint (anomalyco/opencode#16513, merged to `dev` 2026-08-11/12, live) and noting it needs a production check before building on it.
+2. **Tracking issue [#130](https://github.com/ltmoerdani/opencode-copilot-chat/issues/130):** Opened "[FEATURE] Sync Go usage from official /zen/go/v1/usage endpoint" with the proposed sync-layer design. Closed 2026-08-12T22:51:07Z when PR #132 (by @Fahad090NP) merged the implementation.
+3. **Documentation updates (2026-08-13):**
+   - **New** `docs/issues/65-20260813-issue23-go-usage-status-sync.md` — consolidated timeline of the full #23 arc (Jun 12 report → no-public-API diagnosis → PR #50 manual targets → PR #60 SQLite → upstream endpoint → PR #132), endpoint contract, final data flow, lessons.
+   - **Updated** `docs/issues/13-20260605-go-usage-status-bar-not-updating.md` — marked its "no public REST API" conclusion **superseded** (endpoint now live), refreshed Lessons Learned + Remaining Work.
+   - **Updated** `docs/features/03-20260605-go-usage-tracker.md` — corrected the Overview (no longer "no REST API exists") and added a Server-Accurate Go Usage (PR #132) section.
+   - CHANGELOG `[Unreleased]` + architecture timeline + doc 62 already covered PR #132; no changes needed there.
+
+**Verification:** `markdownlint-cli2` 0 issues on all three edited files.
+
+**Docs:** `docs/issues/65-20260813-issue23-go-usage-status-sync.md` (new), `docs/issues/13-...` + `docs/features/03-...` (updated).
+
+---
+
+## 🟢 Issue #131 — Duplicate models after per-model config (reasoningEffort) — root cause confirmed, PR #135 open — 2026-08-13
+
+**Action:** Investigated and confirmed the root cause of the per-model config duplicate-model bug, posted issue [#131](https://github.com/ltmoerdani/opencode-copilot-chat/issues/131) (2026-08-12), and [@Fahad090NP](https://github.com/Fahad090NP) opened fix PR [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) (open as of 2026-08-13).
+
+**What:**
+
+1. Reporter @xianhongtao gave full diagnostics (extension 0.5.2, VS Code 1.132.1 System setup): `chatLanguageModels.json` holds settings-only groups for `opencodego` / `opencodezen` (no apiKey), and the repro counts move 7 → 14 → 7 → 14 depending on whether a per-model config group exists.
+2. Root cause confirmed against VS Code source (`languageModels.ts`): a settings-only group resolves to `configuration: {}`; the #106 fix only silences the groupless call when an apiKey-bearing group call was observed, so the SecretStorage fallback ran on both calls and served every model twice.
+3. Fix in PR #135 (`src/extension.ts`, +19/−1): a group call whose `configuration` is present but carries no API key returns `[]` (per-model config group); the groupless call stays the single source. Per-model settings still apply at request time via `modelConfiguration`.
+
+**Docs:** `docs/issues/64-20260813-issue131-permodel-config-duplicate-models.md` (new). Open-PR tracker `63-...`, architecture, and CHANGELOG `[Unreleased]` updated.
+
+---
+
+## ✅ PR #129 Merge — Strict-but-Sane Lint Stack + Intelligent Pre-Commit Gate — 2026-08-12
+
+**Action:** Merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #129 (`chore/strict-lint`, +3450/−944, 90 files). Merge commit `a960694`, 2026-08-12T07:17:41Z.
+
+**What:**
+
+1. **ESLint strict-but-sane.** Keeps `strict` + `strictTypeChecked` (the bug-catchers: `no-unsafe-*`, `no-unnecessary-condition`, `no-floating-promises`), drops the pure-`stylistic` layer that fought prettier. `restrict-template-expressions` allows numbers/booleans; `no-floating-promises` off for `*.test.*`.
+2. **`npm run lint` now runs tests.** Ends with a Tests step (compile + unit tests), making it the single "is everything green" command. 7 steps: Editorconfig, ESLint, Markdown, Prettier, Shell, TypeScript, Tests.
+3. **Intelligent pre-commit gate.** New `scripts/staged-lint.ts` (`npm run lint:staged`) lints staged files **plus their direct import dependents** (resolved from the real import graph) so changing a module can never leave type-aware errors in its consumers. Measured: config-only commit ≈1s, `src/` commit ≈10s. Full-tree lint stays in CI.
+4. **Branch also carries:** unified `lint.ts`/`format.ts` runners (picocolors), `editorconfig-checker` + `shellcheck` + `tsconfig.check.json` type-check (covers `scripts/`), script renames (`*.mjs`/`*.mts` → `*.ts`), eslint 10.8.1, `@types/node` 26.2 (supersedes dependabot #91), husky PATH fixes.
+5. **Post-review refinements (final 5 commits, 20 total).** Maintainer review surfaced 3 points + 2 config-consistency items, all addressed before merge: dropped all 217 `void describe/it/test` prefixes from 15 test files (`22e04b7`); allowed `@ts-expect-error` for proposed-API workarounds while keeping `@ts-ignore` banned (`5246434`); moved to TypeScript-first config `eslint.config.ts` + typed `.ts` scripts via `tsx` (`76570cc`); standard extensions only, zero `.mjs`/`.mts` (`514a63f`); markdownlint config renamed to `.json` (`c817871`).
+
+**Maintainer verification (2026-08-13):** independently re-ran `npm ci && npm run lint` on the final 20-commit head (all 7 steps green), measured the staged gate (~0.6s docs-only, ~8.3s `src/`), confirmed `void describe/it/test` = 0, `@ts-expect-error` allowed, zero `.mjs`/`.mts` in repo.
+
+**Supersedes:** dependabot #91 (`@types/node` 26.1.0 → 26.1.2) — this branch bumps to 26.2, so #91 is effectively moot and can be closed.
+
+**Docs:** `docs/issues/61-20260812-pr129-strict-lint-stack-precommit-gate.md`. Architecture timeline + CHANGELOG `[Unreleased] ### Changed` updated.
+
+---
+
+## ✅ PR #132 Merge — Server-Accurate Go Usage via `/zen/go/v1/usage` (#130) — 2026-08-12
+
+**Action:** Merged [@Fahad090NP](https://github.com/Fahad090NP)'s PR #132 (`feat/issue-130-go-usage-sync`, +607/−120, 8 files). Merge commit `4a14b1e`, 2026-08-12T22:51:06Z.
+
+**What:** Replaces locally estimated Go usage meters with server-accurate meters from the official `/zen/go/v1/usage` endpoint. The status bar / tooltip / quick-pick / webview previously drifted from opencode.ai because CLI, cross-device, and pre-install usage were invisible (issue #23). New pure module `src/goUsageSync.ts` (`fetchGoUsage` + `mergeServerUsage` + failure classifier) syncs the server meters with a 60s TTL; `spent` is derived from the authoritative percent, Today/Yesterday + per-session spend stay device-local. Failures fall back to the existing SQLite → tracked estimates. The key is only ever sent as the Authorization header and never logged or persisted.
+
+**Dialog fixes found along the way:** dead "Reset tracked usage data" action wired up; reset no longer collapses the card into the first-run state (new `everTracked` flag); dead "Open OpenCode console" quick-pick wired up; usage panel + hover card given stable geometry (fixed width/columns, no layout jumps).
+
+**Type-safety:** resolved always-true/false TS hints flagged by the new strict lint stack (#129) — redundant cancellation guards, dead `if (tracker)`, and `GO_MODEL_PRICING` + metadata `providers` map typed as `Partial` at runtime.
+
+**Verification:** endpoint verified live in production (401 shape matches upstream route source; upstream `anomalyco/opencode#16513` merged); `npm run lint` all 7 steps green; `npm test` 189/189 (incl. the post-review `hasData` regression test).
+
+**Docs:** `docs/issues/62-20260812-pr132-go-usage-server-sync.md`. Architecture timeline + CHANGELOG `[Unreleased] ### Added` doc reference added.
+
+---
+
+## 🟢 Open PRs — #133 (DeepSeek 400 thinking-off), #135 (duplicate models), #136 (autocomplete) — 2026-08-13
+
+**Status:** Three community PRs open as of 2026-08-13. Full tracker: `docs/issues/63-20260813-open-prs-133-135-136-tracker.md`.
+
+| PR                                                                   | Priority    | Mergeable | Summary                                                                                                                                                                                                          |
+| -------------------------------------------------------------------- | ----------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [#133](https://github.com/ltmoerdani/opencode-copilot-chat/pull/133) | **High**    | `CLEAN`   | DeepSeek 400 recurs when thinking is OFF (Go gateway wraps reasoning as visible text, no thinking part to echo). Fix: internal `application/vnd.opencode.reasoning+json` marker part in transcript. Closes #134. |
+| [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) | Medium      | `UNKNOWN` | Duplicate models after per-model config (#131). Settings-only group returns `[]` so groupless call serves models. +19/−1.                                                                                        |
+| [#136](https://github.com/ltmoerdani/opencode-copilot-chat/pull/136) | Low (draft) | `UNKNOWN` | Inline completions / autocomplete (#49). Ghost-text via `qwen3.5-plus` with `enable_thinking:false` (~1.5s TTFB). Experimental, opt-in.                                                                          |
+
+**Recommended merge order:** #133 first (user-facing regression, clean), then #135 (re-check mergeable), leave #136 open until smoke-tested.
+
+---
+
+## 📝 README Model Data Refresh — Internet Research (opencode.ai docs + live endpoints + models.dev) — 2026-08-12
+
+**Action:** Re-verified all OpenCode Go/Zen model data in `README.md` against **live sources** (docs updated today, Aug 12 2026): official `opencode.ai/docs/go` + `docs/zen`, live `/zen/go/v1/models` (25) + `/zen/v1/models` (60), and `models.dev/api.json` (limits/pricing/status). Docs-only; prettier + markdownlint pass.
+
+**Key findings that changed the README:**
+
+1. **Go catalog** — now the curated live set: added `grok-4.5`, `glm-5.2`, `kimi-k3`, `qwen3.8-max`, `qwen3.7-plus`, `hy3`; **removed** models no longer served/legacy: `ring-2.6-1t` (KNOWN_UNAVAILABLE), `minimax-m2.1`/`minimax-m2`, and deprecated ones (`glm-5`, `kimi-k2.5`, `minimax-m2.5`, `mimo-v2-pro`, `mimo-v2-omni`, `qwen3.5-plus` — status `deprecated` in models.dev, filtered by `shouldHideDeprecatedModel`).
+2. **Zen free models** — now the **8 real rotating free models**: `big-pickle`, `deepseek-v4-flash-free`, `mimo-v2.5-free`, `hy3-free`, `laguna-s-2.1-free`, `ling-3.0-tiny-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`. Docs say **all free models (incl. Big Pickle) are limited-time** — softened the "always free" claim. Dropped `minimax-m2.5-free`/`nemotron-3-super-free`/`qwen3.6-plus-free`/`trinity-large-preview-free`/`north-mini-code-free` (all deprecated per models.dev).
+3. **Zen paid table** — refreshed with current models + **official pricing** (per 1M tokens): added `claude-fable-5` ($10/$50), `claude-opus-5`/`claude-opus-4-8`, `claude-sonnet-5`, `gpt-5.6-sol/terra/luna`, `gpt-5.4-nano`, `gemini-3.6-flash`/`3.5-flash-lite`, `grok-4.5`, `glm-5.2`, `kimi-k3`, `minimax-m3`; corrected `gpt-5.5-pro`/`gpt-5.4-pro` ($30/$180) and Zen DeepSeek pricing.
+4. **Go usage** — confirmed official limits (5h/$12, weekly/$30, monthly/$60) + added the ~$15/mo vs ~$60/mo per-model usage tier note (per docs "6x multiplier").
+5. **Prose** — banner, elevator pitch, features table, quick start, compare table, FAQ updated to current model names; "2-5 rotating free models" → "rotating free models".
+
+**Data sources (verified live, 2026-08-12):** `https://opencode.ai/zen/go/v1/models`, `https://opencode.ai/zen/v1/models`, `https://models.dev/api.json` (providers `opencode-go`/`opencode`), `https://opencode.ai/docs/go` + `docs/zen`.
+
+**Verification:** `npx prettier --write README.md` ✅ · `npm run lint:md` 0 issues ✅ · diff reviewed (Go 19 models live, Zen free 8, Zen paid refreshed). Not committed — awaiting user approval.
+
+**Follow-up (Star History note):** GitHub [restricted the stargazers endpoint](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/) (June 30, 2026) to repo admins/collaborators, so the embedded star-history.com chart only renders after the viewer adds a GitHub Access Token. Added an explanatory note under the Star History section with token guidance (fine-grained: Metadata Read-only + Contents Read/Write; or classic `public_repo`). Verified against the official GitHub changelog.
+
+---
+
+## 📝 README Sync — Align with Current State (CHANGELOG as reference) — 2026-08-12
+
+**Action:** Updated `README.md` to match the current feature set (v0.5.2), using `CHANGELOG.md` history as the primary reference. Docs-only change — no code touched. Verified with prettier + markdownlint.
+
+**What changed (evidence-based from CHANGELOG + `package.json` + `src/metadata.ts`):**
+
+1. **Features table** — vision proxy row now mentions the per-image description cache (PR #120); new **Provider on/off** row for remove/re-add from Language Models (0.5.2).
+2. **Go model table** — added `gpt-5.6-luna` (🛣️ `/responses`), `qwen3.6-plus`/`qwen3.5-plus`, `mimo-v2-omni`, `kimi-k2.7-code`, synced to `MODEL_LIMITS_BY_PROVIDER[GO_VENDOR]` in `src/metadata.ts` (was missing from README).
+3. **Zen free table** — synced to bundled fallback catalog: dropped `mimo-v2.5-free`/`north-mini-code-free`, added `minimax-m2.5-free`, `qwen3.6-plus-free`, `trinity-large-preview-free`.
+4. **GLM thinking enum** — corrected `on/off` → `off/high/max` in both the Thinking table and settings table (matches `package.json` + the 0.3.5 fix).
+5. **Settings table** — added `opencodego.enabled` / `opencodezen.enabled` (0.5.2 remove-provider settings).
+6. **Commands table** — added `Remove/Re-add Provider in Language Models` (Go + Zen), `Configure Vision Proxy`, `Set Usage Targets…`, `Show Usage Quick Pick`, `Rename Active Profile`, `Delete Profile`. Fixed "Delete Active Profile" → "Delete Profile" in the Multiple Go accounts section (actual command title).
+7. **Smart Routing** — added transient 5xx retry bullet (PR #107).
+8. **FAQ (Agents window)** — now documents the auto-enable of `chat.agentHost.byokModels.enabled` + `extensions.supportAgentsWindow` (PR #125/#122) instead of a manual `settings.json` step.
+9. **Roadmap** — marked done: Demo GIF, Marketplace publish, Usage panel (status bar + webview).
+
+**Verification:** `npx prettier --write README.md` ✅ · `npm run lint:md` 0 issues ✅ · `git diff` reviewed (45 insertions / 35 deletions) ✅. Not committed — awaiting user approval.
 
 ---
 

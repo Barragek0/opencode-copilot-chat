@@ -7,6 +7,8 @@
 **Extension version affected:** 0.5.0
 **Fixed in:** Next release (unreleased)
 
+> ⚠️ **Follow-up (2026-08-12):** the #106 fix only covers provider groups that carry an `apiKey`. A **per-model configuration group** (created when the user picks e.g. `reasoningEffort` in the model picker) carries no key, so the duplicate persists on 0.5.2 for users who set the key via the extension command. See [`64-20260813-issue131-permodel-config-duplicate-models.md`](64-20260813-issue131-permodel-config-duplicate-models.md) and issue [#131](https://github.com/ltmoerdani/opencode-copilot-chat/issues/131).
+
 ## Problem
 
 With the API key configured via VS Code's native Manage Models / BYOK flow, every OpenCode Zen model appears twice: `vscode.lm.selectChatModels({ vendor: "opencodezen" })` returns **16** models instead of **8**.

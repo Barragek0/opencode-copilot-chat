@@ -1,11 +1,13 @@
-**Status:** ✅ Solved
+**Status:** ✅ Solved (superseded — see note below)
 
 # Go Usage Tracker — Status Bar Not Updating
 
 **Topic:** debug / status-bar / logging / cli-removal / rest-api-research
-**Updated:** 2026-06-05
+**Updated:** 2026-08-13
 **Tags:** #debug #status-bar #go-usage #cli #rest-api #logging
 **Related:** `docs/features/03-20260605-go-usage-tracker.md`
+
+> ⚠️ **Superseded (2026-08-13):** This doc's Phase 2 conclusion — "no public REST API for usage/billing" — was true in June 2026 but is **no longer true**. Upstream [anomalyco/opencode#16513](https://github.com/anomalyco/opencode/pull/16513) merged an official **`GET /zen/go/v1/usage`** endpoint (live 2026-08-11) that returns server-accurate rolling/weekly/monthly usage. The extension now syncs from it (PR #132), so the tracker is server-accurate, not estimated. See the consolidated issue #23 timeline: `65-20260813-issue23-go-usage-status-sync.md` and the PR #132 doc `62-20260812-pr132-go-usage-server-sync.md`. Keep this doc for the local-tracker debugging history; do not treat its API-conclusion as current.
 
 ---
 
@@ -130,16 +132,18 @@ code --install-extension opencode-copilot-chat-0.2.1.vsix --force
 
 ## Lessons Learned
 
-1. **No external dependency for billing** — OpenCode has no public billing API. Extension-tracked estimation is the only option.
+1. **"No public billing API" was time-boxed** — At the time of this doc (June 2026) OpenCode had no public usage endpoint, so estimation was the only option. **This changed on 2026-08-11** when upstream merged the official `/zen/go/v1/usage` endpoint (PR #132 now syncs from it). Lesson: re-check upstream periodically; "no API" conclusions expire.
 2. **Guard clauses are silent by default** — Adding logging to `record()` skip conditions makes debugging 10× faster.
 3. **CLI requirements alienate VS Code users** — The extension's value is avoiding the CLI. Requiring CLI runs defeats the purpose.
-4. **SQLite reader is future enrichment only** — Keep the code but don't depend on it.
+4. **SQLite reader became real enrichment, then a fallback** — Kept as "future enrichment only", it was wired up in PR #60 and is now the middle tier of the server → SQLite → tracked fallback chain.
 
 ---
 
-## Remaining Work
+## Remaining Work (as of 2026-08-13)
 
-- [ ] Verify status bar updates correctly with debug logging in production
-- [ ] Remove dead SQLite reader code if enrichment path is abandoned
+- ✅ Verify status bar updates correctly with debug logging in production — **done**, tracker is now server-accurate (PR #132)
+- ✅ SQLite reader no longer dead code — wired as fallback in PR #60
 - [ ] Consider adding `onDidChangeConfiguration` to reset tracker if pricing changes
-- [ ] Revert v0.2.1 test version → proper version bump
+- ✅ Revert v0.2.1 test version → proper version bump — long since released (current: 0.5.2+)
+
+> See the consolidated timeline `65-20260813-issue23-go-usage-status-sync.md` for the full arc from this local-tracker era to server-sync.
