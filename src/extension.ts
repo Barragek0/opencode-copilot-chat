@@ -1377,7 +1377,7 @@ function updateWebviewContent(): void {
           border-radius: 6px;
           color: var(--text);
           font-size: 13px;
-          padding: 14px 16px;
+          padding: 16px;
         }
         .title {
           font-size: 13px;
