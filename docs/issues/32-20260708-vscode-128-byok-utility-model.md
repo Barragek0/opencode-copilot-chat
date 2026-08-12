@@ -4,9 +4,9 @@
 >
 > **Current behavior:** The extension no longer changes global utility-model settings during activation. Run `OpenCode: Configure Utility Models` to choose `chat.byokUtilityModelDefault`, `chat.utilityModel`, or `chat.utilitySmallModel` explicitly. The implementation below is retained as release history for version 0.3.6.
 >
-> **Date:** July 8, 2026  
-> **Extension version:** 0.3.6  
-> **Severity:** High — every background utility task (chat title generation, commit messages, intent detection) broken for all BYOK users after updating VS Code  
+> **Date:** July 8, 2026
+> **Extension version:** 0.3.6
+> **Severity:** High — every background utility task (chat title generation, commit messages, intent detection) broken for all BYOK users after updating VS Code
 > **Root Cause:** VS Code 1.128 introduced `chat.byokUtilityModelDefault` with default value `"none"`, disabling utility models for BYOK extensions that do not explicitly configure one.
 
 ---

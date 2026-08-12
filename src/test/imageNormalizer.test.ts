@@ -42,7 +42,9 @@ describe("normalizeImageDataUrl", () => {
       const normalized = await normalizeImageDataUrl(url);
 
       assert.equal(normalized, url);
-      assert.ok(getImageDataUrlBase64Bytes(normalized)! <= MAX_IMAGE_BASE64_BYTES);
+      const dataBytes = getImageDataUrlBase64Bytes(normalized);
+      assert.ok(dataBytes !== undefined);
+      assert.ok(dataBytes <= MAX_IMAGE_BASE64_BYTES);
     } finally {
       image.free();
     }

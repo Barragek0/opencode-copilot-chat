@@ -2,9 +2,9 @@
 
 # Project Cleanup — Immediate Bug Fixes & Improvement Analysis
 
-**Topic:** cleanup / bugs / config  
-**Updated:** 2026-06-09  
-**Tags:** #cleanup #bugs #config #activation #changelog  
+**Topic:** cleanup / bugs / config
+**Updated:** 2026-06-09
+**Tags:** #cleanup #bugs #config #activation #changelog
 **Supersedes:** —
 
 ---

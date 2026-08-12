@@ -44,11 +44,11 @@ export function isTransientServerError(status: number, errorDetail: string): boo
 
 Constants exported for callers and tests:
 
-| Constant | Value | Purpose |
-| --- | --- | --- |
-| `TRANSIENT_5XX_MAX_RETRIES` | `2` | Hard cap on retries before surfacing the error |
-| `TRANSIENT_5XX_RETRY_BASE_MS` | `1000` | Base backoff, doubles per attempt (1s, 2s) |
-| `TRANSIENT_5XX_RETRY_JITTER_MS` | `250` | Max random jitter added per backoff |
+| Constant                        | Value  | Purpose                                        |
+| ------------------------------- | ------ | ---------------------------------------------- |
+| `TRANSIENT_5XX_MAX_RETRIES`     | `2`    | Hard cap on retries before surfacing the error |
+| `TRANSIENT_5XX_RETRY_BASE_MS`   | `1000` | Base backoff, doubles per attempt (1s, 2s)     |
+| `TRANSIENT_5XX_RETRY_JITTER_MS` | `250`  | Max random jitter added per backoff            |
 
 ### 2. Streaming retry loop + cancellation-aware sleep (`src/streaming.ts`)
 
@@ -56,10 +56,7 @@ Constants exported for callers and tests:
 - After the HTTP 400 retry block, a `while` loop retries up to `TRANSIENT_5XX_MAX_RETRIES` times whenever `isTransientServerError(response.status, consumedErrorBody ?? "")` returns true. Backoff is exponential with jitter:
 
   ```ts
-  const backoffMs = Math.round(
-    TRANSIENT_5XX_RETRY_BASE_MS * 2 ** (attempt - 1) +
-      Math.random() * TRANSIENT_5XX_RETRY_JITTER_MS,
-  );
+  const backoffMs = Math.round(TRANSIENT_5XX_RETRY_BASE_MS * 2 ** (attempt - 1) + Math.random() * TRANSIENT_5XX_RETRY_JITTER_MS);
   ```
 
 - `sleepWithCancellation(ms, token)` waits for the backoff but aborts early if the user cancels. The cancellation listener is registered **before** `setTimeout` and resolves the promise on fire, so there is no window where a cancellation arrives between `await` resuming and the listener being removed.
@@ -82,7 +79,7 @@ Five `node:test` cases for `isTransientServerError`:
 
 The two retry families chain in a single request lifecycle:
 
-```
+```text
 fetch → 400? → analyzeHttp400ForRetry → patch body → fetch → 5xx? → retry up to 2× (backoff + jitter) → surface error
 ```
 
@@ -97,12 +94,12 @@ Worst case for one user request is 4 fetches: initial + 1 HTTP 400 patched retry
 **Merged:** 2026-08-07 (merge commit `6d519f7`, merge not squash)
 **Final size:** +167 / -34, 4 files
 
-| File | Change |
-| --- | --- |
-| `src/retry.ts` | Added `isTransientServerError`, `TRANSIENT_5XX_*` constants, rewrote header comment to document both retry families |
-| `src/streaming.ts` | Added `fetchWithBody`, `sleepWithCancellation`, transient 5xx retry loop with jitter, stale body resets; fixed 3 pre-existing lint issues |
-| `src/errors.ts` | Added `describeRouterUnavailable` for actionable user-facing hint |
-| `src/test/retry.test.ts` | 5 unit tests for `isTransientServerError` |
+| File                     | Change                                                                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/retry.ts`           | Added `isTransientServerError`, `TRANSIENT_5XX_*` constants, rewrote header comment to document both retry families                       |
+| `src/streaming.ts`       | Added `fetchWithBody`, `sleepWithCancellation`, transient 5xx retry loop with jitter, stale body resets; fixed 3 pre-existing lint issues |
+| `src/errors.ts`          | Added `describeRouterUnavailable` for actionable user-facing hint                                                                         |
+| `src/test/retry.test.ts` | 5 unit tests for `isTransientServerError`                                                                                                 |
 
 The original submission also bundled a husky + eslint + markdownlint + AGENTS.md + tsconfig stack; per review feedback that stack was split off to PR [#110](https://github.com/ltmoerdani/opencode-copilot-chat/pull/110) and the standalone `AGENTS.md` was dropped in favor of folding relevant guidance into `CONTRIBUTING.md`.
 
@@ -110,14 +107,14 @@ The original submission also bundled a husky + eslint + markdownlint + AGENTS.md
 
 ## Review Findings
 
-| # | Concern | Severity | Resolution |
-| --- | --- | --- | --- |
-| 1 | Scope creep: PR title said `fix(streaming)` but 6 of 11 files were tooling/docs/build | High | Split into two PRs; this PR narrowed to 4 source files |
-| 2 | No jitter on backoff; concurrent retries could thundering-herd the gateway | Medium | Added `+ Math.random() * TRANSIENT_5XX_RETRY_JITTER_MS` (≤250ms) |
-| 3 | 400→5xx handoff could trigger up to 4 fetches per request | Low | Confirmed intentional; `consumedErrorBody` reset documented |
-| 4 | `compactErrorCode` regex could false-positive on `*routerunavailable*` substrings | Low | Accepted; real-world error bodies don't contain that substring outside the genuine condition |
-| 5 | `AGENTS.md` conflicted with project workflow (e.g. "never run build, user's job") | Medium | Dropped; relevant parts folded into `CONTRIBUTING.md` in PR #110 |
-| 6 | `tsconfig.json` `"include": ["src"]` change | Low | Moved to PR #110 with the rest of the build tooling |
+| #   | Concern                                                                               | Severity | Resolution                                                                                   |
+| --- | ------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| 1   | Scope creep: PR title said `fix(streaming)` but 6 of 11 files were tooling/docs/build | High     | Split into two PRs; this PR narrowed to 4 source files                                       |
+| 2   | No jitter on backoff; concurrent retries could thundering-herd the gateway            | Medium   | Added `+ Math.random() * TRANSIENT_5XX_RETRY_JITTER_MS` (≤250ms)                             |
+| 3   | 400→5xx handoff could trigger up to 4 fetches per request                             | Low      | Confirmed intentional; `consumedErrorBody` reset documented                                  |
+| 4   | `compactErrorCode` regex could false-positive on `*routerunavailable*` substrings     | Low      | Accepted; real-world error bodies don't contain that substring outside the genuine condition |
+| 5   | `AGENTS.md` conflicted with project workflow (e.g. "never run build, user's job")     | Medium   | Dropped; relevant parts folded into `CONTRIBUTING.md` in PR #110                             |
+| 6   | `tsconfig.json` `"include": ["src"]` change                                           | Low      | Moved to PR #110 with the rest of the build tooling                                          |
 
 ---
 

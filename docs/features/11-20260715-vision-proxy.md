@@ -1,14 +1,14 @@
 # 11 — Vision Proxy for Text-Only Models
 
-**Status:** 🟢 Active  
-**Author:** Wallacy (Wallacy Freitas)  
-**Reviewer:** ltmoerdani  
-**PR:** [#76](https://github.com/ltmoerdani/opencode-copilot-chat/pull/76)  
-**Issues:** [#74](https://github.com/ltmoerdani/opencode-copilot-chat/issues/74) (vision proxy), [#67](https://github.com/ltmoerdani/opencode-copilot-chat/issues/67) (output pane focus steal), [#68](https://github.com/ltmoerdani/opencode-copilot-chat/issues/68) (context overflow safety)  
-**Merged:** 2026-07-15  
-**Merge commit:** `d2fcbe4` (merge commit, NOT squash)  
-**Commits preserved:** 4 (`69902bb`, `4a36009`, `a17f91e`, `8a0d813`)  
-**Released:** `v0.4.1`  
+**Status:** 🟢 Active
+**Author:** Wallacy (Wallacy Freitas)
+**Reviewer:** ltmoerdani
+**PR:** [#76](https://github.com/ltmoerdani/opencode-copilot-chat/pull/76)
+**Issues:** [#74](https://github.com/ltmoerdani/opencode-copilot-chat/issues/74) (vision proxy), [#67](https://github.com/ltmoerdani/opencode-copilot-chat/issues/67) (output pane focus steal), [#68](https://github.com/ltmoerdani/opencode-copilot-chat/issues/68) (context overflow safety)
+**Merged:** 2026-07-15
+**Merge commit:** `d2fcbe4` (merge commit, NOT squash)
+**Commits preserved:** 4 (`69902bb`, `4a36009`, `a17f91e`, `8a0d813`)
+**Released:** `v0.4.1`
 **Enhancement (PR #120, 2026-08-10):** description cache + whole-conversation mode (issue #119) — see [`docs/issues/56-20260811-pr120-vision-proxy-description-cache.md`](../issues/56-20260811-pr120-vision-proxy-description-cache.md)
 
 ---
@@ -132,22 +132,22 @@ Removed `.show(true)` from the empty-response warning in `streamChatCompletions(
 
 ## Code Locations
 
-| Concern                                       | Location                                                               |
-| --------------------------------------------- | ---------------------------------------------------------------------- |
-| Proxy condition + image replacement           | `src/extension.ts` `provideLanguageModelChatResponse()` (~L1818–L1860) |
-| `proxyVision()` function (cache + whole-conversation) | `src/extension.ts` (~L4178)                                     |
-| Request builders (`collectRequestParts`, `buildVisionRequestMessage`, `buildWholeConversationRequest`) | `src/extension.ts` (L4088 / L4111 / L4137)                     |
-| Image description cache                       | `src/visionProxyCache.ts` (`imageDescriptionKey` L32, `lookupImageDescriptions` L42, `storeImageDescriptions` L63, 200-entry FIFO L25) |
-| `visionProxyWholeConversation` setting read   | `src/extension.ts` (~L2265)                                         |
-| `showVisionProxyPicker()` QuickPick           | `src/extension.ts` (~L3380)                                            |
-| `isVisionProxyEnabled()` + storage keys       | `src/extension.ts` (~L3520)                                            |
-| `modelCapabilities()` proxy override          | `src/extension.ts` (~L3283)                                            |
-| `actuallySupportsVision` cache (circular fix) | `src/extension.ts` (~L1821)                                            |
-| `notifyModelInfoChanged()` refresh trigger    | `src/extension.ts` `OpenCodeProvider` (~L1303)                         |
-| 64-token safety margin                        | `src/extension.ts` `modelLimits()` (~L3240)                            |
-| Command registration                          | `src/extension.ts` `activate()` (~L709)                                |
-| Output pane fix                               | `src/streaming.ts` `streamChatCompletions()` (~L107)                   |
-| `VISION_CAPABLE_MODELS` export                | `src/metadata.ts` (~L238)                                              |
+| Concern                                                                                                | Location                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Proxy condition + image replacement                                                                    | `src/extension.ts` `provideLanguageModelChatResponse()` (~L1818–L1860)                                                                 |
+| `proxyVision()` function (cache + whole-conversation)                                                  | `src/extension.ts` (~L4178)                                                                                                            |
+| Request builders (`collectRequestParts`, `buildVisionRequestMessage`, `buildWholeConversationRequest`) | `src/extension.ts` (L4088 / L4111 / L4137)                                                                                             |
+| Image description cache                                                                                | `src/visionProxyCache.ts` (`imageDescriptionKey` L32, `lookupImageDescriptions` L42, `storeImageDescriptions` L63, 200-entry FIFO L25) |
+| `visionProxyWholeConversation` setting read                                                            | `src/extension.ts` (~L2265)                                                                                                            |
+| `showVisionProxyPicker()` QuickPick                                                                    | `src/extension.ts` (~L3380)                                                                                                            |
+| `isVisionProxyEnabled()` + storage keys                                                                | `src/extension.ts` (~L3520)                                                                                                            |
+| `modelCapabilities()` proxy override                                                                   | `src/extension.ts` (~L3283)                                                                                                            |
+| `actuallySupportsVision` cache (circular fix)                                                          | `src/extension.ts` (~L1821)                                                                                                            |
+| `notifyModelInfoChanged()` refresh trigger                                                             | `src/extension.ts` `OpenCodeProvider` (~L1303)                                                                                         |
+| 64-token safety margin                                                                                 | `src/extension.ts` `modelLimits()` (~L3240)                                                                                            |
+| Command registration                                                                                   | `src/extension.ts` `activate()` (~L709)                                                                                                |
+| Output pane fix                                                                                        | `src/streaming.ts` `streamChatCompletions()` (~L107)                                                                                   |
+| `VISION_CAPABLE_MODELS` export                                                                         | `src/metadata.ts` (~L238)                                                                                                              |
 
 ---
 

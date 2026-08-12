@@ -45,7 +45,7 @@ export interface ModelMetadataFields {
   supportsPdf?: boolean;
   reasoning?: boolean;
   /** Raw reasoning_options from models.dev, e.g. [{ type: "toggle" }, { type: "effort", values: ["low","medium","high"] }]. */
-  reasoningOptions?: Array<{ type?: string; values?: string[] }>;
+  reasoningOptions?: { type?: string; values?: string[] }[];
   /** Whether the model supports the temperature parameter. False means temperature is deprecated/unsupported. */
   temperature?: boolean;
   status?: string;
@@ -54,7 +54,8 @@ export interface ModelMetadataFields {
 
 export interface CachedModelMetadataSnapshot {
   fetchedAt: number;
-  providers: Record<ProviderVendor, Record<string, ModelMetadataFields>>;
+  /** Vendors may be absent in cached data loaded from disk. */
+  providers: Record<ProviderVendor, Record<string, ModelMetadataFields> | undefined>;
 }
 
 export interface ResolvedModelMetadata extends BaseModelLimits {
@@ -64,7 +65,7 @@ export interface ResolvedModelMetadata extends BaseModelLimits {
   supportsPdf: boolean;
   reasoning: boolean;
   /** Parsed reasoning_options from models.dev, if available. */
-  reasoningOptions?: Array<{ type?: string; values?: string[] }>;
+  reasoningOptions?: { type?: string; values?: string[] }[];
   /** Whether the model supports the temperature parameter. Undefined means unknown (assume supported). */
   temperature?: boolean;
   status?: string;
@@ -102,7 +103,7 @@ export interface ModelsDevModelRecord {
   };
   attachment?: boolean;
   reasoning?: boolean;
-  reasoning_options?: Array<{ type?: string; values?: string[] }>;
+  reasoning_options?: { type?: string; values?: string[] }[];
   temperature?: boolean;
   modalities?: {
     input?: string[];
@@ -113,13 +114,13 @@ export interface ModelsDevModelRecord {
     output?: number;
     cache_read?: number;
     cache_write?: number;
-    tiers?: Array<{
+    tiers?: {
       input: number;
       output: number;
       cache_read?: number;
       cache_write?: number;
       tier: { type: string; size: number };
-    }>;
+    }[];
     context_over_200k?: {
       input?: number;
       output?: number;
@@ -153,7 +154,7 @@ const MODELS_DEV_PROVIDER_BY_VENDOR: Record<ProviderVendor, keyof ModelsDevRespo
   [ZEN_VENDOR]: "opencode",
 };
 
-const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelLimits>> = {
+const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelLimits | undefined>> = {
   [GO_VENDOR]: {
     "deepseek-v4-flash": { contextWindow: 1000000, maxOutputTokens: 384000 },
     "deepseek-v4-pro": { contextWindow: 1000000, maxOutputTokens: 384000 },
@@ -356,7 +357,7 @@ export function resolveModelMetadata(
   snapshot: CachedModelMetadataSnapshot,
   liveModelMetadataById: Map<string, ModelMetadataFields>,
 ): ResolvedModelMetadata {
-  const cachedMetadata = snapshot.providers[vendor][modelId];
+  const cachedMetadata = snapshot.providers[vendor]?.[modelId];
   const liveMetadata = liveModelMetadataById.get(modelId);
   const fallbackMetadata = fallbackModelMetadata(modelId, vendor);
 
@@ -401,7 +402,7 @@ function normalizeModelsDevProvider(models: Record<string, ModelsDevModelRecord>
     const modalities = detectModalityFlags(model.modalities, model.attachment);
     const rawCost = model.cost;
     const cost: ModelCost | undefined =
-      typeof rawCost?.input === "number" && typeof rawCost?.output === "number"
+      typeof rawCost?.input === "number" && typeof rawCost.output === "number"
         ? {
             input: rawCost.input,
             output: rawCost.output,
@@ -535,7 +536,7 @@ export function getContextSizeOptions(cost: ModelCost | undefined, fullContextWi
 
   // Collect all distinct context thresholds from explicit tiers
   const thresholds = (tiers ?? [])
-    .filter((t) => t.tier?.type === "context" && typeof t.tier.size === "number" && t.tier.size > 0)
+    .filter((t) => t.tier.type === "context" && typeof t.tier.size === "number" && t.tier.size > 0)
     .map((t) => t.tier.size)
     .sort((a, b) => a - b);
 
@@ -626,11 +627,11 @@ export function getContextSizeOptionsForModel(
 function formatContextSize(size: number): string {
   if (size >= 1_000_000) {
     const m = size / 1_000_000;
-    return m === Math.floor(m) ? `${m}M` : `${m.toFixed(1)}M`;
+    return m === Math.floor(m) ? `${String(m)}M` : `${m.toFixed(1)}M`;
   }
   if (size >= 1_000) {
     const k = size / 1_000;
-    return k === Math.floor(k) ? `${k}K` : `${k.toFixed(1)}K`;
+    return k === Math.floor(k) ? `${String(k)}K` : `${k.toFixed(1)}K`;
   }
   return String(size);
 }

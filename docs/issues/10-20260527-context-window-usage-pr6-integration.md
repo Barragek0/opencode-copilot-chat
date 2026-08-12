@@ -2,9 +2,9 @@
 
 # Context Window Usage Indicator and PR #6 Integration
 
-**Topic:** usage / context-window / streaming / provider / release  
-**Updated:** 2026-05-27  
-**Tags:** #usage #context-window #streaming #provider #vscode #byok #release #pr-review  
+**Topic:** usage / context-window / streaming / provider / release
+**Updated:** 2026-05-27
+**Tags:** #usage #context-window #streaming #provider #vscode #byok #release #pr-review
 **Supersedes:** —
 
 ---

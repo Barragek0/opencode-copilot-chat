@@ -2,9 +2,9 @@
 
 # Native Thinking Submenu — Issue Investigation & v0.1.4 Release
 
-**Topic:** vscode / thinking / copilot-chat / native-ui / configurationSchema / release  
-**Updated:** 2026-05-17  
-**Tags:** #vscode #thinking #copilot-chat #native-ui #configurationSchema #byok #reasoning #tool-calling #streaming #release  
+**Topic:** vscode / thinking / copilot-chat / native-ui / configurationSchema / release
+**Updated:** 2026-05-17
+**Tags:** #vscode #thinking #copilot-chat #native-ui #configurationSchema #byok #reasoning #tool-calling #streaming #release
 **Extends:** `05-20260517-thinking-mode-picker-configuration.md`
 
 ---

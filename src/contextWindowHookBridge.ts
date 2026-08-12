@@ -14,8 +14,12 @@ let reportProgressImpl = (
 ): void => {
   progress.report(part);
 };
-let clearRequestImpl = (_localRequestId: string): void => {};
-let setOutputBufferImpl = (_localRequestId: string, _outputBuffer: number): void => {};
+let clearRequestImpl = (_localRequestId: string): void => {
+  // No-op: request tracking is cleared by the hook module when it is active.
+};
+let setOutputBufferImpl = (_localRequestId: string, _outputBuffer: number): void => {
+  // No-op: output-buffer tracking is handled by the hook module when it is active.
+};
 
 function installNoopImplementations(): void {
   reportUsageImpl = (_localRequestId: string, _usage: UsageSnapshot): boolean => false;
@@ -26,8 +30,12 @@ function installNoopImplementations(): void {
   ): void => {
     progress.report(part);
   };
-  clearRequestImpl = (_localRequestId: string): void => {};
-  setOutputBufferImpl = (_localRequestId: string, _outputBuffer: number): void => {};
+  clearRequestImpl = (_localRequestId: string): void => {
+    // No-op: request tracking is cleared by the hook module when it is active.
+  };
+  setOutputBufferImpl = (_localRequestId: string, _outputBuffer: number): void => {
+    // No-op: output-buffer tracking is handled by the hook module when it is active.
+  };
 }
 
 function installHookImplementations(hookModule: ContextWindowHookModule): void {
@@ -48,7 +56,7 @@ async function loadContextWindowHookModule(logDiagnostic?: (message: string) => 
         loadedContextWindowHookModule = hookModule;
         return hookModule;
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         logDiagnostic?.(`contextWindowHook: failed to import hook module — ${message}`);
         loadingContextWindowHookModule = undefined;
@@ -101,7 +109,7 @@ export async function initializeContextWindowHookBridge(logDiagnostic?: (message
   return success;
 }
 
-export async function disposeContextWindowHookBridge(): Promise<boolean> {
+export function disposeContextWindowHookBridge(): boolean {
   installNoopImplementations();
 
   if (!loadedContextWindowHookModule) {

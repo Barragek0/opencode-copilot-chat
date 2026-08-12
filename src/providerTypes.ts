@@ -11,7 +11,7 @@ export type AllProviderVendor = typeof GO_VENDOR | typeof ZEN_VENDOR | typeof AG
 
 /** Resolve agent-host vendor variants back to their base vendor for metadata/routing lookups. */
 export function resolveBaseVendor(vendor: AllProviderVendor): ProviderVendor {
-  return vendor === AGENT_GO_VENDOR ? GO_VENDOR : vendor === AGENT_ZEN_VENDOR ? ZEN_VENDOR : (vendor as ProviderVendor);
+  return vendor === AGENT_GO_VENDOR ? GO_VENDOR : vendor === AGENT_ZEN_VENDOR ? ZEN_VENDOR : vendor;
 }
 
 export interface ProviderRoutingDefinition {

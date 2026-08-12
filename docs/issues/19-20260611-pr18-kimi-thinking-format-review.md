@@ -2,9 +2,9 @@
 
 # PR #18 Review — Fix Kimi Thinking Format and Update Documentation
 
-**Topic:** models / thinking / provider  
-**Updated:** 2026-06-11  
-**Tags:** #models #thinking #kimi #community-pr #bugfix  
+**Topic:** models / thinking / provider
+**Updated:** 2026-06-11
+**Tags:** #models #thinking #kimi #community-pr #bugfix
 **Supersedes:** —
 
 ---
@@ -13,9 +13,9 @@
 
 Full review and community feedback for contributor PR #18 by [Wallacy](https://github.com/Wallacy), which fixes the Kimi (MoonshotAI) thinking payload format. The extension was sending `enable_thinking: true | false` but the OpenCode Go gateway rejects this field with HTTP 400: "Extra inputs are not permitted". The correct format is `thinking: { type: "enabled" | "disabled" }` — matching the GLM family format.
 
-**PR:** [ltmoerdani/opencode-copilot-chat#18](https://github.com/ltmoerdani/opencode-copilot-chat/pull/18)  
-**Branch:** `fix/kimi-thinking-format` → `main`  
-**Author:** Wallacy Freitas  
+**PR:** [ltmoerdani/opencode-copilot-chat#18](https://github.com/ltmoerdani/opencode-copilot-chat/pull/18)
+**Branch:** `fix/kimi-thinking-format` → `main`
+**Author:** Wallacy Freitas
 **Files changed:** 3 (+14 / −5)
 
 ---

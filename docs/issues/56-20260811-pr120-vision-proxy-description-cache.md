@@ -25,7 +25,7 @@ This PR adds a per-image description cache keyed by the SHA-256 of the image's b
 ### 2. `src/extension.ts` — `proxyVision()` refactor
 
 - **Lazy vision-model resolution:** the model is only resolved (`selectChatModels()`) when a message actually needs a new description. When every image is cached, neither `selectChatModels()` nor `sendRequest()` runs.
-- **Per-message describing (default):** only the message that contains a *new* image is sent to the vision model (message parts + prompt), instead of re-sending the whole conversation.
+- **Per-message describing (default):** only the message that contains a _new_ image is sent to the vision model (message parts + prompt), instead of re-sending the whole conversation.
 - **Whole-conversation mode (opt-in):** `opencodego.visionProxyWholeConversation` (default `false`). When on, `proxyVision()` sends ONE request over all messages so descriptions carry full conversation context; the combined description is stored under every image hash (same no-partial-reuse rule).
 - **Flattened-message mapping:** converted messages are flattened with a `flatSourceIndex` array, tracking which original message produced each `apiMessage` (one input message can expand into several, e.g. tool results). Descriptions are keyed by original message index so the correct description lands on the right `apiMessage`.
 - Refactored request builders: `collectRequestParts()`, `buildVisionRequestMessage()` (single message), `buildWholeConversationRequest()` (whole conversation).
@@ -60,7 +60,7 @@ This PR adds a per-image description cache keyed by the SHA-256 of the image's b
 
 ## Design Notes (non-blocking)
 
-- **Whole-conversation mode and the cache:** in whole-conversation mode every turn re-describes the whole conversation (the context changes each turn), so the cache is effectively not hit *within* that mode — it only pays off after switching back to the default mode. This is the expected "full context, more tokens" trade-off; the setting is opt-in.
+- **Whole-conversation mode and the cache:** in whole-conversation mode every turn re-describes the whole conversation (the context changes each turn), so the cache is effectively not hit _within_ that mode — it only pays off after switching back to the default mode. This is the expected "full context, more tokens" trade-off; the setting is opt-in.
 - **Tool-result images:** nested images inside `LanguageModelToolResultPart` are not sent to the vision model (consistent with prior behavior). They fall back to the first available description in the pass.
 
 ## Merge Strategy
@@ -71,25 +71,25 @@ Merged via **regular merge commit** (`8f6cb9f`, parents `190b9ee` + `e370512`) t
 
 7 files, +439 / −73 (cumulative over the PR's 2 commits):
 
-| File | Change |
-| --- | --- |
-| `src/visionProxyCache.ts` | **New** — image description cache (SHA-256 key, 200-entry FIFO) |
-| `src/extension.ts` | `proxyVision()` refactor (lazy model resolve, per-message + whole-conversation modes, flattened-message mapping, request builders), setting read |
-| `src/test/visionProxy.test.ts` | 7 new cache tests |
-| `package.json` | `opencodego.visionProxyWholeConversation` setting |
-| `README.md` | Settings table row |
-| `docs/features/11-20260715-vision-proxy.md` | "Description Cache & Whole-Conversation Mode" section |
-| `package-lock.json` | Version sync `0.5.0 → 0.5.1` + `peer: true` noise on a few dev deps |
+| File                                        | Change                                                                                                                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/visionProxyCache.ts`                   | **New** — image description cache (SHA-256 key, 200-entry FIFO)                                                                                  |
+| `src/extension.ts`                          | `proxyVision()` refactor (lazy model resolve, per-message + whole-conversation modes, flattened-message mapping, request builders), setting read |
+| `src/test/visionProxy.test.ts`              | 7 new cache tests                                                                                                                                |
+| `package.json`                              | `opencodego.visionProxyWholeConversation` setting                                                                                                |
+| `README.md`                                 | Settings table row                                                                                                                               |
+| `docs/features/11-20260715-vision-proxy.md` | "Description Cache & Whole-Conversation Mode" section                                                                                            |
+| `package-lock.json`                         | Version sync `0.5.0 → 0.5.1` + `peer: true` noise on a few dev deps                                                                              |
 
 ## Code Locations (on `main`)
 
-| Concern | Location |
-| --- | --- |
-| Cache module | `src/visionProxyCache.ts` — `imageDescriptionCache` L22, `IMAGE_DESCRIPTION_CACHE_LIMIT` L25, `imageDescriptionKey` L32, `lookupImageDescriptions` L42, `storeImageDescriptions` L63, `clearImageDescriptionCache` L77 |
-| Cache import | `src/extension.ts` L51 |
-| Whole-conversation setting read | `src/extension.ts` ~L2265 |
-| Request builders | `src/extension.ts` — `collectRequestParts()` L4088, `buildVisionRequestMessage()` L4111, `buildWholeConversationRequest()` L4137 |
-| `proxyVision()` | `src/extension.ts` ~L4178 |
+| Concern                         | Location                                                                                                                                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cache module                    | `src/visionProxyCache.ts` — `imageDescriptionCache` L22, `IMAGE_DESCRIPTION_CACHE_LIMIT` L25, `imageDescriptionKey` L32, `lookupImageDescriptions` L42, `storeImageDescriptions` L63, `clearImageDescriptionCache` L77 |
+| Cache import                    | `src/extension.ts` L51                                                                                                                                                                                                 |
+| Whole-conversation setting read | `src/extension.ts` ~L2265                                                                                                                                                                                              |
+| Request builders                | `src/extension.ts` — `collectRequestParts()` L4088, `buildVisionRequestMessage()` L4111, `buildWholeConversationRequest()` L4137                                                                                       |
+| `proxyVision()`                 | `src/extension.ts` ~L4178                                                                                                                                                                                              |
 
 ## References
 

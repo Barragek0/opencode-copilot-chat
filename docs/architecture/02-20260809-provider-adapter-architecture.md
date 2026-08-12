@@ -2,9 +2,9 @@
 
 # Provider Adapter Architecture — Multi-Vendor / Multi-Model Structure
 
-**Topic:** architecture / provider / streaming / routing / maintainability / refactor  
-**Updated:** 2026-08-09  
-**Tags:** #architecture #provider #streaming #routing #refactor #adapter-pattern #strangler-fig #anti-regression  
+**Topic:** architecture / provider / streaming / routing / maintainability / refactor
+**Updated:** 2026-08-09
+**Tags:** #architecture #provider #streaming #routing #refactor #adapter-pattern #strangler-fig #anti-regression
 **Supersedes:** -
 
 ---
@@ -30,11 +30,11 @@ Status: 🟢 Active — this is a living reference document. It is a proposal; i
 
 The project is not flat-modular across the board. It has **three god files** that mix multiple concerns. Every other file (25 files, mostly <300 lines) is already lean and correctly flat-modular.
 
-| File | Lines | Mixed Concerns |
-| ---- | ----- | -------------- |
-| `src/extension.ts` | **4,112** | Provider class (~1,083 lines), model-list fetch, constants, status bar, usage webview, tooltip SVG builder, commands, secret key handling, per-model thinking config |
-| `src/streaming.ts` | **1,686** | 4 transport streaming functions + 2 response extractors + think-tag filter + SSE parsing |
-| `src/goUsageTracker.ts` | **1,069** | Tracker core (~573 lines) + model pricing + SQLite history reader + UI formatting + quickpick builder |
+| File                    | Lines     | Mixed Concerns                                                                                                                                                       |
+| ----------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/extension.ts`      | **4,112** | Provider class (~1,083 lines), model-list fetch, constants, status bar, usage webview, tooltip SVG builder, commands, secret key handling, per-model thinking config |
+| `src/streaming.ts`      | **1,686** | 4 transport streaming functions + 2 response extractors + think-tag filter + SSE parsing                                                                             |
+| `src/goUsageTracker.ts` | **1,069** | Tracker core (~573 lines) + model pricing + SQLite history reader + UI formatting + quickpick builder                                                                |
 
 ### Why this is a problem
 
@@ -51,7 +51,7 @@ The core problem is **not** "flat vs folders" — it is that these 3 files mix t
 ### 2.1 VS Code Official Docs — "Extension Anatomy" & "Language Model API"
 
 - The entry file must stay **thin**: `activate`/`deactivate` should only do **wiring** (register commands, push disposables), not contain business logic.
-- VS Code explicitly recommends: *"consider designing your extension code in a modular way to enable you to unit test the specific parts that can be tested."* Because model interaction is nondeterministic, only the **deterministic parts** (message conversion, chunk parsing, token estimation) are testable — so those must be isolated as pure functions, separate from the streaming I/O wrappers.
+- VS Code explicitly recommends: _"consider designing your extension code in a modular way to enable you to unit test the specific parts that can be tested."_ Because model interaction is nondeterministic, only the **deterministic parts** (message conversion, chunk parsing, token estimation) are testable — so those must be isolated as pure functions, separate from the streaming I/O wrappers.
 - Takeaway for us: `extension.ts` should target <300 lines. Provider internals, model-list fetch, status bar, and webview belong in their own domains.
 
 ### 2.2 Vercel AI SDK — "Unified Provider Architecture" (most relevant reference)
@@ -70,7 +70,7 @@ The AI SDK solves **exactly our problem**: one core API, many providers with dif
 
 Actual structure under `core/llm/`:
 
-```
+```text
 core/llm/
   llms/                  ← ONE FILE PER PROVIDER (anthropic.ts, openai.ts, gemini.ts, ...)
   countTokens.ts         ← shared helper
@@ -90,7 +90,7 @@ Cline uses `src/api/providers/` with one file per provider, all implementing the
 ### 2.5 Design Patterns — Adapter (refactoring.guru) + Strangler Fig (Martin Fowler)
 
 - **Adapter**: Single Responsibility + Open/Closed — "introduce new types of adapters without breaking existing client code." Exactly right for "add a new vendor without touching working code."
-- **Strangler Fig**: do not big-bang rewrite. **Extract gradually per small component**, create *seams* first, let old and new systems coexist. This is important because `streaming.ts` and `extension.ts` are sensitive areas with a long regression history.
+- **Strangler Fig**: do not big-bang rewrite. **Extract gradually per small component**, create _seams_ first, let old and new systems coexist. This is important because `streaming.ts` and `extension.ts` are sensitive areas with a long regression history.
 
 ---
 
@@ -149,7 +149,7 @@ flowchart TD
 
 Group by domain; keep depth shallow so it stays simple and not over-engineered.
 
-```
+```text
 src/
   extension.ts                    # wiring only (target <300 lines)
   core/
@@ -183,7 +183,7 @@ src/
     contextWindowHook.ts / contextWindowHookBridge.ts
 ```
 
-**Not everything must move.** Files that are flat and small (<300 lines) may stay where they are. Principle: *"do not move what is healthy."*
+**Not everything must move.** Files that are flat and small (<300 lines) may stay where they are. Principle: _"do not move what is healthy."_
 
 ---
 
@@ -204,13 +204,13 @@ After refactoring, this is the SOP so model additions have minimal risk:
 
 Extract in phases, lowest risk first, respecting our issue history. Never big-bang.
 
-| Phase | Extraction | Risk | Rationale |
-| ----- | ---------- | ---- | --------- |
-| 1 | `goUsageTracker.ts` → `usage/tracker.ts` + `history.ts` + `formatting.ts` | Low | No streaming/routing touch; mechanical refactor only (cut-paste-edit) |
-| 2 | `extension.ts` → split status bar + webview + tooltip → `usage/webview.ts` + `usage/formatting.ts` | Low–Med | UI separated from provider logic |
-| 3 | `streaming.ts` → `transports/*` (1 file per transport) + `sse.ts` | **Med–High** | Sensitive area; do per-transport, test 1 model family each step |
-| 4 | `extension.ts` → split model-list fetch & constants → `models/` + `core/registry.ts` | Med | Registry becomes data-driven |
-| 5 | `extension.ts` → only wiring remains | Low | Thin entry achieved |
+| Phase | Extraction                                                                                         | Risk         | Rationale                                                             |
+| ----- | -------------------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------- |
+| 1     | `goUsageTracker.ts` → `usage/tracker.ts` + `history.ts` + `formatting.ts`                          | Low          | No streaming/routing touch; mechanical refactor only (cut-paste-edit) |
+| 2     | `extension.ts` → split status bar + webview + tooltip → `usage/webview.ts` + `usage/formatting.ts` | Low–Med      | UI separated from provider logic                                      |
+| 3     | `streaming.ts` → `transports/*` (1 file per transport) + `sse.ts`                                  | **Med–High** | Sensitive area; do per-transport, test 1 model family each step       |
+| 4     | `extension.ts` → split model-list fetch & constants → `models/` + `core/registry.ts`               | Med          | Registry becomes data-driven                                          |
+| 5     | `extension.ts` → only wiring remains                                                               | Low          | Thin entry achieved                                                   |
 
 Each phase gate: `npm run compile` must pass + a targeted test with at least 1 model family touched by the change.
 
@@ -226,19 +226,19 @@ Each phase gate: `npm run compile` must pass + a targeted test with at least 1 m
 
 ## Timeline
 
-| Date       | Status    | Change |
-| ---------- | --------- | ------ |
+| Date       | Status    | Change                                                                        |
+| ---------- | --------- | ----------------------------------------------------------------------------- |
 | 2026-08-09 | 🟢 Active | Initial research + analysis document created. Proposal only; no code changed. |
 
 ---
 
 ## References
 
-- VS Code — Extension Anatomy: https://code.visualstudio.com/api/get-started/extension-anatomy
-- VS Code — Language Model API (Testing your extension / modularity): https://code.visualstudio.com/api/extension-guides/language-model
-- Vercel AI SDK — Unified Provider Architecture: https://ai-sdk.dev/docs/foundations/providers-and-models
-- Vercel AI SDK — Writing a Custom Provider (Language Model Specification V4): https://ai-sdk.dev/providers/community-providers/custom-providers
-- Continue — `core/llm/` structure: https://github.com/continuedev/continue/tree/main/core/llm
-- Cline — `src/api/providers/`: https://github.com/cline/cline
-- refactoring.guru — Adapter: https://refactoring.guru/design-patterns/adapter
-- Martin Fowler — Strangler Fig: https://martinfowler.com/bliki/StranglerFigApplication.html
+- VS Code — Extension Anatomy: <https://code.visualstudio.com/api/get-started/extension-anatomy>
+- VS Code — Language Model API (Testing your extension / modularity): <https://code.visualstudio.com/api/extension-guides/language-model>
+- Vercel AI SDK — Unified Provider Architecture: <https://ai-sdk.dev/docs/foundations/providers-and-models>
+- Vercel AI SDK — Writing a Custom Provider (Language Model Specification V4): <https://ai-sdk.dev/providers/community-providers/custom-providers>
+- Continue — `core/llm/` structure: <https://github.com/continuedev/continue/tree/main/core/llm>
+- Cline — `src/api/providers/`: <https://github.com/cline/cline>
+- refactoring.guru — Adapter: <https://refactoring.guru/design-patterns/adapter>
+- Martin Fowler — Strangler Fig: <https://martinfowler.com/bliki/StranglerFigApplication.html>

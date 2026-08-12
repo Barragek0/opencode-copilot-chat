@@ -11,7 +11,7 @@ export function runtimeDiagnosticsLines(context: vscode.ExtensionContext): strin
     `- remoteName: ${vscode.env.remoteName ?? "local"}`,
     `- uiKind: ${vscode.env.uiKind === vscode.UIKind.Web ? "web" : "desktop"}`,
     `- extensionMode: ${extensionModeLabel(context.extensionMode)}`,
-    `- workspaceTrusted: ${vscode.workspace.isTrusted}`,
+    `- workspaceTrusted: ${String(vscode.workspace.isTrusted)}`,
     `- platform: ${process.platform}`,
     `- architecture: ${process.arch}`,
     `- nodeVersion: ${process.version}`,

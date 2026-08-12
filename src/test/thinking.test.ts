@@ -96,7 +96,7 @@ describe("buildFamilyThinkingSchema — kimi-k2.7-code picker", () => {
   it("exposes a single 'on' option with 'Always On (K2.7)' label", () => {
     const schema = buildFamilyThinkingSchema("kimi-k2.7-code");
     assert.ok(schema, "expected schema to be defined");
-    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    const reasoningEffort = schema.properties.reasoningEffort as Record<string, unknown>;
     assert.deepEqual(reasoningEffort.enum, ["on"]);
     assert.deepEqual(reasoningEffort.enumItemLabels, ["Always On (K2.7)"]);
     assert.equal(reasoningEffort.default, "on");
@@ -104,7 +104,8 @@ describe("buildFamilyThinkingSchema — kimi-k2.7-code picker", () => {
 
   it("mentions the Moonshot API constraint in the description", () => {
     const schema = buildFamilyThinkingSchema("kimi-k2.7-code");
-    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    assert.ok(schema, "expected schema to be defined");
+    const reasoningEffort = schema.properties.reasoningEffort as Record<string, unknown>;
     const descriptions = reasoningEffort.enumDescriptions as string[];
     assert.ok(
       descriptions.some((d) => d.includes("Moonshot API constraint")),
@@ -117,14 +118,14 @@ describe("buildFamilyThinkingSchema — other kimi models keep off/on", () => {
   it("kimi-k2.6 exposes both 'off' and 'on'", () => {
     const schema = buildFamilyThinkingSchema("kimi-k2.6");
     assert.ok(schema);
-    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    const reasoningEffort = schema.properties.reasoningEffort as Record<string, unknown>;
     assert.deepEqual(reasoningEffort.enum, ["off", "on"]);
   });
 
   it("kimi-k2.5 exposes both 'off' and 'on'", () => {
     const schema = buildFamilyThinkingSchema("kimi-k2.5");
     assert.ok(schema);
-    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    const reasoningEffort = schema.properties.reasoningEffort as Record<string, unknown>;
     assert.deepEqual(reasoningEffort.enum, ["off", "on"]);
   });
 });
@@ -237,7 +238,7 @@ describe("buildFamilyThinkingSchema — GLM 5.2 with reasoning_options metadata"
     };
     const schema = buildFamilyThinkingSchema("glm-5.2", metadata);
     assert.ok(schema, "expected schema to be defined");
-    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    const reasoningEffort = schema.properties.reasoningEffort as Record<string, unknown>;
     assert.deepEqual(reasoningEffort.enum, ["off", "high", "max"]);
     assert.deepEqual(reasoningEffort.enumItemLabels, ["Off", "High", "Max"]);
     assert.equal(reasoningEffort.default, "off");
@@ -246,7 +247,7 @@ describe("buildFamilyThinkingSchema — GLM 5.2 with reasoning_options metadata"
   it("falls back to off/high/max for GLM models without reasoning_options (no invalid 'on')", () => {
     const schema = buildFamilyThinkingSchema("glm-5");
     assert.ok(schema, "expected schema to be defined");
-    const reasoningEffort = schema!.properties.reasoningEffort as Record<string, unknown>;
+    const reasoningEffort = schema.properties.reasoningEffort as Record<string, unknown>;
     assert.deepEqual(reasoningEffort.enum, ["off", "high", "max"]);
     assert.deepEqual(reasoningEffort.enumItemLabels, ["Off", "High", "Max"]);
   });

@@ -2,9 +2,9 @@
 
 # Unavailable and Deprecated Model Filtering
 
-**Topic:** models / provider / registry / availability  
-**Updated:** 2026-05-16  
-**Tags:** #models #provider #routing #vscode #byok #zen #go  
+**Topic:** models / provider / registry / availability
+**Updated:** 2026-05-16
+**Tags:** #models #provider #routing #vscode #byok #zen #go
 **Supersedes:** —
 
 ---

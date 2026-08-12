@@ -2,9 +2,9 @@
 
 # PR #1 Review, Test, and Merge — opencodego.freeOnly Setting
 
-**Topic:** provider / models / open-source / community-contribution  
-**Updated:** 2026-05-17  
-**Tags:** #provider #models #open-source #community #zen #freeOnly #byok  
+**Topic:** provider / models / open-source / community-contribution
+**Updated:** 2026-05-17
+**Tags:** #provider #models #open-source #community #zen #freeOnly #byok
 **Supersedes:** —
 
 ---

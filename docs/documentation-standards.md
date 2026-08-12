@@ -44,9 +44,9 @@ grep -r "ClassName" src/
 
 # Document Title
 
-**Topic:** streaming / routing / models / provider / usage  
-**Updated:** YYYY-MM-DD  
-**Tags:** #tag1 #tag2  
+**Topic:** streaming / routing / models / provider / usage
+**Updated:** YYYY-MM-DD
+**Tags:** #tag1 #tag2
 **Supersedes:** [Link if deprecated]
 
 ---

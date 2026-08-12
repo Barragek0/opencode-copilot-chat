@@ -44,9 +44,12 @@ export async function writeMigratedTo(context: vscode.ExtensionContext, fingerpr
 }
 
 export function readProfiles(context: vscode.ExtensionContext): UsageProfile[] {
-  const stored = context.globalState.get<UsageProfile[]>(PROFILES_REGISTRY_KEY, []);
+  const stored = context.globalState.get<(UsageProfile | null)[]>(PROFILES_REGISTRY_KEY, []);
   if (!Array.isArray(stored)) return [];
-  return stored.filter((p) => p && typeof p.fingerprint === "string" && typeof p.label === "string" && typeof p.lastSeenAt === "number");
+  return stored.filter(
+    (p): p is UsageProfile =>
+      p !== null && typeof p.fingerprint === "string" && typeof p.label === "string" && typeof p.lastSeenAt === "number",
+  );
 }
 
 export async function writeProfiles(context: vscode.ExtensionContext, profiles: UsageProfile[]): Promise<void> {
@@ -78,7 +81,7 @@ export async function getOrCreateProfile(context: vscode.ExtensionContext, finge
   const nextNumber = profiles.length + 1;
   const profile: UsageProfile = {
     fingerprint,
-    label: `Profile ${nextNumber}`,
+    label: `Profile ${String(nextNumber)}`,
     lastSeenAt: Date.now(),
   };
   profiles.push(profile);

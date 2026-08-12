@@ -99,7 +99,7 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
   const treatReasoningAsContent = isGoGateway && !hasReasoningEffort;
   if (isGoGateway) {
     options.output?.appendLine(
-      `[go-gw] model=${options.modelId} hasReasoningEffort=${hasReasoningEffort} treatReasoningAsContent=${treatReasoningAsContent}`,
+      `[go-gw] model=${options.modelId} hasReasoningEffort=${String(hasReasoningEffort)} treatReasoningAsContent=${String(treatReasoningAsContent)}`,
     );
   }
   const extractor = new OpenAiResponseExtractor(
@@ -121,11 +121,11 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
   extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
   extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
   options.output?.appendLine(
-    `[stream-summary model=${options.modelId}] textChars=${extractor.emittedText} toolCalls=${extractor.emittedTools} reasoningChars=${extractor.reasoningChars}`,
+    `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,
   );
   if (extractor.reasoningLoopSuppressed) {
     options.output?.appendLine(
-      `[warn] model=${options.modelId} output suppressed after ~${extractor.emittedText} visible chars (probable model degradation at large context). Try a shorter conversation or use a different model.`,
+      `[warn] model=${options.modelId} output suppressed after ~${String(extractor.emittedText)} visible chars (probable model degradation at large context). Try a shorter conversation or use a different model.`,
     );
   }
   if (extractor.emittedText === 0 && extractor.emittedTools === 0) {
@@ -155,7 +155,7 @@ export async function streamAnthropicMessages(options: StreamRequestOptions): Pr
 
   extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
   options.output?.appendLine(
-    `[stream-summary model=${options.modelId}] textChars=${extractor.emittedText} toolCalls=${extractor.emittedTools} reasoningChars=${extractor.reasoningChars}`,
+    `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,
   );
 }
 
@@ -178,7 +178,7 @@ export async function streamResponsesApi(options: StreamRequestOptions): Promise
   extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
   extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
   options.output?.appendLine(
-    `[stream-summary model=${options.modelId}] textChars=${extractor.emittedText} toolCalls=${extractor.emittedTools} reasoningChars=${extractor.reasoningChars}`,
+    `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,
   );
 }
 
@@ -202,7 +202,7 @@ export async function streamGoogleGenerateContent(options: StreamRequestOptions)
   extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
   extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
   options.output?.appendLine(
-    `[stream-summary model=${options.modelId}] textChars=${extractor.emittedText} toolCalls=${extractor.emittedTools} reasoningChars=${extractor.reasoningChars}`,
+    `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,
   );
 }
 
@@ -299,11 +299,10 @@ function sleepWithCancellation(ms: number, token: vscode.CancellationToken): Pro
   if (token.isCancellationRequested) return Promise.resolve();
 
   return new Promise((resolve) => {
-    let settled = false;
-    const state: { cancellation?: vscode.Disposable } = {};
+    const state: { cancellation?: vscode.Disposable; settled: boolean } = { settled: false };
     const finish = () => {
-      if (settled) return;
-      settled = true;
+      if (state.settled) return;
+      state.settled = true;
       clearTimeout(timer);
       state.cancellation?.dispose();
       resolve();
@@ -312,7 +311,7 @@ function sleepWithCancellation(ms: number, token: vscode.CancellationToken): Pro
     state.cancellation = token.onCancellationRequested(finish);
 
     // Close the race between the initial check and listener registration.
-    if (settled) {
+    if (state.settled) {
       state.cancellation.dispose();
     } else if (token.isCancellationRequested) {
       finish();
@@ -334,14 +333,20 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
     abortReason ??= reason;
     controller.abort();
   };
-  const cancellation = options.token.onCancellationRequested(() => abort("cancelled"));
-  const requestTimeout = setTimeout(() => abort("request-timeout"), options.requestTimeoutMs);
+  const cancellation = options.token.onCancellationRequested(() => {
+    abort("cancelled");
+  });
+  const requestTimeout = setTimeout(() => {
+    abort("request-timeout");
+  }, options.requestTimeoutMs);
   let streamIdleTimeout: ReturnType<typeof setTimeout> | undefined;
   const resetStreamIdleTimeout = () => {
     if (streamIdleTimeout) {
       clearTimeout(streamIdleTimeout);
     }
-    streamIdleTimeout = setTimeout(() => abort("stream-idle-timeout"), options.streamIdleTimeoutMs);
+    streamIdleTimeout = setTimeout(() => {
+      abort("stream-idle-timeout");
+    }, options.streamIdleTimeoutMs);
   };
   const emitSummary = (totalBytes: number, totalEvents: number, extra?: Partial<TransportRequestSummary>) => {
     if (emittedSummary) {
@@ -375,7 +380,7 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
     options.onTransportSummary?.(summary);
 
     options.output?.appendLine(
-      `[response-summary] status=${summary.status ?? "n/a"} durationMs=${summary.durationMs} ttfbMs=${summary.ttfbMs ?? "n/a"} promptTokens=${summary.promptTokens ?? "n/a"} completionTokens=${summary.completionTokens ?? "n/a"} totalTokens=${summary.totalTokens ?? "n/a"} cachedTokens=${summary.cachedTokens ?? "n/a"} finishReason=${summary.finishReason ?? "<unknown>"} totalBytes=${summary.totalBytes} totalEvents=${summary.totalEvents}`,
+      `[response-summary] status=${String(summary.status ?? "n/a")} durationMs=${String(summary.durationMs)} ttfbMs=${String(summary.ttfbMs ?? "n/a")} promptTokens=${String(summary.promptTokens ?? "n/a")} completionTokens=${String(summary.completionTokens ?? "n/a")} totalTokens=${String(summary.totalTokens ?? "n/a")} cachedTokens=${String(summary.cachedTokens ?? "n/a")} finishReason=${summary.finishReason ?? "<unknown>"} totalBytes=${String(summary.totalBytes)} totalEvents=${String(summary.totalEvents)}`,
     );
     const usageLog = formatUsageLogLine({
       promptTokens: summary.promptTokens,
@@ -423,7 +428,7 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
 
     // Log request for debugging latency.
     options.output?.appendLine(
-      `[request] url=${options.url} payloadBytes=${rawPayload.length} requestTimeoutMs=${options.requestTimeoutMs} streamIdleTimeoutMs=${options.streamIdleTimeoutMs}`,
+      `[request] url=${options.url} payloadBytes=${String(rawPayload.length)} requestTimeoutMs=${String(options.requestTimeoutMs)} streamIdleTimeoutMs=${String(options.streamIdleTimeoutMs)}`,
     );
 
     // ------------------------------------------------------------------
@@ -461,7 +466,7 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
         options.output?.appendLine(`[retry] HTTP 400 recoverable: ${patch.reason}. Retrying with patched body…`);
         payload = JSON.stringify(patch.body);
         response = await fetchWithBody(payload);
-        options.output?.appendLine(`[retry] Response after patch: ${response.status} ${response.statusText}`);
+        options.output?.appendLine(`[retry] Response after patch: ${String(response.status)} ${response.statusText}`);
         // If retry also returned 400, consume its body so the normal error
         // handler below doesn't try to re-read (the stream is already consumed).
         if (!response.ok && response.status === 400) {
@@ -485,7 +490,7 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
       // at the same timestamp.
       const backoffMs = Math.round(TRANSIENT_5XX_RETRY_BASE_MS * 2 ** (attempt - 1) + Math.random() * TRANSIENT_5XX_RETRY_JITTER_MS);
       options.output?.appendLine(
-        `[retry] transient ${response.status} (attempt ${attempt}/${TRANSIENT_5XX_MAX_RETRIES}); retrying in ${backoffMs}ms…`,
+        `[retry] transient ${String(response.status)} (attempt ${String(attempt)}/${String(TRANSIENT_5XX_MAX_RETRIES)}); retrying in ${String(backoffMs)}ms…`,
       );
       await sleepWithCancellation(backoffMs, options.token);
       if (options.token.isCancellationRequested) {
@@ -498,7 +503,7 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
 
     responseStatus = response.status;
     responseContentType = response.headers.get("content-type") ?? "";
-    options.output?.appendLine(`[http] ${response.status} ${response.statusText} content-type=${responseContentType || "<none>"}`);
+    options.output?.appendLine(`[http] ${String(response.status)} ${response.statusText} content-type=${responseContentType || "<none>"}`);
     const rateLimitSummary = formatRateLimitSummary(readRateLimitInfo(response.headers));
     if (rateLimitSummary) {
       options.output?.appendLine(`[rate-limit] ${rateLimitSummary}`);
@@ -568,13 +573,13 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
       }
       resetStreamIdleTimeout();
 
-      totalBytes += value?.byteLength ?? 0;
-      if (firstByteAt === undefined && (value?.byteLength ?? 0) > 0) {
+      totalBytes += value.byteLength;
+      if (firstByteAt === undefined && value.byteLength > 0) {
         firstByteAt = Date.now();
       }
       const chunk = decoder.decode(value, { stream: true });
       if (options.debugReasoning && options.output && chunk) {
-        options.output.appendLine(`[sse-raw bytes=${value?.byteLength ?? 0}] ${truncateForLog(chunk)}`);
+        options.output.appendLine(`[sse-raw bytes=${String(value.byteLength)}] ${truncateForLog(chunk)}`);
       }
       buffer += chunk;
       const events = buffer.split("\n\n");
@@ -609,7 +614,9 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
     }
 
     if (options.debugReasoning && options.output) {
-      options.output.appendLine(`[sse-stats] totalBytes=${totalBytes} totalEvents=${totalEvents} bufferTailLen=${buffer.length}`);
+      options.output.appendLine(
+        `[sse-stats] totalBytes=${String(totalBytes)} totalEvents=${String(totalEvents)} bufferTailLen=${String(buffer.length)}`,
+      );
     }
 
     // Diagnostic: when the gateway reported completion tokens but our
@@ -618,10 +625,10 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
     // but the response content is in an unrecognized format.
     if (usageSummary.completionTokens && usageSummary.completionTokens > 0 && extractedPartCount === 0 && rawSseData.length > 0) {
       options.output?.appendLine(
-        `[diag-empty-response] model=${options.modelId} completionTokens=${usageSummary.completionTokens} totalEvents=${totalEvents} rawSseDataCount=${rawSseData.length}`,
+        `[diag-empty-response] model=${options.modelId} completionTokens=${String(usageSummary.completionTokens)} totalEvents=${String(totalEvents)} rawSseDataCount=${String(rawSseData.length)}`,
       );
       for (let i = 0; i < rawSseData.length; i++) {
-        options.output?.appendLine(`[diag-sse-event-${i}] ${truncateForLog(JSON.stringify(rawSseData[i]))}`);
+        options.output?.appendLine(`[diag-sse-event-${String(i)}] ${truncateForLog(JSON.stringify(rawSseData[i]))}`);
       }
     }
 
@@ -916,7 +923,7 @@ class OpenAiResponseExtractor {
      *   genuinely uses reasoning_content for CoT → goes to thinking panel.
      * - Zen gateway and all non-Go models are never affected.
      */
-    private readonly treatReasoningAsContent: boolean = false,
+    private readonly treatReasoningAsContent = false,
   ) {}
 
   get emittedText(): number {
@@ -1014,7 +1021,7 @@ class OpenAiResponseExtractor {
       return [];
     }
 
-    const first = data.choices[0];
+    const first: unknown = data.choices[0];
     if (!isRecord(first)) {
       return [];
     }
@@ -1148,7 +1155,8 @@ class OpenAiResponseExtractor {
   private flushToolCalls(): vscode.LanguageModelToolCallPart[] {
     const calls = this.toolCallAccumulator.flush();
     const parts = calls.map(
-      (call, index) => new vscode.LanguageModelToolCallPart(call.id || `opencodego-tool-${Date.now()}-${index}`, call.name, call.input),
+      (call, index) =>
+        new vscode.LanguageModelToolCallPart(call.id || `opencodego-tool-${String(Date.now())}-${String(index)}`, call.name, call.input),
     );
 
     if (this.reasoningContent.trim()) {
@@ -1448,7 +1456,7 @@ class AnthropicResponseExtractor {
     const parts = toolCalls.map(
       (toolCall, index) =>
         new vscode.LanguageModelToolCallPart(
-          toolCall.id || `opencodego-tool-${Date.now()}-${index}`,
+          toolCall.id || `opencodego-tool-${String(Date.now())}-${String(index)}`,
           toolCall.name,
           parseToolInput(toolCall.arguments),
         ),
@@ -1473,7 +1481,7 @@ function extractChatCompletionParts(data: unknown): vscode.LanguageModelResponse
     return [];
   }
 
-  const first = data.choices[0];
+  const first: unknown = data.choices[0];
   if (!isRecord(first)) {
     return [];
   }
@@ -1538,7 +1546,7 @@ function extractReasoningFromDelta(delta: Record<string, unknown>): string {
     delta.reasoning_content,
     delta.reasoning,
     delta.thinking,
-    isRecord(delta.message) ? (delta.message as Record<string, unknown>).reasoning_content : undefined,
+    isRecord(delta.message) ? delta.message.reasoning_content : undefined,
   ];
   let collected = "";
   for (const candidate of candidates) {
@@ -1589,7 +1597,7 @@ function extractAnthropicParts(data: unknown): vscode.LanguageModelResponsePart[
     }
 
     if (block.type === "tool_use" && typeof block.name === "string") {
-      const id = typeof block.id === "string" ? block.id : `opencodego-tool-${Date.now()}`;
+      const id = typeof block.id === "string" ? block.id : `opencodego-tool-${String(Date.now())}`;
       const input = isRecord(block.input) ? block.input : parseToolInput(typeof block.input === "string" ? block.input : "{}");
       parts.push(new vscode.LanguageModelToolCallPart(id, block.name, input));
     }
@@ -1621,7 +1629,7 @@ function toolCallPartsFromOpenAiMessage(toolCalls: unknown): vscode.LanguageMode
     .filter(isRecord)
     .map((toolCall, index) => {
       const fn = toolCall.function;
-      const id = typeof toolCall.id === "string" ? toolCall.id : `opencodego-tool-${Date.now()}-${index}`;
+      const id = typeof toolCall.id === "string" ? toolCall.id : `opencodego-tool-${String(Date.now())}-${String(index)}`;
       const name = isRecord(fn) && typeof fn.name === "string" ? fn.name : "";
       const args = isRecord(fn) && typeof fn.arguments === "string" ? fn.arguments : "{}";
       return name ? new vscode.LanguageModelToolCallPart(id, name, parseToolInput(args)) : undefined;

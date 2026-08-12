@@ -21,9 +21,7 @@ declare module "vscode" {
      * in the user's language models configuration file, validated against the model's
      * {@linkcode LanguageModelChatInformation.configurationSchema configurationSchema}.
      */
-    readonly modelConfiguration?: {
-      readonly [key: string]: any;
-    };
+    readonly modelConfiguration?: Readonly<Record<string, unknown>>;
   }
 
   /**
@@ -84,7 +82,7 @@ declare module "vscode" {
      * Whether or not this will be selected by default in the model picker
      * NOT BEING FINALIZED
      */
-    readonly isDefault?: boolean | { [K in ChatLocation]?: boolean };
+    readonly isDefault?: boolean | Partial<Record<ChatLocation, boolean>>;
 
     /**
      * Whether or not the model will show up in the model picker immediately upon being made known via {@linkcode LanguageModelChatProvider.provideLanguageModelChatInformation}.
@@ -139,16 +137,19 @@ declare module "vscode" {
   /**
    * A [JSON Schema](https://json-schema.org) describing configuration options for a language model.
    */
-  export type LanguageModelConfigurationSchema = {
+  export interface LanguageModelConfigurationSchema {
     readonly type?: string;
-    readonly properties?: {
-      readonly [key: string]: Record<string, any> & {
-        readonly enumItemLabels?: string[];
-        readonly enumDescriptions?: string[];
-        readonly group?: string;
-      };
-    };
-  };
+    readonly properties?: Readonly<
+      Record<
+        string,
+        Record<string, unknown> & {
+          readonly enumItemLabels?: string[];
+          readonly enumDescriptions?: string[];
+          readonly group?: string;
+        }
+      >
+    >;
+  }
 
   export interface LanguageModelChatProvider<T extends LanguageModelChatInformation = LanguageModelChatInformation> {
     provideLanguageModelChatInformation(options: PrepareLanguageModelChatModelOptions, token: CancellationToken): ProviderResult<T[]>;
@@ -162,12 +163,10 @@ declare module "vscode" {
   }
 
   export interface PrepareLanguageModelChatModelOptions {
-    readonly configuration?: {
-      readonly [key: string]: any;
-    };
+    readonly configuration?: Readonly<Record<string, unknown>>;
   }
 
   export interface ChatRequest {
-    readonly modelConfiguration?: { readonly [key: string]: any };
+    readonly modelConfiguration?: Readonly<Record<string, unknown>>;
   }
 }

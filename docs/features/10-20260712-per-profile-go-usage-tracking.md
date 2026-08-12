@@ -1,10 +1,10 @@
 # 10 — Per-Profile Go Usage Tracking for Multi-Account Setups
 
-**Status:** 🟢 Active  
-**Author:** Wallacy (Wallacy Freitas)  
-**PR:** [#75](https://github.com/ltmoerdani/opencode-copilot-chat/pull/75)  
-**Issue:** [#63](https://github.com/ltmoerdani/opencode-copilot-chat/issues/63)  
-**Merged:** 2026-07-12  
+**Status:** 🟢 Active
+**Author:** Wallacy (Wallacy Freitas)
+**PR:** [#75](https://github.com/ltmoerdani/opencode-copilot-chat/pull/75)
+**Issue:** [#63](https://github.com/ltmoerdani/opencode-copilot-chat/issues/63)
+**Merged:** 2026-07-12
 **Commits:** 4 (`4353c1e`, `7d8a008`, `1734242`, `7b9fae5`)
 
 ---

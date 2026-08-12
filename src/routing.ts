@@ -161,7 +161,7 @@ export function normalizeResponsesFullResponse(data: unknown): unknown {
   const response = isRecord(data.response) ? data.response : data;
   const output = Array.isArray(response.output) ? response.output : [];
   let text = "";
-  const toolCalls: Array<Record<string, unknown>> = [];
+  const toolCalls: Record<string, unknown>[] = [];
 
   for (const item of output) {
     if (!isRecord(item)) {

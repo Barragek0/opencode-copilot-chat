@@ -2,9 +2,9 @@
 
 # Per-Model Thinking Mode — Feature Implementation
 
-**Topic:** provider / models / thinking / vscode / copilot-chat  
-**Updated:** 2026-05-17  
-**Tags:** #provider #models #thinking #vscode #copilot-chat #reasoning #byok #feat  
+**Topic:** provider / models / thinking / vscode / copilot-chat
+**Updated:** 2026-05-17
+**Tags:** #provider #models #thinking #vscode #copilot-chat #reasoning #byok #feat
 **Supersedes:** —
 
 ---

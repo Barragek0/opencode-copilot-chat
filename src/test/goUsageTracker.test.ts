@@ -34,9 +34,11 @@ interface GoUsageTrackerInstance {
   clear(): void;
 }
 
-interface GoUsageTrackerConstructor {
-  new (context: unknown, log?: (msg: string) => void, costResolver?: (modelId: string) => ModelCost | undefined): GoUsageTrackerInstance;
-}
+type GoUsageTrackerConstructor = new (
+  context: unknown,
+  log?: (msg: string) => void,
+  costResolver?: (modelId: string) => ModelCost | undefined,
+) => GoUsageTrackerInstance;
 
 let GoUsageTracker: GoUsageTrackerConstructor;
 
@@ -184,7 +186,7 @@ describe("goUsageTracker", () => {
       // 100 * 0.5/1M  = 0.00005
       // 50  * 3.0/1M  = 0.00015
       // IEEE 754: 0.05 + 0.00015 = 0.00019999999999999998
-      assert.ok(Math.abs(cost - 0.0002) < 1e-12, `expected ~0.0002, got ${cost}`);
+      assert.ok(Math.abs(cost - 0.0002) < 1e-12, `expected ~0.0002, got ${String(cost)}`);
     });
 
     it("subtracts cached tokens from prompt tokens for billing", () => {
@@ -194,7 +196,7 @@ describe("goUsageTracker", () => {
       // 50 * 3.0/1M   = 0.00015
       // 40 * 0.05/1M  = 0.000002
       // IEEE 754: 0.00003 + 0.00015 + 0.000002 = 0.00018199999999999998
-      assert.ok(Math.abs(cost - 0.000182) < 1e-12, `expected ~0.000182, got ${cost}`);
+      assert.ok(Math.abs(cost - 0.000182) < 1e-12, `expected ~0.000182, got ${String(cost)}`);
     });
 
     it("handles all-cached requests (billable prompt = 0)", () => {
@@ -204,7 +206,7 @@ describe("goUsageTracker", () => {
       // 50 * 3.0/1M   = 0.00015
       // 200 * 0.05/1M = 0.00001
       // IEEE 754: 0 + 0.00015 + 0.00001 = 0.00015999999999999999
-      assert.ok(Math.abs(cost - 0.00016) < 1e-12, `expected ~0.00016, got ${cost}`);
+      assert.ok(Math.abs(cost - 0.00016) < 1e-12, `expected ~0.00016, got ${String(cost)}`);
     });
 
     it("handles zero tokens gracefully", () => {
@@ -253,10 +255,10 @@ describe("goUsageTracker", () => {
 
         const session = tracker.getCurrentSessionCost();
         assert.equal(session?.sessionId, "s1");
-        assert.equal(session?.cost, 0.0006);
-        assert.equal(session?.requests, 2);
-        assert.equal(session?.promptTokens, 300);
-        assert.equal(session?.completionTokens, 150);
+        assert.equal(session.cost, 0.0006);
+        assert.equal(session.requests, 2);
+        assert.equal(session.promptTokens, 300);
+        assert.equal(session.completionTokens, 150);
       });
 
       it("skips records when providerDisplayName does not contain 'go'", () => {
@@ -343,8 +345,8 @@ describe("goUsageTracker", () => {
         // s2: 0.0004 — most recent
         const session = tracker.getCurrentSessionCost();
         assert.equal(session?.sessionId, "s1"); // s1 was last to be active
-        assert.equal(session?.cost, 0.0003);
-        assert.equal(session?.requests, 2);
+        assert.equal(session.cost, 0.0003);
+        assert.equal(session.requests, 2);
       });
 
       it("returns undefined when no sessions have been recorded", () => {
@@ -379,7 +381,7 @@ describe("goUsageTracker", () => {
       it("respects the limit parameter", () => {
         const tracker = new GoUsageTracker(createMockContext());
         for (let i = 0; i < 10; i++) {
-          tracker.record(makeSummary({ sessionId: `s${i}`, promptTokens: 1, completionTokens: 0 }));
+          tracker.record(makeSummary({ sessionId: `s${String(i)}`, promptTokens: 1, completionTokens: 0 }));
         }
 
         assert.equal(tracker.getRecentSessionCosts(3).length, 3);
@@ -428,10 +430,10 @@ describe("goUsageTracker", () => {
 
         const session = tracker.getCurrentSessionCost();
         assert.equal(session?.sessionId, "restored-session");
-        assert.equal(session?.cost, 0.5);
-        assert.equal(session?.requests, 3);
-        assert.equal(session?.promptTokens, 150);
-        assert.equal(session?.completionTokens, 75);
+        assert.equal(session.cost, 0.5);
+        assert.equal(session.requests, 3);
+        assert.equal(session.promptTokens, 150);
+        assert.equal(session.completionTokens, 75);
       });
 
       it("filters invalid entries during restore", () => {
@@ -512,7 +514,7 @@ describe("goUsageTracker", () => {
         const tracker = new GoUsageTracker(createMockContext());
         // Create 51 sessions
         for (let i = 0; i < 51; i++) {
-          tracker.record(makeSummary({ sessionId: `s${i}`, promptTokens: 1, completionTokens: 0 }));
+          tracker.record(makeSummary({ sessionId: `s${String(i)}`, promptTokens: 1, completionTokens: 0 }));
         }
 
         const sessions = tracker.getRecentSessionCosts(100);
@@ -555,8 +557,8 @@ describe("goUsageTracker", () => {
 
         const session = tracker.getCurrentSessionCost();
         assert.equal(session?.sessionId, "s1");
-        assert.equal(session?.cost, 0);
-        assert.equal(session?.requests, 1);
+        assert.equal(session.cost, 0);
+        assert.equal(session.requests, 1);
       });
 
       it("handles record with only cached tokens (no prompt or completion)", () => {
@@ -576,7 +578,7 @@ describe("goUsageTracker", () => {
         // cost = 0 * 0.5/1M + 0 * 3.0/1M + 50 * 0.05/1M = 0.0000025
         const session = tracker.getCurrentSessionCost();
         assert.equal(session?.sessionId, "s1");
-        assert.equal(session?.cost, 0.0000025);
+        assert.equal(session.cost, 0.0000025);
       });
 
       it("handles multiple records in the same session with reset in between", () => {
@@ -593,7 +595,7 @@ describe("goUsageTracker", () => {
         // Second tracker should have restored state and accumulated further
         const session = tracker2.getCurrentSessionCost();
         assert.equal(session?.cost, 0.0003); // 0.0002 + 0.0001
-        assert.equal(session?.requests, 2);
+        assert.equal(session.requests, 2);
       });
     });
   });
