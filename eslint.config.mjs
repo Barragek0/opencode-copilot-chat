@@ -94,10 +94,14 @@ export default defineConfig([
   {
     rules: {
       // Zero tolerance: no unfinished-work marker comments may ever be committed.
+      // `@ts-expect-error` is intentionally allowed: this extension leans on
+      // VS Code proposed APIs whose type gaps are real, and unlike its
+      // never-expiring alternative it surfaces the error again the moment the
+      // API lands.
       "no-warning-comments": [
         "error",
         {
-          terms: ["todo", "fixme", "xxx", "hack", "@ts-ignore", "@ts-expect-error"],
+          terms: ["todo", "fixme", "xxx", "hack", "@ts-ignore"],
           location: "anywhere",
         },
       ],
