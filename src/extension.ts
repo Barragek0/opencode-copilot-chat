@@ -720,6 +720,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
+  // Pull the server-accurate account meters once at startup (TTL-guarded).
+  void (async () => {
+    const apiKey = await context.secrets.get(SECRET_KEY);
+    if (!apiKey) return;
+    await syncTrackerUsage(getOrCreateTracker(keyFingerprint(apiKey)), apiKey);
+  })();
   // Read from the root configuration with the FULL setting key: section-scoped
   // reads (getConfiguration("opencodego")) resolve keys relative to the
   // section, which would misread the Zen flag as opencodego.opencodezen.enabled.
@@ -1244,6 +1250,25 @@ function refreshGoUsageStatusBar(): void {
   goUsageStatusBarItem.tooltip = buildUsageTooltip(s, tracker.getCurrentSessionCost());
   goUsageStatusBarItem.show();
   updateWebviewContent();
+
+  // Refresh the server-accurate meters in the background (TTL-guarded); when
+  // a new snapshot lands, rebuild the status bar with it.
+  void (async () => {
+    const apiKey = await _extensionContext?.secrets.get(SECRET_KEY);
+    if (!apiKey || !tracker) return;
+    const changed = await tracker.syncServerUsage(apiKey);
+    if (changed) refreshGoUsageStatusBar();
+  })();
+}
+
+/**
+ * Fetch server-accurate usage for a key and repaint the status bar when a new
+ * snapshot arrived. Uses the tracker owning that key (creating its profile on
+ * first use), so multi-account setups keep per-key meters.
+ */
+async function syncTrackerUsage(tracker: GoUsageTracker, apiKey: string): Promise<void> {
+  const changed = await tracker.syncServerUsage(apiKey);
+  if (changed) refreshGoUsageStatusBar();
 }
 
 function showUsageWebview(context: vscode.ExtensionContext): void {
@@ -2375,6 +2400,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           tracker.record(summary, metadata.cost);
           refreshGoUsageStatusBar();
           this.log(`[go-usage] After record profile=${activeProfileFingerprint}: entries=${tracker.getSummary().today.requests}`);
+          // Re-sync the server-accurate account meters (TTL-guarded, uses the
+          // exact key this request ran under — covers BYOK group keys too).
+          void syncTrackerUsage(tracker, apiKey);
         }
       }
     };
