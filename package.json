@@ -360,8 +360,8 @@
     "lint:staged": "tsx scripts/staged-lint.ts",
     "lint:js": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix --max-warnings 0",
-    "lint:md": "markdownlint-cli2 --config .markdownlint-cli2.jsonc \"**/*.md\" \"#node_modules\"",
-    "lint:md:all": "markdownlint-cli2 --config .markdownlint-cli2.jsonc \"**/*.md\"",
+    "lint:md": "markdownlint-cli2 --config .markdownlint-cli2.json \"**/*.md\" \"#node_modules\"",
+    "lint:md:all": "markdownlint-cli2 --config .markdownlint-cli2.json \"**/*.md\"",
     "lint:sh": "shellcheck .husky/pre-commit",
     "lint:hygiene": "editorconfig-checker",
     "lint:ts": "tsc -p tsconfig.check.json",
@@ -383,7 +383,7 @@
   "lint-staged": {
     "*": "prettier --write --ignore-unknown",
     "*.{js,cjs,ts}": "eslint --fix --max-warnings 0",
-    "*.md": "markdownlint-cli2 --config .markdownlint-cli2.jsonc --fix",
+    "*.md": "markdownlint-cli2 --config .markdownlint-cli2.json --fix",
     ".husky/*": "shellcheck"
   },
   "devDependencies": {

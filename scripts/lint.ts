@@ -34,7 +34,7 @@ const steps: LintStep[] = [
   {
     label: "Markdown",
     cmd: bin("markdownlint-cli2"),
-    args: ["--config", ".markdownlint-cli2.jsonc", "**/*.md", "#node_modules"],
+    args: ["--config", ".markdownlint-cli2.json", "**/*.md", "#node_modules"],
   },
   { label: "Prettier", cmd: bin("prettier"), args: ["--check", ".", "--ignore-path", ".gitignore"] },
   { label: "Shell", cmd: bin("shellcheck"), args: [".husky/pre-commit"] },

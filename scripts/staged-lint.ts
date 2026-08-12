@@ -147,7 +147,7 @@ interface StagedStep {
 
 const steps: StagedStep[] = [
   { label: "ESLint", cmd: bin("eslint"), args: ["--max-warnings", "0", ...eslintTargets], run: eslintTargets.length > 0 },
-  { label: "Markdown", cmd: bin("markdownlint-cli2"), args: ["--config", ".markdownlint-cli2.jsonc", ...mdFiles], run: mdFiles.length > 0 },
+  { label: "Markdown", cmd: bin("markdownlint-cli2"), args: ["--config", ".markdownlint-cli2.json", ...mdFiles], run: mdFiles.length > 0 },
   { label: "Editorconfig", cmd: bin("editorconfig-checker"), args: [...staged], run: true },
   { label: "Shell", cmd: bin("shellcheck"), args: [...huskyFiles], run: huskyFiles.length > 0 },
   { label: "TypeScript", cmd: bin("tsc"), args: ["-p", "tsconfig.check.json"], run: sourceChanged },
