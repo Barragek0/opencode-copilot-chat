@@ -55,10 +55,8 @@ test("fetchGoUsage — sends the key as Bearer to the official endpoint", async 
 test("fetchGoUsage — parses a 200 payload", async () => {
   const result = await fetchGoUsage("sk-test", stubFetch(200, apiResponse()));
   assert.ok(result.ok);
-  if (result.ok) {
-    assert.equal(result.data.usage.rolling.percent, 27);
-    assert.equal(result.data.usage.monthly.status, "rate-limited");
-  }
+  assert.equal(result.data.usage.rolling.percent, 27);
+  assert.equal(result.data.usage.monthly.status, "rate-limited");
 });
 
 test("fetchGoUsage — classifies failures so callers can fall back", async () => {

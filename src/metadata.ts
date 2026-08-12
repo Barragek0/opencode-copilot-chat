@@ -54,7 +54,7 @@ export interface ModelMetadataFields {
 
 export interface CachedModelMetadataSnapshot {
   fetchedAt: number;
-  providers: Record<ProviderVendor, Record<string, ModelMetadataFields>>;
+  providers: Record<ProviderVendor, Record<string, ModelMetadataFields> | undefined>;
 }
 
 export interface ResolvedModelMetadata extends BaseModelLimits {
@@ -356,7 +356,7 @@ export function resolveModelMetadata(
   snapshot: CachedModelMetadataSnapshot,
   liveModelMetadataById: Map<string, ModelMetadataFields>,
 ): ResolvedModelMetadata {
-  const cachedMetadata = snapshot.providers[vendor][modelId];
+  const cachedMetadata = snapshot.providers[vendor]?.[modelId];
   const liveMetadata = liveModelMetadataById.get(modelId);
   const fallbackMetadata = fallbackModelMetadata(modelId, vendor);
 

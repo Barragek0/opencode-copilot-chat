@@ -305,18 +305,19 @@ function isTransientFetchError(error: unknown): boolean {
  *
  * Used to back off between model-list fetch retries without leaking
  * CancellationToken subscriptions.
+ *
+ * A single subscription suffices for already-cancelled tokens: VS Code's
+ * cancellation tokens invoke listeners registered after cancellation
+ * (shortcutEvent), and Promises ignore double settlement.
  */
 function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
   if (token?.isCancellationRequested) {
     return Promise.reject(new DOMException("Aborted", "AbortError"));
   }
   return new Promise((resolve, reject) => {
-    let settled = false;
-    const state: { subscription?: vscode.Disposable } = {};
+    const state: { timer?: ReturnType<typeof setTimeout>; subscription?: vscode.Disposable } = {};
     const finish = (cancelled: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
+      if (state.timer) clearTimeout(state.timer);
       state.subscription?.dispose();
       if (cancelled) {
         reject(new DOMException("Aborted", "AbortError"));
@@ -324,14 +325,9 @@ function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
         resolve();
       }
     };
-    const timer = setTimeout(() => finish(false), ms);
+    state.timer = setTimeout(() => finish(false), ms);
     if (token) {
       state.subscription = token.onCancellationRequested(() => finish(true));
-      if (settled) {
-        state.subscription.dispose();
-      } else if (token.isCancellationRequested) {
-        finish(true);
-      }
     }
   });
 }
@@ -2406,17 +2402,15 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       updateUsageStatusBar(this.definition.displayName, rawModelId, summary);
       if (this.baseVendor === GO_VENDOR) {
         const tracker = ensureProfileForApiKey(apiKey);
-        if (tracker) {
-          this.log(
-            `[go-usage] Recording profile=${activeProfileFingerprint}: model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached}`,
-          );
-          tracker.record(summary, metadata.cost);
-          refreshGoUsageStatusBar();
-          this.log(`[go-usage] After record profile=${activeProfileFingerprint}: entries=${tracker.getSummary().today.requests}`);
-          // Re-sync the server-accurate account meters (TTL-guarded, uses the
-          // exact key this request ran under — covers BYOK group keys too).
-          void syncTrackerUsage(tracker, apiKey);
-        }
+        this.log(
+          `[go-usage] Recording profile=${activeProfileFingerprint}: model=${summary.modelId} promptTokens=${prompt} completionTokens=${completion} cachedTokens=${cached}`,
+        );
+        tracker.record(summary, metadata.cost);
+        refreshGoUsageStatusBar();
+        this.log(`[go-usage] After record profile=${activeProfileFingerprint}: entries=${tracker.getSummary().today.requests}`);
+        // Re-sync the server-accurate account meters (TTL-guarded, uses the
+        // exact key this request ran under — covers BYOK group keys too).
+        void syncTrackerUsage(tracker, apiKey);
       }
     };
 
@@ -2665,8 +2659,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     if (token.isCancellationRequested) {
       controller.abort();
     } else {
+      // Already-cancelled tokens still invoke the listener (shortcutEvent),
+      // so this single subscription covers the subscribe-time race too.
       subscription = token.onCancellationRequested(() => controller.abort());
-      if (token.isCancellationRequested) controller.abort();
     }
     return {
       signal: controller.signal,
@@ -2790,7 +2785,7 @@ async function refreshOpenCodeModelMetadata(
     modelMetadataSnapshot = snapshot;
     await context.globalState.update(MODEL_METADATA_CACHE_KEY, snapshot);
     output?.appendLine(
-      `[metadata] refreshed models.dev cache go=${Object.keys(snapshot.providers[GO_VENDOR]).length} zen=${Object.keys(snapshot.providers[ZEN_VENDOR]).length}`,
+      `[metadata] refreshed models.dev cache go=${Object.keys(snapshot.providers[GO_VENDOR] ?? {}).length} zen=${Object.keys(snapshot.providers[ZEN_VENDOR] ?? {}).length}`,
     );
     return snapshot;
   })()
