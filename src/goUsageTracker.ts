@@ -6,6 +6,7 @@ import { execFileSync } from "child_process";
 import { GO_VENDOR } from "./providerTypes";
 import type { ModelCost } from "./metadata";
 import type { TransportRequestSummary } from "./streaming";
+import { fetchGoUsage, mergeServerUsage, GO_USAGE_SYNC_TTL_MS, type GoUsageApiResponse } from "./goUsageSync";
 
 /** Callback to resolve live model cost from the models.dev metadata cache. */
 export type CostResolver = (modelId: string) => ModelCost | undefined;
@@ -295,6 +296,10 @@ export class GoUsageTracker {
   private costResolver?: CostResolver;
   /** Per-chat-session cost accumulator. Key = sessionId. */
   private sessionCosts = new Map<string, SessionCostSummary>();
+  /** Latest server-accurate usage snapshot (account-wide meters). */
+  private serverUsage: GoUsageApiResponse | undefined;
+  /** Unix ms of the last successful {@link syncServerUsage} fetch. */
+  private serverUsageFetchedAt = 0;
   private static readonly SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
   private static readonly MAX_SESSIONS = 50;
 
@@ -435,15 +440,48 @@ export class GoUsageTracker {
     // When namespaced (per-profile), skip the shared SQLite — it has no
     // key column, so reading it would mix quota from all accounts.
     const isPerProfile = this.storageKeySuffix.length > 0;
+    let summary: UsageSummary;
     if (!isPerProfile) {
       const sqliteRows = readOpenCodeHistory();
       if (sqliteRows) {
-        return this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+        summary = this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
+      } else {
+        // Fall back to extension-tracked data (works without CLI).
+        summary = this.buildSummaryFromTracked(nowMs, clamp);
       }
+    } else {
+      summary = this.buildSummaryFromTracked(nowMs, clamp);
     }
 
-    // Fall back to extension-tracked data (works without CLI).
-    return this.buildSummaryFromTracked(nowMs, clamp);
+    // Overlay the server-accurate meters when a recent snapshot exists
+    // (fetched via syncServerUsage). Today / Yesterday / per-session spend
+    // remain local.
+    return this.serverUsage ? mergeServerUsage(summary, this.serverUsage) : summary;
+  }
+
+  /**
+   * Fetch server-accurate account-wide usage for this profile's key and
+   * cache it for {@link GO_USAGE_SYNC_TTL_MS}. Safe to call on every
+   * request/status-bar refresh: the TTL guard makes it a no-op while a
+   * fresh snapshot exists. Failures keep the previous snapshot (stale
+   * beats nothing) and the local estimates remain the fallback.
+   *
+   * @returns true when a new snapshot was fetched.
+   */
+  async syncServerUsage(apiKey: string): Promise<boolean> {
+    const now = Date.now();
+    if (this.serverUsage && now - this.serverUsageFetchedAt < GO_USAGE_SYNC_TTL_MS) {
+      return false;
+    }
+    const result = await fetchGoUsage(apiKey);
+    if (!result.ok) {
+      this.log?.(`[go-usage] Server usage sync skipped (${result.reason}); keeping local estimates.`);
+      return false;
+    }
+    this.serverUsage = result.data;
+    this.serverUsageFetchedAt = Date.now();
+    this.log?.("[go-usage] Server usage synced from /zen/go/v1/usage.");
+    return true;
   }
 
   /** Build summary from SQLite, enriched with token/request counts from tracked entries. */
