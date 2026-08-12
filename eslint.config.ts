@@ -30,7 +30,9 @@ const gitignore = readFileSync(new URL(".gitignore", import.meta.url), "utf8")
 
 // Files not covered by tsconfig (which only includes src/), type-checked via
 // the default project so strictTypeChecked rules still apply to them.
-const nonProjectFiles = ["eslint.config.ts", "scripts/*.ts"];
+// eslint.config.ts is ESM-only (loaded via jiti) and lives outside both
+// tsconfig projects; scripts/*.ts are covered by scripts/tsconfig.json.
+const nonProjectFiles = ["eslint.config.ts"];
 
 // The typescript-eslint `config()` helper is deprecated; ESLint core now
 // provides `defineConfig()`. We replicate the helper's `extends` expansion
