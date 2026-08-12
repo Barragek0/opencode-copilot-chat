@@ -1336,7 +1336,7 @@ function updateWebviewContent(): void {
         }
         .container {
           width: 100%;
-          max-width: 560px;
+          max-width: 440px;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -1344,6 +1344,7 @@ function updateWebviewContent(): void {
         }
         svg {
           width: 100%;
+          max-width: 440px;
           height: auto;
           border-radius: 8px;
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
@@ -1376,10 +1377,10 @@ function buildUsageTooltip(
   }
   (md as vscode.MarkdownString & { supportedCommands?: string[] }).supportedCommands = commands;
 
-  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="420">`);
-  md.appendMarkdown("\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)");
+  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="440">`);
+  md.appendMarkdown("\n\n---\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)");
   if (nonLegacyCount(profilesCache) > 0) {
-    md.appendMarkdown(" \u00B7 [$(pencil) Rename](command:opencodego.renameActiveProfile)");
+    md.appendMarkdown("   [$(pencil) Rename](command:opencodego.renameActiveProfile)");
   }
   return md;
 }
@@ -1503,11 +1504,11 @@ function buildUsageTooltipSvg(
   profileLabel?: string,
 ): string {
   const hasSession = sc && sc.cost > 0;
-  // Session label is longer ("Session (est):") so widen the card and shift
-  // the cost column right when session data is present.
-  const cx = hasSession ? 120 : 80; // cost value column
-  const width = hasSession ? 440 : 420;
-  const height = s.hasData ? (hasSession ? 310 : 286) : 78;
+  // Stable geometry: fixed card width and fixed columns, so the layout never
+  // shifts when session data appears or a day has no usage yet.
+  const width = 440;
+  const padX = 14;
+  const right = width - padX;
   const bg = "#1e1e1e";
   const fg = "#d4d4d4";
   const muted = "#a6a6a6";
@@ -1531,60 +1532,57 @@ function buildUsageTooltipSvg(
     ].join("");
   };
 
+  // Meter block with a uniform 14px gutter between blocks: label row with the
+  // reset time right-aligned at the card's right padding, then the bar and
+  // the spent/limit line below it.
   const period = (label: string, p: _UsageSummary["session"], y: number): string =>
     [
-      text(label, 14, y, 14, 700),
-      text(`Resets in ${rel(p.resetsAt)}`, 410, y, 12, 400, muted, "end"),
-      bar(p.percent, 14, y + 12, 340),
-      text(`${p.percent.toFixed(1)}%`, 410, y + 19, 14, 700, fg, "end"),
-      text(`${usd(p.spent)} / ${usd(p.limit)} used`, 14, y + 34, 13, 400, fg),
+      text(label, padX, y, 14, 700),
+      text(`Resets in ${rel(p.resetsAt)}`, right, y, 12, 400, muted, "end"),
+      bar(p.percent, padX, y + 14, 340),
+      text(`${p.percent.toFixed(1)}%`, right, y + 21, 14, 700, fg, "end"),
+      text(`${usd(p.spent)} / ${usd(p.limit)} used`, padX, y + 36, 13, 400, fg),
+    ].join("");
+
+  // Device-local rows share one fixed column grid: label, cost, requests,
+  // tokens. Always rendered (zeros included) so the card height is stable.
+  const deviceRow = (label: string, cost: number, requests: number, tokenCount: number, y: number): string =>
+    [
+      text(label, padX, y, 13, 400, muted),
+      text(usd(cost), 120, y, 13, 700),
+      text("Requests:", 190, y, 13, 400, muted),
+      text(String(requests), 262, y, 13, 700),
+      text("Tokens:", 305, y, 13, 400, muted),
+      text(tokens(tokenCount), 385, y, 13, 700),
     ].join("");
 
   if (!s.hasData) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="70" viewBox="0 0 ${width} 70">
 <rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text(svgTitle, 14, 26, 16, 700)}
-${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", 14, 50, 12, 400, muted)}
+${text(svgTitle, padX, 28, 16, 700)}
+${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.", padX, 52, 12, 400, muted)}
 </svg>`;
   }
 
+  // Title starts at the same 14px gutter as the sides. Meter rows, the
+  // divider and the device rows keep a consistent 14px rhythm.
+  const meterRows = [["Session (5h rolling)", s.session, 56], ["Weekly", s.weekly, 116], ["Monthly", s.monthly, 176]] as const;
+  const dividerY = 226;
+  const firstRowY = 248;
+  const rowGap = 24;
+  const deviceRows: Array<[string, number, number, number, number]> = [];
+  if (hasSession) deviceRows.push(["Session (est):", sc!.cost, sc!.requests, sc!.promptTokens + sc!.completionTokens, firstRowY]);
+  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + (hasSession ? rowGap : 0)]);
+  deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + 2 * rowGap]);
+
+  const height = firstRowY + 2 * rowGap + 14;
+
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <rect width="100%" height="100%" rx="4" fill="${bg}"/>
-${text(svgTitle, 14, 26, 16, 700)}
-${period("Session (5h rolling)", s.session, 54)}
-${period("Weekly", s.weekly, 116)}
-${period("Monthly", s.monthly, 178)}
-<line x1="14" y1="224" x2="416" y2="224" stroke="${line}" stroke-width="1"/>
-${
-  hasSession
-    ? [
-        text("Session (est):", 14, 250, 13, 400, muted),
-        text(`$${sc!.cost.toFixed(4)}`, cx, 250, 13, 700),
-        text("Requests:", 200, 250, 13, 400, muted),
-        text(String(sc!.requests), 280, 250, 13, 700),
-        text("Tokens:", 320, 250, 13, 400, muted),
-        text(tokens(sc!.promptTokens + sc!.completionTokens), 400, 250, 13, 700),
-      ].join("")
-    : ""
-}
-${text("Today:", 14, hasSession ? 274 : 256, 13, 400, muted)}
-${text(usd(s.today.cost), cx, hasSession ? 274 : 256, 13, 700)}
-${text("Requests:", 200, hasSession ? 274 : 256, 13, 400, muted)}
-${text(String(s.today.requests), 280, hasSession ? 274 : 256, 13, 700)}
-${text("Tokens:", 320, hasSession ? 274 : 256, 13, 400, muted)}
-${text(tokens(s.today.tokens), 400, hasSession ? 274 : 256, 13, 700)}
-${
-  s.yesterday.requests > 0
-    ? [
-        text("Yesterday:", 14, hasSession ? 298 : 278, 13, 400, muted),
-        text(usd(s.yesterday.cost), cx, hasSession ? 298 : 278, 13, 700),
-        text("Requests:", 200, hasSession ? 298 : 278, 13, 400, muted),
-        text(String(s.yesterday.requests), 280, hasSession ? 298 : 278, 13, 700),
-        text("Tokens:", 320, hasSession ? 298 : 278, 13, 400, muted),
-        text(tokens(s.yesterday.tokens), 400, hasSession ? 298 : 278, 13, 700),
-      ].join("")
-    : ""
-}
+${text(svgTitle, padX, 28, 16, 700)}
+${meterRows.map(([label, periodValue, y]) => period(label, periodValue, y)).join("")}
+<line x1="${padX}" y1="${dividerY}" x2="${right}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
+${deviceRows.map(([label, cost, requests, tokenCount, y]) => deviceRow(label, cost, requests, tokenCount, y)).join("")}
 </svg>`;
 }
 
