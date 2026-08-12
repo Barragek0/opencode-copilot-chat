@@ -1492,17 +1492,10 @@ function buildUsageTooltip(
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const profileLabel = activeProfile?.label ?? "OpenCode Go";
 
-  const commands = ["opencodego.setUsageTargets"];
-  if (nonLegacyCount(profilesCache) > 0) {
-    commands.push("opencodego.renameActiveProfile");
-  }
-  (md as vscode.MarkdownString & { supportedCommands?: string[] }).supportedCommands = commands;
-
+  // The hover shows the summary card only; Set spent targets / Rename are
+  // available from the Command Palette (opencodego.setUsageTargets,
+  // opencodego.renameActiveProfile).
   md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="440">`);
-  md.appendMarkdown("\n\n---\n\n[$(pencil) Set spent targets](command:opencodego.setUsageTargets)");
-  if (nonLegacyCount(profilesCache) > 0) {
-    md.appendMarkdown("   [$(pencil) Rename](command:opencodego.renameActiveProfile)");
-  }
   return md;
 }
 
