@@ -1413,11 +1413,31 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
   usageWebviewPanel.onDidDispose(
     () => {
       usageWebviewPanel = undefined;
+      usageWebviewRendered = false;
     },
     null,
     context.subscriptions,
   );
 
+  usageWebviewPanel.webview.onDidReceiveMessage(
+    (message: { type?: string }) => {
+      switch (message.type) {
+        case "refresh":
+          refreshGoUsageStatusBar();
+          break;
+        case "setTargets":
+          void vscode.commands.executeCommand("opencodego.setUsageTargets");
+          break;
+        case "renameProfile":
+          void vscode.commands.executeCommand("opencodego.renameActiveProfile");
+          break;
+      }
+    },
+    null,
+    context.subscriptions,
+  );
+
+  usageWebviewRendered = false;
   updateWebviewContent();
 }
 
@@ -1426,18 +1446,18 @@ function jsonForWebview(value: unknown): string {
   return JSON.stringify(value).replace(/<\//g, "<\\/");
 }
 
-function updateWebviewContent(): void {
-  if (!usageWebviewPanel || !goUsageTracker) return;
+/** Whether the usage webview has received its initial HTML (data flows via postMessage after that). */
+let usageWebviewRendered = false;
+
+/** Build the chart/stat payload shown by the usage webview. */
+function usageWebviewData(): Record<string, unknown> | undefined {
+  if (!goUsageTracker) return undefined;
   const tracker = activeGoUsageTracker();
-  if (!tracker) {
-    usageWebviewPanel.webview.html = `<html><body><p>No active tracker</p></body></html>`;
-    return;
-  }
+  if (!tracker) return undefined;
   const s = tracker.getSummary();
   const chartDays = vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>(SETTING_USAGE_CHART_DAYS, DEFAULT_USAGE_CHART_DAYS);
   const series = tracker.getUsageSeries(chartDays);
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
-  const profileLabel = activeProfile?.label ?? "OpenCode Go";
   const showRolling = usageRollingMeterVisible();
 
   const rings = [
@@ -1471,8 +1491,9 @@ function updateWebviewContent(): void {
     },
   ];
 
-  const data = {
-    profile: profileLabel,
+  return {
+    profile: activeProfile?.label ?? "OpenCode Go",
+    showRename: nonLegacyCount(profilesCache) > 0,
     rings,
     stats: {
       total: { label: "Total spend", cost: s.codebase.cost, tokens: s.codebase.tokens, requests: s.codebase.requests },
@@ -1483,8 +1504,29 @@ function updateWebviewContent(): void {
     byModel: series.byModel,
     windowDays: chartDays,
   };
+}
 
-  usageWebviewPanel.webview.html = `
+function updateWebviewContent(): void {
+  if (!usageWebviewPanel || !goUsageTracker) return;
+  const data = usageWebviewData();
+  if (!data) {
+    usageWebviewPanel.webview.html = `<html><body><p>No active tracker</p></body></html>`;
+    usageWebviewRendered = false;
+    return;
+  }
+
+  if (!usageWebviewRendered) {
+    // First paint: render the full page. Later refreshes only push new data
+    // via postMessage so the user's active tab and chart stay in place.
+    usageWebviewPanel.webview.html = usageWebviewHtml(String(data.profile));
+    usageWebviewRendered = true;
+  }
+  void usageWebviewPanel.webview.postMessage({ type: "usage", data });
+}
+
+function usageWebviewHtml(profileLabel: string): string {
+  const data = usageWebviewData() ?? {};
+  return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -1596,9 +1638,9 @@ function updateWebviewContent(): void {
       .btn.primary{ color:var(--text-hi); border-color:var(--line); }
       .btn.primary:hover{ border-color:var(--amber); }
 
-      .legend{ display:flex; gap: var(--s); flex-wrap:wrap; flex:none; align-items:center; }
-      .legend .l-item{ display:flex; align-items:center; gap:5px; font-size: clamp(9px, 1.05vh, 11px); color:var(--text-mid); white-space:nowrap; }
-      .legend .l-swatch{ width:14px; height:3px; border-radius:2px; flex:none; }
+      .legend{ display:flex; gap: clamp(10px, 1.4vh, 16px); flex-wrap:wrap; flex:none; align-items:center; padding: 2px 0 0 2px; }
+      .legend .l-item{ display:flex; align-items:center; gap:7px; font-size: clamp(10px, 1.2vh, 12px); line-height:1; color:var(--text-mid); white-space:nowrap; }
+      .legend .l-swatch{ width: clamp(10px, 1.2vh, 12px); height: clamp(10px, 1.2vh, 12px); border-radius:3px; flex:none; }
       .legend .l-more{ color:var(--text-lo); font-size: clamp(9px, 1.05vh, 11px); }
 
       @media (max-width: 620px){
@@ -1606,7 +1648,6 @@ function updateWebviewContent(): void {
         .ring-card{ flex:1 1 100%; }
         .panel-top{ flex-wrap:wrap; }
         .stat-chips{ display:none; }
-        .brand .sub{ display:none; }
       }
       @media (prefers-reduced-motion: reduce){ *{ transition:none !important; animation:none !important; } }
     </style>
@@ -1615,13 +1656,12 @@ function updateWebviewContent(): void {
       <div class="topbar">
         <div class="brand">
           <div class="mark">OC</div>
-          <div class="name">${escapeHtml(profileLabel)} — Usage</div>
-          <div class="sub">opencode-copilot-chat</div>
+          <div class="name" id="brandName">${escapeHtml(profileLabel)} — Usage</div>
         </div>
         <div class="actions">
-          <a class="btn" href="command:opencodego.setUsageTargets" title="Set manual spent targets for Session / Weekly / Monthly">Set targets</a>
-          ${nonLegacyCount(profilesCache) > 0 ? '<a class="btn" href="command:opencodego.renameActiveProfile" title="Rename the active profile">Rename</a>' : ""}
-          <a class="btn primary" href="command:opencodego.refreshUsage" title="Refresh usage data now">Refresh</a>
+          <button class="btn" id="btnTargets" title="Set manual spent targets for Session / Weekly / Monthly">Set targets</button>
+          <button class="btn" id="btnRename" title="Rename the active profile" style="display:none">Rename</button>
+          <button class="btn primary" id="btnRefresh" title="Refresh usage data now">Refresh</button>
         </div>
       </div>
 
@@ -1648,6 +1688,7 @@ function updateWebviewContent(): void {
       <script>
       (function () {
         'use strict';
+        var vscode = acquireVsCodeApi();
         var DATA = JSON.parse(document.getElementById('usage-data').textContent);
         var MODEL_COLORS = ['#e3b341','#5aa9ff','#3fdbb0','#ef7f6b','#a98ef9','#7fd1a8'];
         var svgNS = 'http://www.w3.org/2000/svg';
@@ -1682,6 +1723,27 @@ function updateWebviewContent(): void {
           var norm = v / mag;
           return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
         }
+        // Round tick step (1/2/2.5/5 x 10^n) so axis gaps stay clean: never
+        // 1.25 / 2.50 / 3.75-style odd divisions.
+        function niceStep(v) {
+          if (v <= 0) return 1;
+          var mag = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+          var norm = v / mag;
+          var cand = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+          return cand * mag;
+        }
+        // Round the max up to a multiple of a round step, then emit 0..top ticks.
+        function axisTicks(maxVal, bands) {
+          var step = niceStep(maxVal / Math.max(1, bands));
+          var top = Math.ceil(maxVal / step) * step;
+          var ticks = [];
+          for (var v = top; v > -1e-9; v -= step) ticks.push(Math.round(v * 10000) / 10000);
+          return { top: top, step: step, ticks: ticks };
+        }
+        function fmtAxisUsd(v) {
+          if (v >= 1000) return fmtUsd(v);
+          return '$' + String(Math.round(v * 100) / 100);
+        }
         function metricValues(m) {
           return DATA.days.map(function (d) { return m === 'spend' ? d.cost : m === 'requests' ? d.requests : d.tokens; });
         }
@@ -1714,8 +1776,11 @@ function updateWebviewContent(): void {
           var plotW = Math.max(1, W - padL - padR), plotH = Math.max(1, H - padT - padB);
           var vals = metricValues(m);
           var maxVal = niceMax(Math.max.apply(null, vals) * 1.15);
+          var axis = axisTicks(maxVal, 4);
+          maxVal = axis.top;
           var color = m === 'spend' ? '#e3b341' : m === 'requests' ? '#5aa9ff' : '#3fdbb0';
           var fmt = metricFmt(m), unit = metricUnit(m);
+          var fmtAxis = m === 'spend' ? fmtAxisUsd : fmt;
           var n = DATA.days.length;
 
           var defs = el('defs', {});
@@ -1725,13 +1790,11 @@ function updateWebviewContent(): void {
           defs.appendChild(grad);
           svg.appendChild(defs);
 
-          var bands = 4;
-          for (var i = 0; i <= bands; i++) {
-            var gy = padT + (plotH * i / bands);
-            var v = maxVal * (1 - i / bands);
+          axis.ticks.forEach(function (v) {
+            var gy = padT + plotH - (v / maxVal) * plotH;
             svg.appendChild(el('line', { x1: padL, y1: gy, x2: W - padR, y2: gy, stroke: 'rgba(255,255,255,0.06)', 'stroke-width': '1' }));
-            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmt(v)));
-          }
+            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmtAxis(v)));
+          });
 
           var step = n > 1 ? plotW / (n - 1) : plotW;
           var points = DATA.days.map(function (d, i) {
@@ -1801,19 +1864,19 @@ function updateWebviewContent(): void {
             };
           });
           var maxVal = niceMax(Math.max.apply(null, series.map(function (s) { return s.total; })) * 1.15);
+          var axis = axisTicks(maxVal, 4);
+          maxVal = axis.top;
 
           var padL = 44, padR = 10, padT = 12, padB = 24;
           var plotW = Math.max(1, W - padL - padR), plotH = Math.max(1, H - padT - padB);
           var n = DATA.days.length;
           var step = n > 1 ? plotW / (n - 1) : plotW;
 
-          var bands = 4;
-          for (var i = 0; i <= bands; i++) {
-            var gy = padT + (plotH * i / bands);
-            var v = maxVal * (1 - i / bands);
+          axis.ticks.forEach(function (v) {
+            var gy = padT + plotH - (v / maxVal) * plotH;
             svg.appendChild(el('line', { x1: padL, y1: gy, x2: W - padR, y2: gy, stroke: 'rgba(255,255,255,0.06)', 'stroke-width': '1' }));
-            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmtUsd(v)));
-          }
+            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmtAxisUsd(v)));
+          });
           var labelEvery = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(plotW / 46))));
           DATA.days.forEach(function (d, i) {
             if (i % labelEvery !== 0 && i !== n - 1) return;
@@ -1880,26 +1943,28 @@ function updateWebviewContent(): void {
           render(btn.dataset.metric);
         });
 
-        // rings
-        var ringsBox = document.getElementById('rings');
-        ringsBox.innerHTML = DATA.rings.map(function (r) {
-          var c = 2 * Math.PI * 24;
-          return '<div class="ring-card ' + r.key + '">' +
-            '<div class="ring-wrap"><svg viewBox="0 0 58 58">' +
-            '<circle class="ring-bg" cx="29" cy="29" r="24"></circle>' +
-            '<circle class="ring-fg" cx="29" cy="29" r="24" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + c.toFixed(1) + '" data-pct="' + r.percent + '"></circle>' +
-            '</svg><div class="ring-pct">' + Math.round(r.percent) + '%</div></div>' +
-            '<div class="ring-info"><div class="label">' + r.label + '</div>' +
-            '<div class="reset">resets in ' + r.resetsIn + '</div>' +
-            '<div class="amounts"><b>' + fmtUsd(r.spent) + '</b> / ' + fmtUsd(r.limit) + '</div></div></div>';
-        }).join('');
-        document.querySelectorAll('.ring-fg').forEach(function (circle) {
-          var pct = Math.max(0, Math.min(100, parseFloat(circle.getAttribute('data-pct'))));
-          var c = 2 * Math.PI * 24;
-          requestAnimationFrame(function () {
-            setTimeout(function () { circle.style.strokeDashoffset = String(c - (pct / 100) * c); }, 120);
+        // rings (re-rendered on every data refresh)
+        function renderRings() {
+          var ringsBox = document.getElementById('rings');
+          ringsBox.innerHTML = DATA.rings.map(function (r) {
+            var c = 2 * Math.PI * 24;
+            return '<div class="ring-card ' + r.key + '">' +
+              '<div class="ring-wrap"><svg viewBox="0 0 58 58">' +
+              '<circle class="ring-bg" cx="29" cy="29" r="24"></circle>' +
+              '<circle class="ring-fg" cx="29" cy="29" r="24" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + c.toFixed(1) + '" data-pct="' + r.percent + '"></circle>' +
+              '</svg><div class="ring-pct">' + Math.round(r.percent) + '%</div></div>' +
+              '<div class="ring-info"><div class="label">' + r.label + '</div>' +
+              '<div class="reset">resets in ' + r.resetsIn + '</div>' +
+              '<div class="amounts"><b>' + fmtUsd(r.spent) + '</b> / ' + fmtUsd(r.limit) + '</div></div></div>';
+          }).join('');
+          document.querySelectorAll('.ring-fg').forEach(function (circle) {
+            var pct = Math.max(0, Math.min(100, parseFloat(circle.getAttribute('data-pct'))));
+            var c = 2 * Math.PI * 24;
+            requestAnimationFrame(function () {
+              setTimeout(function () { circle.style.strokeDashoffset = String(c - (pct / 100) * c); }, 120);
+            });
           });
-        });
+        }
 
         var resizeTimer = null;
         function scheduleRedraw() {
@@ -1909,6 +1974,28 @@ function updateWebviewContent(): void {
         if (window.ResizeObserver) new ResizeObserver(scheduleRedraw).observe(box);
         else window.addEventListener('resize', scheduleRedraw);
 
+        // buttons -> extension host
+        var refreshBtn = document.getElementById('btnRefresh');
+        document.getElementById('btnTargets').addEventListener('click', function () { vscode.postMessage({ type: 'setTargets' }); });
+        document.getElementById('btnRename').addEventListener('click', function () { vscode.postMessage({ type: 'renameProfile' }); });
+        refreshBtn.addEventListener('click', function () {
+          refreshBtn.textContent = 'Refreshing\u2026';
+          vscode.postMessage({ type: 'refresh' });
+        });
+
+        // live data updates keep the active tab (no full page reload)
+        window.addEventListener('message', function (ev) {
+          var msg = ev.data;
+          if (!msg || msg.type !== 'usage') return;
+          DATA = msg.data;
+          document.getElementById('brandName').textContent = DATA.profile + ' \u2014 Usage';
+          document.getElementById('btnRename').style.display = DATA.showRename ? '' : 'none';
+          refreshBtn.textContent = 'Refresh';
+          renderRings();
+          render(current);
+        });
+
+        renderRings();
         render('spend');
       })();
       </script>
