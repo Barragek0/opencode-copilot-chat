@@ -47,6 +47,7 @@ import {
 } from "./providerTypes";
 import { providerEnabledSetting } from "./providerEnablement";
 import { isInternalDataPart, isReasoningMarkerPart, readReasoningMarker } from "./chatParts";
+import { registerInlineCompletions } from "./autocomplete";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
 import { providerModelDisplayName } from "./modelNames";
@@ -999,6 +1000,13 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   void warmModelPickerMetadata();
+
+  // Experimental inline code suggestions (issue #49). Opt-in via
+  // `opencodego.inlineSuggestions`; the provider reads the config live.
+  registerInlineCompletions(context, {
+    chatCompletionsUrl: PROVIDERS[GO_VENDOR].chatCompletionsUrl,
+    resolveApiKey: async () => _extensionContext?.secrets.get(SECRET_KEY),
+  });
 }
 
 async function configureUtilityModels(): Promise<void> {

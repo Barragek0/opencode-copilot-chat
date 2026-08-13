@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": ["."],
+  // Mirrors .gitignore: nothing gitignored may enter the TS projects.
+  "exclude": ["node_modules", "../node_modules", "../out", "../tmp"]
+}

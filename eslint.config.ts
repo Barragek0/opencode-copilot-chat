@@ -17,20 +17,30 @@
 // via `--max-warnings 0`. The only rules disabled here are ones whose noise
 // outweighs their value (see the scoped overrides below).
 
-import { readFileSync } from "node:fs";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 import yml from "eslint-plugin-yml";
 import jsonc from "eslint-plugin-jsonc";
+import { gitignorePatterns } from "./scripts/gitignore";
 
-const gitignore = readFileSync(new URL(".gitignore", import.meta.url), "utf8")
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"));
+// eslint.config.ts is loaded as ESM by ESLint (via jiti) but lives outside
+// both tsconfig projects, so the editor's inferred CommonJS project does not
+// see @types/node's `import.meta.dirname` (declared only for node16/nodenext
+// modules). It exists at runtime; declare it explicitly to silence the
+// editor diagnostic. Matches @types/node's own declaration, so type-checked
+// consumers merge cleanly.
+declare global {
+  interface ImportMeta {
+    dirname: string;
+  }
+}
 
+const gitignore = gitignorePatterns();
 // Files not covered by tsconfig (which only includes src/), type-checked via
 // the default project so strictTypeChecked rules still apply to them.
-const nonProjectFiles = ["eslint.config.ts", "scripts/*.ts"];
+// eslint.config.ts is ESM-only (loaded via jiti) and lives outside both
+// tsconfig projects; scripts/*.ts are covered by scripts/tsconfig.json.
+const nonProjectFiles = ["eslint.config.ts"];
 
 // The typescript-eslint `config()` helper is deprecated; ESLint core now
 // provides `defineConfig()`. We replicate the helper's `extends` expansion
@@ -51,6 +61,9 @@ export default defineConfig([
       parserOptions: {
         projectService: {
           allowDefaultProject: nonProjectFiles,
+          // scripts/ (and eslint.config.ts) are type-checked via the default
+          // project; keep the cap above the script count as it grows.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 64,
         },
         tsconfigRootDir: import.meta.dirname,
       },
