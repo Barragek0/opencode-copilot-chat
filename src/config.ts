@@ -148,6 +148,8 @@ export const GO_USAGE_API_URL = "https://opencode.ai/zen/go/v1/usage";
 /** How long a successful server-usage snapshot is reused before refetching. */
 export const GO_USAGE_SYNC_TTL_MS = 60_000;
 export const GO_USAGE_LOG_KEY = "opencodego.usageLog.v1";
+/** Persisted copy of the last successful server-usage snapshot (startup fast-path). */
+export const GO_SERVER_USAGE_KEY = "opencodego.serverUsage.v1";
 export const GO_USAGE_BASELINE_KEY = "opencodego.usageBaseline.v1";
 export const GO_EVER_TRACKED_KEY = "opencodego.everTracked.v1";
 export const GO_SESSION_COSTS_KEY = "opencodego.sessionCosts.v1";

@@ -16,6 +16,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Fixed
 
+- **`[Usage]` Instant startup + no more slow usage reads.** The last successful server-usage snapshot is now persisted (`opencodego.serverUsage.v1`) and restored on window start, so the status bar / tooltip render real meters immediately instead of 0s until the network refetch lands (the TTL-guarded refresh still runs in the background). The CLI database read — a blocking `sqlite3` call over a multi-GB file — is memoized for 3 seconds, so a burst of UI refreshes (status bar + tooltip + panel) pays the query cost once.
+
 - **`[Usage]` Compact number formatting everywhere.** Token AND request counts render as `1.2T` / `1.2B` / `1.2M` / `12k` (with correct unit escalation at rounding boundaries — no more `1000.0M`), and dollars as `$1.23M` / `$1.50K` / `$12.30` with sub-cent precision (`$0.0004`) so tiny spend never collapses to `$0.00`. Applied to the status-bar tooltip, tooltip card, quick-pick and usage panel.
 
 - **`[Usage]` Today/Yesterday now merge the OpenCode CLI history with extension-tracked usage.** The CLI database (`~/.local/share/opencode/opencode.db`) stores per-message `cost` + `tokens.{input,output,reasoning,cache}` + `path.cwd` + timestamps, so users who also run OpenCode in the terminal get their real combined daily totals (terminal + VS Code) instead of VS Code-only estimates. Configurable via `opencodego.usageTodayYesterdaySource` (`auto` / `cli` / `extension`).

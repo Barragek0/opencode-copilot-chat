@@ -18,6 +18,7 @@ import {
   GO_MAX_LOG_ENTRIES,
   GO_SESSION_IDLE_MS,
   GO_MAX_SESSIONS,
+  GO_SERVER_USAGE_KEY,
   type UsageTodayYesterdaySource,
 } from "./config";
 import { formatCount, formatTokenCount, formatUsd, formatRelativeTime } from "./utils";
@@ -377,7 +378,26 @@ export interface UsageDaily {
   tokens: number;
 }
 
+/**
+ * The CLI database can be gigabytes large and spawning `sqlite3` is a
+ * synchronous, blocking call — but the usage UI (status bar, tooltip, panel,
+ * quick-pick) re-reads it on every refresh. Memoize the result for a short
+ * window so a burst of refreshes pays the query cost once.
+ */
+const HISTORY_READ_TTL_MS = 3_000;
+let historyCache: { rows: HistoryRow[] | null; fetchedAt: number } | undefined;
+
 function readOpenCodeHistory(): HistoryRow[] | null {
+  const now = Date.now();
+  if (historyCache && now - historyCache.fetchedAt < HISTORY_READ_TTL_MS) {
+    return historyCache.rows;
+  }
+  const rows = readOpenCodeHistoryUncached();
+  historyCache = { rows, fetchedAt: now };
+  return rows;
+}
+
+function readOpenCodeHistoryUncached(): HistoryRow[] | null {
   if (!fs.existsSync(OPENCODE_DB_PATH)) return null;
 
   try {
@@ -449,6 +469,10 @@ export class GoUsageTracker {
     this.log = log;
     this.costResolver = costResolver;
     this.restore();
+    // Fast startup: show the last successful server snapshot immediately
+    // instead of 0s until the TTL-guarded refetch lands. `serverUsageFetchedAt`
+    // stays 0, so the background sync still refreshes right away.
+    this.serverUsage = this.context.globalState.get<GoUsageApiResponse>(this.storageKey(GO_SERVER_USAGE_KEY));
   }
 
   private storageKey(base: string): string {
@@ -683,6 +707,8 @@ export class GoUsageTracker {
       return false;
     }
     this.serverUsage = result.data;
+    // Persist so the next window start can render the meters instantly.
+    void this.context.globalState.update(this.storageKey(GO_SERVER_USAGE_KEY), result.data);
     this.log?.("[go-usage] Server usage synced from /zen/go/v1/usage.");
     return true;
   }

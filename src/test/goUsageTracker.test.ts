@@ -6,8 +6,16 @@ import fs from "node:fs";
 import os from "node:os";
 import type { ModelCost } from "../metadata.js";
 import type { TransportRequestSummary } from "../streaming.js";
-import { GO_USAGE_LOG_KEY, GO_USAGE_BASELINE_KEY, GO_SESSION_COSTS_KEY, GO_SESSION_IDLE_MS, GO_MAX_SESSIONS } from "../config.js";
-import type { HistoryRow, UsageDaily, UsageLogEntry } from "../goUsageTracker.js";
+import {
+  GO_USAGE_LOG_KEY,
+  GO_USAGE_BASELINE_KEY,
+  GO_SESSION_COSTS_KEY,
+  GO_SESSION_IDLE_MS,
+  GO_MAX_SESSIONS,
+  GO_SERVER_USAGE_KEY,
+} from "../config.js";
+import type { GoUsageApiResponse } from "../goUsageSync";
+import type { HistoryRow, UsageDaily, UsageLogEntry, UsageSummary } from "../goUsageTracker.js";
 
 // ── Types (populated by dynamic import in before()) ────────────────────────
 
@@ -38,6 +46,8 @@ interface GoUsageTrackerInstance {
   record(summary: TransportRequestSummary, externalCost?: ModelCost): void;
   getCurrentSessionCost(): SessionSummary | undefined;
   getRecentSessionCosts(limit?: number): SessionSummary[];
+  getSummary(): UsageSummary;
+  readonly hasServerUsage: boolean;
   clear(): void;
 }
 
@@ -45,6 +55,7 @@ type GoUsageTrackerConstructor = new (
   context: unknown,
   log?: (msg: string) => void,
   costResolver?: (modelId: string) => ModelCost | undefined,
+  storageKeySuffix?: string,
 ) => GoUsageTrackerInstance;
 
 let GoUsageTracker: GoUsageTrackerConstructor;
@@ -684,5 +695,32 @@ describe("startOfLocalDay", () => {
     assert.equal(d.getMinutes(), 0);
     assert.equal(d.getSeconds(), 0);
     assert.ok(localMidnight <= now.getTime());
+  });
+});
+
+describe("server usage snapshot persistence", () => {
+  const snapshot: GoUsageApiResponse = {
+    usage: {
+      rolling: { status: "ok", percent: 27, resetsAt: "2026-08-13T14:32:10.000Z" },
+      weekly: { status: "ok", percent: 62, resetsAt: "2026-08-17T00:00:00.000Z" },
+      monthly: { status: "rate-limited", percent: 100, resetsAt: "2026-08-31T00:00:00.000Z" },
+    },
+  };
+
+  it("restores the persisted snapshot on construction (instant startup)", () => {
+    const tracker = new GoUsageTracker(createMockContext({ [GO_SERVER_USAGE_KEY]: snapshot }));
+    assert.equal(tracker.hasServerUsage, true, "snapshot must be available before any network fetch");
+    const summary = tracker.getSummary();
+    assert.equal(summary.session.percent, 27);
+    assert.equal(summary.weekly.percent, 62);
+    assert.equal(summary.monthly.percent, 100);
+  });
+
+  it("uses namespaced storage for per-profile trackers", () => {
+    const tracker = new GoUsageTracker(createMockContext(), undefined, undefined, "fp-1234");
+    const summary = tracker.getSummary();
+    // No snapshot stored for this profile yet → meters fall back to local estimates.
+    assert.equal(tracker.hasServerUsage, false);
+    assert.ok(summary.weekly.limit > 0);
   });
 });
