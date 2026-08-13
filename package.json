@@ -61,14 +61,6 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "keybindings": [
-      {
-        "command": "opencodego.showUsageDetails",
-        "key": "ctrl+shift+alt+u",
-        "mac": "cmd+shift+alt+u",
-        "when": "!inQuickOpen"
-      }
-    ],
     "commands": [
       {
         "command": "opencodego.manage",

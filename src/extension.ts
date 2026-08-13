@@ -861,6 +861,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => {
       showUsageWebview(context);
     }),
+    vscode.commands.registerCommand("opencodego.refreshUsage", () => {
+      refreshGoUsageStatusBar();
+    }),
     vscode.commands.registerCommand("opencodego.setUsageTargets", async () => {
       const tracker = activeGoUsageTracker();
       if (!tracker) return;
@@ -1514,6 +1517,7 @@ function updateWebviewContent(): void {
       *{ min-width:0; min-height:0; }
 
       .topbar{ grid-area:topbar; display:flex; align-items:center; gap: var(--s); }
+      .topbar .actions{ margin-left:auto; display:flex; gap: calc(var(--s)/2); flex:none; }
       .brand{ display:flex; align-items:center; gap: clamp(6px,1vw,10px); min-width:0; }
       .brand .mark{
         width: clamp(20px, 2.4vh, 28px); height: clamp(20px, 2.4vh, 28px);
@@ -1581,10 +1585,21 @@ function updateWebviewContent(): void {
       .ttip b{ color:var(--text-hi); }
       .ttip .t-sub{ color:var(--text-mid); font-size:10px; margin-top:2px; }
 
-      .foot{ display:flex; gap: var(--s); flex:none; align-items:center; }
-      .foot a{ color:var(--text-mid); font-size: clamp(9.5px, 1.1vh, 11px); text-decoration:none; cursor:pointer; }
-      .foot a:hover{ color:var(--text-hi); text-decoration:underline; }
-      .foot .spacer{ flex:1; }
+      .btn{
+        background:var(--bg-2); border:1px solid var(--line); color:var(--text-mid);
+        font-family:var(--sans); font-size: clamp(9.5px, 1.1vh, 11px); font-weight:600;
+        padding: clamp(5px, 0.8vh, 8px) clamp(10px, 1.4vh, 14px);
+        border-radius: calc(var(--radius) - 4px); text-decoration:none; cursor:pointer;
+        white-space:nowrap; transition: background .15s ease, color .15s ease, border-color .15s ease;
+      }
+      .btn:hover{ background:var(--bg-3); color:var(--text-hi); border-color:var(--text-lo); }
+      .btn.primary{ color:var(--text-hi); border-color:var(--line); }
+      .btn.primary:hover{ border-color:var(--amber); }
+
+      .legend{ display:flex; gap: var(--s); flex-wrap:wrap; flex:none; align-items:center; }
+      .legend .l-item{ display:flex; align-items:center; gap:5px; font-size: clamp(9px, 1.05vh, 11px); color:var(--text-mid); white-space:nowrap; }
+      .legend .l-swatch{ width:14px; height:3px; border-radius:2px; flex:none; }
+      .legend .l-more{ color:var(--text-lo); font-size: clamp(9px, 1.05vh, 11px); }
 
       @media (max-width: 620px){
         .rings-row{ flex-wrap:wrap; }
@@ -1601,7 +1616,12 @@ function updateWebviewContent(): void {
         <div class="brand">
           <div class="mark">OC</div>
           <div class="name">${escapeHtml(profileLabel)} — Usage</div>
-          <div class="sub">opencode-copilot-chat · last ${String(chartDays)} days</div>
+          <div class="sub">opencode-copilot-chat</div>
+        </div>
+        <div class="actions">
+          <a class="btn" href="command:opencodego.setUsageTargets" title="Set manual spent targets for Session / Weekly / Monthly">Set targets</a>
+          ${nonLegacyCount(profilesCache) > 0 ? '<a class="btn" href="command:opencodego.renameActiveProfile" title="Rename the active profile">Rename</a>' : ""}
+          <a class="btn primary" href="command:opencodego.refreshUsage" title="Refresh usage data now">Refresh</a>
         </div>
       </div>
 
@@ -1617,15 +1637,10 @@ function updateWebviewContent(): void {
           </div>
           <div class="stat-chips" id="statChips"></div>
         </div>
+        <div class="legend" id="legend"></div>
         <div class="chart-box" id="chartBox">
           <svg id="chartSvg" xmlns="http://www.w3.org/2000/svg"></svg>
           <div class="ttip" id="ttip"></div>
-        </div>
-        <div class="foot">
-          <a href="command:opencodego.setUsageTargets">Set spent targets</a>
-          ${nonLegacyCount(profilesCache) > 0 ? '<a href="command:opencodego.renameActiveProfile">Rename profile</a>' : ""}
-          <span class="spacer"></span>
-          <a href="command:opencodego.setUsageTargets">Auto-refreshes every ${String(usageRefreshIntervalSeconds())}s</a>
         </div>
       </div>
 
@@ -1755,13 +1770,13 @@ function updateWebviewContent(): void {
           svg.appendChild(el('line', { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: '#242a33', 'stroke-width': '1' }));
         }
 
-        function drawModels() {
+        function drawModelLines() {
           var W = box.clientWidth, H = box.clientHeight;
           if (!W || !H) return;
           svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
           clear();
 
-          // per-model totals (spend) to rank bars; segments = days
+          // per-model daily spend, ranked by total
           var totals = {};
           var perModel = {};
           DATA.byModel.forEach(function (p) {
@@ -1773,46 +1788,67 @@ function updateWebviewContent(): void {
             svg.appendChild(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '11' }, 'No usage in the last ' + DATA.windowDays + ' days'));
             return;
           }
-          var dayIndex = {};
-          DATA.days.forEach(function (d, i) { dayIndex[d.dayStart] = i; });
-          var dayCount = DATA.days.length;
-          var maxTotal = niceMax(Math.max.apply(null, models.map(function (m) { return totals[m]; })) * 1.15);
 
-          var labelW = Math.min(W * 0.34, 160);
-          var valueW = 56;
-          var barX = labelW + 12;
-          var barW = Math.max(20, W - barX - valueW);
-          var rowH = H / models.length;
-
-          models.forEach(function (model, i) {
-            var cy = rowH * i + rowH / 2;
-            var barH = Math.min(rowH * 0.46, 18);
-            var color = MODEL_COLORS[i % MODEL_COLORS.length];
-
-            svg.appendChild(el('text', { x: labelW, y: cy + 3, 'text-anchor': 'end', fill: '#eef1f5', 'font-size': '10' }, model));
-            svg.appendChild(el('rect', { x: barX, y: cy - barH / 2, width: barW, height: barH, rx: 4, fill: 'rgba(255,255,255,0.05)' }));
-
-            // stacked segments, oldest day at the left
-            var days = perModel[model].slice().sort(function (a, b) { return a.dayStart - b.dayStart; });
-            var x = barX;
-            days.forEach(function (p) {
-              var segW = Math.max(1, (p.cost / maxTotal) * barW);
-              var seg = el('rect', { x: x, y: cy - barH / 2, width: segW, height: barH, rx: 2, fill: color, 'fill-opacity': String(0.35 + 0.6 * ((dayIndex[p.dayStart] + 1) / dayCount)) });
-              seg.addEventListener('mousemove', function (ev) {
-                showTooltip(ev.clientX, ev.clientY,
-                  '<span class="t-line">' + model + ' · ' + dayLabel(p.dayStart) + '</span><b>' + fmtUsd(p.cost) + '</b>' +
-                  '<div class="t-sub">' + fmtCount(p.tokens) + ' tokens · ' + fmtCount(p.requests) + ' requests</div>');
-              });
-              seg.addEventListener('mouseleave', hideTooltip);
-              svg.appendChild(seg);
-              x += segW;
-            });
-
-            var val = el('text', { x: barX + barW + 8, y: cy + 3, 'text-anchor': 'start', fill: '#9aa4b2', 'font-size': '10' });
-            val.textContent = fmtUsd(totals[model]);
-            svg.appendChild(val);
+          var series = models.map(function (model) {
+            return {
+              model: model,
+              total: totals[model],
+              values: DATA.days.map(function (d) {
+                var hit = null;
+                (perModel[model] || []).forEach(function (p) { if (p.dayStart === d.dayStart) hit = p; });
+                return hit ? hit : { cost: 0, tokens: 0, requests: 0, dayStart: d.dayStart };
+              }),
+            };
           });
-          svg.appendChild(el('text', { x: barX, y: H - 6, 'text-anchor': 'start', fill: '#5b6472', 'font-size': '9' }, 'Segments = days (hover for model · day breakdown)'));
+          var maxVal = niceMax(Math.max.apply(null, series.map(function (s) { return s.total; })) * 1.15);
+
+          var padL = 44, padR = 10, padT = 12, padB = 24;
+          var plotW = Math.max(1, W - padL - padR), plotH = Math.max(1, H - padT - padB);
+          var n = DATA.days.length;
+          var step = n > 1 ? plotW / (n - 1) : plotW;
+
+          var bands = 4;
+          for (var i = 0; i <= bands; i++) {
+            var gy = padT + (plotH * i / bands);
+            var v = maxVal * (1 - i / bands);
+            svg.appendChild(el('line', { x1: padL, y1: gy, x2: W - padR, y2: gy, stroke: 'rgba(255,255,255,0.06)', 'stroke-width': '1' }));
+            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmtUsd(v)));
+          }
+          var labelEvery = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(plotW / 46))));
+          DATA.days.forEach(function (d, i) {
+            if (i % labelEvery !== 0 && i !== n - 1) return;
+            svg.appendChild(el('text', { x: padL + step * i, y: H - 6, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '9' }, dayLabel(d.dayStart)));
+          });
+
+          // one overlapping line per model (spend), colored per model
+          series.forEach(function (s, si) {
+            var color = MODEL_COLORS[si % MODEL_COLORS.length];
+            var pts = s.values.map(function (p, i) {
+              return { x: padL + step * i, y: padT + plotH - (p.cost / maxVal) * plotH, p: p };
+            });
+            var d = pts.map(function (p, i) { return (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+            svg.appendChild(el('path', { d: d, fill: 'none', stroke: color, 'stroke-width': '1.6', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+            pts.forEach(function (p, i) {
+              if (p.p.cost <= 0) return;
+              var c = el('circle', { cx: p.x, cy: p.y, r: '7', fill: 'transparent', stroke: 'none' });
+              c.addEventListener('mousemove', function (ev) {
+                showTooltip(ev.clientX, ev.clientY,
+                  '<span class="t-line">' + s.model + ' · ' + dayLabel(p.p.dayStart) + '</span><b>' + fmtUsd(p.p.cost) + '</b>' +
+                  '<div class="t-sub">' + fmtCount(p.p.tokens) + ' tokens · ' + fmtCount(p.p.requests) + ' requests</div>');
+              });
+              c.addEventListener('mouseleave', hideTooltip);
+              svg.appendChild(c);
+            });
+          });
+
+          svg.appendChild(el('line', { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: '#242a33', 'stroke-width': '1' }));
+
+          // legend (up to 8 models, ranked by total spend)
+          var legend = document.getElementById('legend');
+          legend.innerHTML = series.slice(0, 8).map(function (s, i) {
+            var color = MODEL_COLORS[i % MODEL_COLORS.length];
+            return '<span class="l-item"><span class="l-swatch" style="background:' + color + '"></span>' + s.model + '</span>';
+          }).join('') + (series.length > 8 ? '<span class="l-more">+' + (series.length - 8) + ' more</span>' : '');
         }
 
         function render(key) {
@@ -1822,9 +1858,10 @@ function updateWebviewContent(): void {
             chips.innerHTML =
               '<div class="stat-chip"><div class="k">Total spend</div><div class="v">' + fmtUsd(metricTotal('spend')) + '</div></div>' +
               '<div class="stat-chip"><div class="k">Window</div><div class="v">' + DATA.windowDays + ' days</div></div>';
-            drawModels();
+            drawModelLines();
             return;
           }
+          document.getElementById('legend').innerHTML = '';
           var st = DATA.stats;
           var totalKey = key === 'spend' ? 'total' : key;
           chips.innerHTML =
