@@ -330,8 +330,12 @@ function getUserAgent(): string {
  *   AbortSignal.timeout is transient and can be retried.
  */
 function isTransientFetchError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") return false;
-  if (error instanceof DOMException && error.name === "TimeoutError") return true;
+  // DOMException is a global since Node 17; guard anyway so a hypothetical
+  // older host never crashes inside error classification.
+  if (typeof DOMException === "function" && error instanceof DOMException) {
+    if (error.name === "AbortError") return false;
+    if (error.name === "TimeoutError") return true;
+  }
   const cause = (error as { cause?: { code?: string; name?: string } } | undefined)?.cause;
   const code = cause?.code ?? (error as { code?: string } | undefined)?.code;
   const name = cause?.name ?? (error as { name?: string } | undefined)?.name;
@@ -2713,7 +2717,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         }
         // 2. Classify the error. Timeout (AbortError without token cancel)
         //    and transient network errors are retryable; HTTP 4xx is not.
-        const aborted = error instanceof DOMException && error.name === "AbortError";
+        const aborted = typeof DOMException === "function" && error instanceof DOMException && error.name === "AbortError";
         const transient = aborted || isTransientFetchError(error);
         // 3. On final attempt or non-transient error, fall through to
         //    cache/bundled fallback below.
