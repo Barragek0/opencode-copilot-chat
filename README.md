@@ -383,6 +383,8 @@ Provider diagnostics also include the VS Code/extension versions, extension host
 
 | Setting                                   | Default  | Description                                                                                                            |
 | ----------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `opencodego.apiBaseUrl`                   | `https://opencode.ai/zen/go/v1` | Base URL for a Go-compatible gateway; the extension appends the required API routes. Reload after changing. |
+| `opencodezen.apiBaseUrl`                  | `https://opencode.ai/zen/v1`    | Base URL for a Zen-compatible gateway; the extension appends the required API routes. Reload after changing. |
 | `opencodego.temperature`                  | `0.2`    | Sampling temperature (`0`–`2`)                                                                                         |
 | `opencodego.maxTokens`                    | `0`      | Max output token override (`0` = per-model max)                                                                        |
 | `opencodego.maxInputTokens`               | `0`      | Context window override (`0` = per-model default)                                                                      |

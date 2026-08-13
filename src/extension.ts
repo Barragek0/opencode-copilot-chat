@@ -83,9 +83,14 @@ import {
   MODEL_LIST_FETCH_TIMEOUT_MS,
   MODEL_METADATA_FETCH_TIMEOUT_MS,
   OPEN_CODE_CLIENT,
+  appendApiPath,
+  DEFAULT_GO_API_BASE_URL,
+  DEFAULT_ZEN_API_BASE_URL,
+  normalizeApiBaseUrl,
   RECENT_TRANSPORT_SUMMARY_LIMIT,
   RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
   SECRET_KEY,
+  SETTING_API_BASE_URL,
   SETTING_AGENTS_WINDOW,
   SETTING_AUTO_ENABLE_AGENTS_WINDOW,
   SETTING_DEBUG_REASONING,
@@ -212,6 +217,7 @@ function usageTrackerOptions(): GoUsageTrackerOptions {
       config().get<UsageTodayYesterdaySource>(SETTING_USAGE_TODAY_YESTERDAY_SOURCE, DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE),
     resolveCodebaseWindowDays: () => config().get<number>(SETTING_USAGE_CODEBASE_WINDOW_DAYS, DEFAULT_USAGE_CODEBASE_WINDOW_DAYS),
     resolveDayBoundary: () => config().get<"utc" | "local">(SETTING_USAGE_DAY_BOUNDARY, DEFAULT_USAGE_DAY_BOUNDARY),
+    resolveUsageUrl: () => configuredGoUsageUrl(),
   };
 }
 
@@ -378,10 +384,12 @@ interface ProviderDefinition {
   vendor: AllProviderVendor;
   displayName: string;
   modelNamePrefix: string;
+  baseUrl: string;
   modelsUrl: string;
   chatCompletionsUrl: string;
   messagesUrl: string;
   responsesUrl?: string;
+  usageUrl?: string;
   testModelId: string;
   fallbackModels: string[];
   filterModel?: (modelId: string) => boolean;
@@ -469,10 +477,12 @@ function providerVariant(
     vendor: agentVendor,
     displayName,
     modelNamePrefix: base.modelNamePrefix,
+    baseUrl: base.baseUrl,
     modelsUrl: base.modelsUrl,
     chatCompletionsUrl: base.chatCompletionsUrl,
     messagesUrl: base.messagesUrl,
     responsesUrl: base.responsesUrl,
+    usageUrl: base.usageUrl,
     testModelId: base.testModelId,
     fallbackModels: base.fallbackModels,
     filterModel: base.filterModel,
@@ -484,10 +494,12 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
     vendor: GO_VENDOR,
     displayName: "OpenCode Go",
     modelNamePrefix: "OpenCode Go",
-    modelsUrl: "https://opencode.ai/zen/go/v1/models",
-    chatCompletionsUrl: "https://opencode.ai/zen/go/v1/chat/completions",
-    messagesUrl: "https://opencode.ai/zen/go/v1/messages",
-    responsesUrl: "https://opencode.ai/zen/go/v1/responses",
+    baseUrl: DEFAULT_GO_API_BASE_URL,
+    modelsUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "models"),
+    chatCompletionsUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "chat/completions"),
+    messagesUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "messages"),
+    responsesUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "responses"),
+    usageUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "usage"),
     testModelId: "deepseek-v4-flash",
     fallbackModels: [
       "deepseek-v4-pro",
@@ -514,10 +526,11 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
     vendor: ZEN_VENDOR,
     displayName: "OpenCode Zen",
     modelNamePrefix: "OpenCode Zen",
-    modelsUrl: "https://opencode.ai/zen/v1/models",
-    chatCompletionsUrl: "https://opencode.ai/zen/v1/chat/completions",
-    messagesUrl: "https://opencode.ai/zen/v1/messages",
-    responsesUrl: "https://opencode.ai/zen/v1/responses",
+    baseUrl: DEFAULT_ZEN_API_BASE_URL,
+    modelsUrl: appendApiPath(DEFAULT_ZEN_API_BASE_URL, "models"),
+    chatCompletionsUrl: appendApiPath(DEFAULT_ZEN_API_BASE_URL, "chat/completions"),
+    messagesUrl: appendApiPath(DEFAULT_ZEN_API_BASE_URL, "messages"),
+    responsesUrl: appendApiPath(DEFAULT_ZEN_API_BASE_URL, "responses"),
     testModelId: "deepseek-v4-flash-free",
     fallbackModels: [
       "claude-opus-4-7",
@@ -579,6 +592,33 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
     },
   };
 })();
+
+/** Read a provider base URL from settings, falling back safely if malformed. */
+function configuredApiBaseUrl(vendor: typeof GO_VENDOR | typeof ZEN_VENDOR): string {
+  const fallback = vendor === GO_VENDOR ? DEFAULT_GO_API_BASE_URL : DEFAULT_ZEN_API_BASE_URL;
+  const configured = vscode.workspace.getConfiguration().get<string>(`${vendor}.${SETTING_API_BASE_URL}`, fallback);
+  return normalizeApiBaseUrl(configured, fallback);
+}
+
+/** Resolve the Go usage route from the same base URL as the Go provider. */
+function configuredGoUsageUrl(): string {
+  return appendApiPath(configuredApiBaseUrl(GO_VENDOR), "usage");
+}
+
+/** Build a provider definition using the user-configured API base URL. */
+function configuredProviderDefinition(vendor: typeof GO_VENDOR | typeof ZEN_VENDOR): ProviderDefinition {
+  const base = PROVIDERS[vendor];
+  const baseUrl = configuredApiBaseUrl(vendor);
+  return {
+    ...base,
+    baseUrl,
+    modelsUrl: appendApiPath(baseUrl, "models"),
+    chatCompletionsUrl: appendApiPath(baseUrl, "chat/completions"),
+    messagesUrl: appendApiPath(baseUrl, "messages"),
+    responsesUrl: appendApiPath(baseUrl, "responses"),
+    usageUrl: vendor === GO_VENDOR ? appendApiPath(baseUrl, "usage") : undefined,
+  };
+}
 
 type ApiRole = "user" | "assistant" | "tool";
 
@@ -850,8 +890,10 @@ export function activate(context: vscode.ExtensionContext) {
   // section, which would misread the Zen flag as opencodego.opencodezen.enabled.
   const goProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true);
   const zenProviderEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true);
-  const goProvider = new OpenCodeProvider(context, PROVIDERS[GO_VENDOR]);
-  const zenProvider = new OpenCodeProvider(context, PROVIDERS[ZEN_VENDOR]);
+  const goDefinition = configuredProviderDefinition(GO_VENDOR);
+  const zenDefinition = configuredProviderDefinition(ZEN_VENDOR);
+  const goProvider = new OpenCodeProvider(context, goDefinition);
+  const zenProvider = new OpenCodeProvider(context, zenDefinition);
   const modelInfoProviders: OpenCodeProvider[] = [goProvider, zenProvider];
 
   const subscriptions: vscode.Disposable[] = [
@@ -1037,8 +1079,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Agent-host providers for the Copilot Agents window (opt-in via config).
   const enableAgents = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true);
   if (enableAgents && (goProviderEnabled || zenProviderEnabled)) {
-    const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
-    const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
+    const agentGoProvider = new OpenCodeProvider(context, providerVariant(goDefinition, AGENT_GO_VENDOR, "OpenCode Go (Agents)"));
+    const agentZenProvider = new OpenCodeProvider(context, providerVariant(zenDefinition, AGENT_ZEN_VENDOR, "OpenCode Zen (Agents)"));
     modelInfoProviders.push(agentGoProvider, agentZenProvider);
     subscriptions.push(
       ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider)] : []),
@@ -1099,7 +1141,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Experimental inline code suggestions (issue #49). Opt-in via
   // `opencodego.inlineSuggestions`; the provider reads the config live.
   registerInlineCompletions(context, {
-    chatCompletionsUrl: PROVIDERS[GO_VENDOR].chatCompletionsUrl,
+    chatCompletionsUrl: goDefinition.chatCompletionsUrl,
     // Same resolution order as the chat path: the active profile's own key
     // first (covers multi-profile / BYOK-group setups), then the secret.
     resolveApiKey: async () => profileApiKeys.get(activeProfileFingerprint) ?? _extensionContext?.secrets.get(SECRET_KEY),

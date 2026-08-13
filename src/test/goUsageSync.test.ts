@@ -55,6 +55,18 @@ test("fetchGoUsage — sends the key as Bearer to the official endpoint", async 
   assert.equal(result.ok, true);
 });
 
+test("fetchGoUsage — accepts a custom usage endpoint", async () => {
+  let requestedUrl = "";
+  const fetcher: typeof fetch = (input) => {
+    requestedUrl = typeof input === "string" ? input : "";
+    return Promise.resolve(new Response(JSON.stringify(apiResponse()), { status: 200 }));
+  };
+
+  const result = await fetchGoUsage("sk-test", fetcher, undefined, "https://gateway.example.test/v1/usage");
+  assert.equal(requestedUrl, "https://gateway.example.test/v1/usage");
+  assert.equal(result.ok, true);
+});
+
 test("fetchGoUsage — parses a 200 payload", async () => {
   const result = await fetchGoUsage("sk-test", stubFetch(200, apiResponse()));
   assert.ok(result.ok);

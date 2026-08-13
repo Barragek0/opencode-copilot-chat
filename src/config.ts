@@ -38,6 +38,8 @@ export const SETTING_TEMPERATURE = "temperature";
 export const SETTING_MAX_TOKENS = "maxTokens";
 export const SETTING_MAX_INPUT_TOKENS = "maxInputTokens";
 export const SETTING_DEBUG_REASONING = "debugReasoning";
+/** Base URL setting key for the provider's OpenAI-compatible API. */
+export const SETTING_API_BASE_URL = "apiBaseUrl";
 export const SETTING_REQUEST_TIMEOUT_SECONDS = "requestTimeoutSeconds";
 export const SETTING_STREAM_IDLE_TIMEOUT_SECONDS = "streamIdleTimeoutSeconds";
 export const SETTING_STRIP_THINK_TAGS = "stripThinkTags";
@@ -104,6 +106,33 @@ export const MODEL_METADATA_CACHE_KEY = "opencode.modelMetadataCache.v5";
 export const MODEL_METADATA_CACHE_TTL_MS = 1 * 60 * 60 * 1000;
 export const DEFAULT_MODEL_CONTEXT_WINDOW = 262144;
 export const DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 65536;
+
+// ─── Provider API endpoints ─────────────────────────────────────────────────
+
+/** Default OpenCode Go API base URL; can be overridden in VS Code settings. */
+export const DEFAULT_GO_API_BASE_URL = "https://opencode.ai/zen/go/v1";
+/** Default OpenCode Zen API base URL; can be overridden in VS Code settings. */
+export const DEFAULT_ZEN_API_BASE_URL = "https://opencode.ai/zen/v1";
+
+/** Normalize a configured API base URL, falling back when it is malformed. */
+export function normalizeApiBaseUrl(value: string, fallback: string): string {
+  const candidate = value.trim();
+  if (!candidate) return fallback;
+  try {
+    const url = new URL(candidate);
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || url.search || url.hash) {
+      return fallback;
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return fallback;
+  }
+}
+
+/** Append one API route to a normalized or user-supplied base URL. */
+export function appendApiPath(baseUrl: string, route: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${route.replace(/^\/+/, "")}`;
+}
 
 // ─── Output budget / token-estimate margins ──────────────────────────────────
 
