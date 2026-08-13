@@ -92,7 +92,14 @@ describe("autocomplete — engine parsing", () => {
 
   it("cleanCompletion strips fences and surrounding whitespace", () => {
     assert.equal(cleanCompletion("```ts\nconst x = 1;\n```"), "const x = 1;");
-    assert.equal(cleanCompletion("  \nconst y = 2;\n  "), "const y = 2;");
+    // leading spaces are stripped, the leading newline is kept
+    assert.equal(cleanCompletion("  \nconst y = 2;\n  "), "\nconst y = 2;");
+  });
+
+  it("cleanCompletion strips leading spaces/tabs but keeps leading newlines", () => {
+    // A completion continuing on a new (nested) line must keep its line break.
+    assert.equal(cleanCompletion("  return true;"), "return true;");
+    assert.equal(cleanCompletion("\n    return inner;\n  }"), "\n    return inner;\n  }");
   });
 });
 

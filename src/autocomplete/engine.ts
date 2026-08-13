@@ -81,12 +81,15 @@ export class ChatCompletionEngine implements CompletionEngine {
         body: JSON.stringify(body),
         signal: AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]),
       });
-    } catch {
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.log?.(`[completions] request failed: ${reason} (model=${ctx.modelId})`);
       // Network error or abort — treat as no completion.
       return { text: undefined, durationMs: Date.now() - started };
     }
 
     if (!response.ok || !response.body) {
+      this.log?.(`[completions] non-OK response: HTTP ${String(response.status)} ${response.statusText} (model=${ctx.modelId})`);
       return { text: undefined, durationMs: Date.now() - started };
     }
 
@@ -112,8 +115,10 @@ export class ChatCompletionEngine implements CompletionEngine {
           }
         }
       }
-    } catch {
+    } catch (error) {
       // Aborted or timed out mid-stream — keep what we have.
+      const reason = error instanceof Error ? error.message : String(error);
+      this.log?.(`[completions] stream interrupted: ${reason} (model=${ctx.modelId})`);
     }
 
     const text = cleanCompletion(collected);
@@ -122,11 +127,17 @@ export class ChatCompletionEngine implements CompletionEngine {
   }
 }
 
-/** Trim whitespace/formatting noise from a raw completion. */
+/**
+ * Trim formatting noise from a raw completion. Fences are removed entirely;
+ * trailing whitespace is trimmed. Leading spaces/tabs are stripped (the
+ * cursor already sits on indented code, so a leading space would double it),
+ * but leading NEWLINES are preserved — a completion that continues on a new
+ * line (nested blocks) must keep its line break.
+ */
 export function cleanCompletion(raw: string): string {
   return raw
     .replace(/^```[a-zA-Z0-9_-]*\s*\n?/, "")
     .replace(/\n?```\s*$/, "")
-    .replace(/^\s+/, "")
+    .replace(/^[ \t]+/, "")
     .replace(/\s+$/, "");
 }

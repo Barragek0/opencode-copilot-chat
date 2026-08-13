@@ -1099,7 +1099,9 @@ export function activate(context: vscode.ExtensionContext) {
   // `opencodego.inlineSuggestions`; the provider reads the config live.
   registerInlineCompletions(context, {
     chatCompletionsUrl: PROVIDERS[GO_VENDOR].chatCompletionsUrl,
-    resolveApiKey: async () => _extensionContext?.secrets.get(SECRET_KEY),
+    // Same resolution order as the chat path: the active profile's own key
+    // first (covers multi-profile / BYOK-group setups), then the secret.
+    resolveApiKey: async () => profileApiKeys.get(activeProfileFingerprint) ?? _extensionContext?.secrets.get(SECRET_KEY),
   });
 }
 
