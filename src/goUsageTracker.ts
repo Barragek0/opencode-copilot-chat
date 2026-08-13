@@ -517,45 +517,133 @@ function readOpenCodeHistoryUncached(): HistoryRow[] | null {
     return null;
   }
 
-  // Two attempts: transient busy/lock states (e.g. the CLI checkpointing a
-  // large WAL) resolve within the 5s sqlite busy-timeout.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const result = execFileSync("sqlite3", ["-readonly", "-cmd", ".timeout 5000", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
-        timeout: 10_000,
-        maxBuffer: 64 * 1024 * 1024,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      const rows: unknown = JSON.parse(result);
-      if (!Array.isArray(rows)) return null;
-      return rows
-        .filter((row): row is HistoryRow => {
-          if (!row || typeof row !== "object") return false;
-          const candidate = row as Partial<HistoryRow>;
-          return (
-            typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
-          );
-        })
-        .map((row) => ({
-          createdMs: row.createdMs,
-          cost: row.cost,
-          tokensInput: positiveNumberish(row.tokensInput),
-          tokensOutput: positiveNumberish(row.tokensOutput),
-          tokensReasoning: positiveNumberish(row.tokensReasoning),
-          tokensCacheRead: positiveNumberish(row.tokensCacheRead),
-          cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
-          modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
-        }));
-    } catch (error) {
-      const message = getErrorMessage(error);
-      if (attempt === 0) {
-        historyReadDiagnostic?.(`[go-usage] CLI history read failed (attempt 1): ${message}. Retrying…`);
-      } else {
-        historyReadDiagnostic?.(`[go-usage] CLI history read failed: ${message}`);
+  // The `sqlite3` binary may be missing from the extension host's PATH (it is
+  // often only available from the Android SDK, e.g. launched from a terminal),
+  // so Node's built-in reader is tried first — zero external dependencies.
+  const viaNode = readHistoryViaNodeSqlite();
+  if (viaNode !== undefined) {
+    return viaNode;
+  }
+
+  return readHistoryViaSqliteCli();
+}
+
+/** Normalize raw rows (shared by both readers). */
+function normalizeHistoryRows(rows: unknown): HistoryRow[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((row): row is HistoryRow => {
+      if (!row || typeof row !== "object") return false;
+      const candidate = row as Partial<HistoryRow>;
+      return (
+        typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
+      );
+    })
+    .map((row) => ({
+      createdMs: row.createdMs,
+      cost: row.cost,
+      tokensInput: positiveNumberish(row.tokensInput),
+      tokensOutput: positiveNumberish(row.tokensOutput),
+      tokensReasoning: positiveNumberish(row.tokensReasoning),
+      tokensCacheRead: positiveNumberish(row.tokensCacheRead),
+      cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
+      modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
+    }));
+}
+
+/**
+ * Read the CLI history with Node's built-in `node:sqlite` (no binary on the
+ * host PATH needed). Returns `undefined` when the module is unavailable on
+ * this host so the caller can fall back to the `sqlite3` binary.
+ */
+function readHistoryViaNodeSqlite(): HistoryRow[] | null | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { DatabaseSync } = require("node:sqlite") as {
+      DatabaseSync?: new (
+        path: string,
+        options?: { readOnly?: boolean },
+      ) => {
+        prepare(sql: string): { all(): Record<string, unknown>[] };
+        close(): void;
+      };
+    };
+    if (typeof DatabaseSync !== "function") {
+      return undefined;
+    }
+    // Transient busy/lock states (CLI checkpointing the WAL) resolve quickly.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const db = new DatabaseSync(OPENCODE_DB_PATH, { readOnly: true });
+        try {
+          const rows = db.prepare(HISTORY_ROWS_SQL).all();
+          return rows.length > 0 ? normalizeHistoryRows(rows) : null;
+        } finally {
+          db.close();
+        }
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (attempt === 0) {
+          historyReadDiagnostic?.(`[go-usage] node:sqlite read failed (attempt 1): ${message}. Retrying…`);
+        } else {
+          historyReadDiagnostic?.(`[go-usage] node:sqlite read failed: ${message}`);
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    historyReadDiagnostic?.(`[go-usage] node:sqlite unavailable (${getErrorMessage(error)}); falling back to the sqlite3 binary.`);
+    return undefined;
+  }
+}
+
+/**
+ * Candidate `sqlite3` binaries: the PATH-resolved name first, then absolute
+ * paths from common installs (system, Homebrew, Android SDK) — the Android
+ * SDK binary is what most dev machines actually have, and it is frequently
+ * missing from the extension host's PATH.
+ */
+function sqliteCliCandidates(): string[] {
+  const home = os.homedir();
+  return [
+    "sqlite3",
+    "/usr/bin/sqlite3",
+    "/usr/local/bin/sqlite3",
+    "/opt/homebrew/bin/sqlite3",
+    path.join(home, "Android", "Sdk", "platform-tools", "sqlite3"),
+    path.join(home, "Library", "Android", "sdk", "platform-tools", "sqlite3"),
+  ];
+}
+
+function readHistoryViaSqliteCli(): HistoryRow[] | null {
+  for (const binary of sqliteCliCandidates()) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = execFileSync(binary, ["-readonly", "-cmd", ".timeout 5000", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
+          timeout: 10_000,
+          maxBuffer: 64 * 1024 * 1024,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const rows: unknown = JSON.parse(result);
+        return Array.isArray(rows) ? normalizeHistoryRows(rows) : null;
+      } catch (error) {
+        const message = getErrorMessage(error);
+        // ENOENT just means this candidate isn't present — try the next one.
+        if (attempt === 0 && message.includes("ENOENT")) {
+          break;
+        }
+        if (attempt === 0) {
+          historyReadDiagnostic?.(`[go-usage] sqlite3 read failed (attempt 1): ${message}. Retrying…`);
+        } else {
+          historyReadDiagnostic?.(`[go-usage] sqlite3 read failed (${binary}): ${message}`);
+        }
       }
     }
   }
+  historyReadDiagnostic?.(
+    "[go-usage] CLI history unavailable: no SQLite reader found (node:sqlite missing and no sqlite3 binary on PATH).",
+  );
   return null;
 }
 
