@@ -60,6 +60,19 @@ describe("autocomplete — buildCompletionWindow", () => {
     void DEFAULT_PREFIX_LINES;
     void DEFAULT_SUFFIX_CHARS;
   });
+
+  it("honors custom prefix/suffix window options", () => {
+    const doc = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
+    const w = buildCompletionWindow(doc, doc.length, { prefixLines: 2, suffixChars: 0 });
+    assert.equal(w.prefix.split("\n").length, 2, "exactly prefixLines lines, including the cursor line");
+    assert.equal(w.suffix, "");
+  });
+
+  it("zero suffix chars disables the suffix entirely", () => {
+    const w = buildCompletionWindow("abc\nrest", 1, { suffixChars: 0 });
+    assert.equal(w.prefix, "a");
+    assert.equal(w.suffix, "");
+  });
 });
 
 describe("autocomplete — engine parsing", () => {
@@ -84,6 +97,19 @@ describe("autocomplete — engine parsing", () => {
 });
 
 describe("autocomplete — Debouncer", () => {
+  it("honors a custom delay", async () => {
+    const d = new Debouncer(120);
+    let runs = 0;
+    d.debounce(() => {
+      runs += 1;
+    });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(runs, 0, "should not run before the custom delay elapses");
+    await new Promise((r) => setTimeout(r, 90));
+    assert.equal(runs, 1);
+    d.dispose();
+  });
+
   it("debounces and only runs after the delay", async () => {
     const d = new Debouncer(50);
     let runs = 0;
