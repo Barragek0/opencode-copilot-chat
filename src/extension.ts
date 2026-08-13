@@ -825,6 +825,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
+  // Startup diagnostic: report whether the CLI history is readable so any
+  // silent zero-usage state is immediately visible in the usage output
+  // channel (the tracker also logs the exact failure reason on error).
+  {
+    const startupTracker = activeGoUsageTracker();
+    if (startupTracker) {
+      const startupSummary = startupTracker.getSummary();
+      goUsageLogChannel.appendLine(
+        `[go-usage] CLI history available: ${String(startupSummary.sqliteAvailable)} — ` +
+          `today=${String(startupSummary.today.requests)} req, codebase=${String(startupSummary.codebase.requests)} req`,
+      );
+    }
+  }
   // Pull the server-accurate account meters once at startup (TTL-guarded).
   void (async () => {
     const apiKey = await context.secrets.get(SECRET_KEY);

@@ -21,7 +21,7 @@ import {
   GO_SERVER_USAGE_KEY,
   type UsageTodayYesterdaySource,
 } from "./config";
-import { formatCount, formatTokenCount, formatUsd, formatRelativeTime } from "./utils";
+import { formatCount, formatTokenCount, formatUsd, formatRelativeTime, getErrorMessage } from "./utils";
 
 export { GO_LIMITS } from "./config";
 
@@ -493,6 +493,13 @@ export function buildUsageSeries(
  */
 const HISTORY_READ_TTL_MS = 3_000;
 let historyCache: { rows: HistoryRow[] | null; fetchedAt: number } | undefined;
+/** Surfaces CLI-history read failures in the usage output channel. */
+let historyReadDiagnostic: ((message: string) => void) | undefined;
+
+/** Wire the diagnostic sink (called once per tracker, last one wins). */
+export function setHistoryReadDiagnostic(log: (message: string) => void): void {
+  historyReadDiagnostic = log;
+}
 
 function readOpenCodeHistory(): HistoryRow[] | null {
   const now = Date.now();
@@ -505,37 +512,51 @@ function readOpenCodeHistory(): HistoryRow[] | null {
 }
 
 function readOpenCodeHistoryUncached(): HistoryRow[] | null {
-  if (!fs.existsSync(OPENCODE_DB_PATH)) return null;
-
-  try {
-    const result = execFileSync("sqlite3", ["-readonly", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
-      timeout: 5000,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const rows: unknown = JSON.parse(result);
-    if (!Array.isArray(rows)) return null;
-    return rows
-      .filter((row): row is HistoryRow => {
-        if (!row || typeof row !== "object") return false;
-        const candidate = row as Partial<HistoryRow>;
-        return (
-          typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
-        );
-      })
-      .map((row) => ({
-        createdMs: row.createdMs,
-        cost: row.cost,
-        tokensInput: positiveNumberish(row.tokensInput),
-        tokensOutput: positiveNumberish(row.tokensOutput),
-        tokensReasoning: positiveNumberish(row.tokensReasoning),
-        tokensCacheRead: positiveNumberish(row.tokensCacheRead),
-        cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
-        modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
-      }));
-  } catch {
+  if (!fs.existsSync(OPENCODE_DB_PATH)) {
+    historyReadDiagnostic?.(`[go-usage] CLI history: database not found at ${OPENCODE_DB_PATH}`);
     return null;
   }
+
+  // Two attempts: transient busy/lock states (e.g. the CLI checkpointing a
+  // large WAL) resolve within the 5s sqlite busy-timeout.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const result = execFileSync("sqlite3", ["-readonly", "-cmd", ".timeout 5000", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
+        timeout: 10_000,
+        maxBuffer: 64 * 1024 * 1024,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const rows: unknown = JSON.parse(result);
+      if (!Array.isArray(rows)) return null;
+      return rows
+        .filter((row): row is HistoryRow => {
+          if (!row || typeof row !== "object") return false;
+          const candidate = row as Partial<HistoryRow>;
+          return (
+            typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
+          );
+        })
+        .map((row) => ({
+          createdMs: row.createdMs,
+          cost: row.cost,
+          tokensInput: positiveNumberish(row.tokensInput),
+          tokensOutput: positiveNumberish(row.tokensOutput),
+          tokensReasoning: positiveNumberish(row.tokensReasoning),
+          tokensCacheRead: positiveNumberish(row.tokensCacheRead),
+          cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
+          modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
+        }));
+    } catch (error) {
+      const message = getErrorMessage(error);
+      if (attempt === 0) {
+        historyReadDiagnostic?.(`[go-usage] CLI history read failed (attempt 1): ${message}. Retrying…`);
+      } else {
+        historyReadDiagnostic?.(`[go-usage] CLI history read failed: ${message}`);
+      }
+    }
+  }
+  return null;
 }
 
 // ─── Exported tracker class ──────────────────────────────────────────────────
@@ -576,6 +597,9 @@ export class GoUsageTracker {
   ) {
     this.log = log;
     this.costResolver = costResolver;
+    if (log) {
+      setHistoryReadDiagnostic(log);
+    }
     this.restore();
     // Fast startup: show the last successful server snapshot immediately
     // instead of 0s until the TTL-guarded refetch lands. `serverUsageFetchedAt`
