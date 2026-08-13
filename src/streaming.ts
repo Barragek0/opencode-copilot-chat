@@ -20,6 +20,7 @@ import {
   normalizeResponsesFullResponse,
   normalizeResponsesStreamEvent,
 } from "./routing";
+import { bodyRequestsThinking } from "./thinking";
 import { createReasoningMarkerPart, createUsageDataParts } from "./chatParts";
 import {
   clearContextWindowRequest,
@@ -96,7 +97,11 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
   // CoT and should remain in the thinking panel.
   const isGoGateway = options.url.includes("/zen/go/");
   const body = options.body as Record<string, unknown> | undefined;
-  const hasReasoningEffort = isGoGateway && (typeof body?.reasoning_effort === "string" || typeof body?.budget_tokens === "number");
+  // "Thinking is ON" whenever the body asks for reasoning through any channel
+  // (reasoning_effort, budget_tokens, enable_thinking, thinking block — Kimi
+  // K2.7 and MiniMax M3 route through chat-completions with Anthropic-style
+  // shapes), see bodyRequestsThinking().
+  const hasReasoningEffort = isGoGateway && bodyRequestsThinking(body);
   const treatReasoningAsContent = isGoGateway && !hasReasoningEffort;
   if (isGoGateway) {
     options.output?.appendLine(

@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { fallbackModelMetadata, getContextSizeOptionsForModel, VISION_CAPABLE_MODELS } from "../metadata.js";
+import {
+  fallbackModelMetadata,
+  getContextSizeOptionsForModel,
+  normalizeLiveModelMetadata,
+  resolveModelMetadata,
+  VISION_CAPABLE_MODELS,
+  type CachedModelMetadataSnapshot,
+} from "../metadata.js";
 import { GO_VENDOR, ZEN_VENDOR } from "../providerTypes.js";
 
 /**
@@ -134,5 +141,55 @@ describe("getContextSizeOptionsForModel — Kimi context tiers (issue #87)", () 
       options?.map((option) => option.value),
       [200_000, 1_048_576],
     );
+  });
+});
+
+describe("resolveModelMetadata — cold-start temperature chain", () => {
+  const emptySnapshot: CachedModelMetadataSnapshot = { fetchedAt: 0, providers: { opencodego: {}, opencodezen: {} } };
+
+  it("propagates the bundled temperature:false when no live/cached metadata exists", () => {
+    const resolved = resolveModelMetadata("kimi-k2.7-code", GO_VENDOR, emptySnapshot, new Map());
+    assert.equal(resolved.temperature, false, "cold start must omit temperature for kimi-k2.7-code");
+  });
+
+  it("keeps temperature undefined for models without the restriction", () => {
+    const resolved = resolveModelMetadata("glm-5", GO_VENDOR, emptySnapshot, new Map());
+    assert.notEqual(resolved.temperature, false);
+  });
+});
+
+describe("normalizeLiveModelMetadata — modality-based vision detection", () => {
+  it("advertises vision only for actual image modalities", () => {
+    const imageModel = normalizeLiveModelMetadata({ id: "m", modalities: { input: ["text", "image"] } });
+    assert.equal(imageModel?.supportsVision, true);
+  });
+
+  it("does NOT advertise vision for audio/pdf/video-only models", () => {
+    const audioOnly = normalizeLiveModelMetadata({ id: "m", modalities: { input: ["text", "audio"] } });
+    assert.notEqual(audioOnly?.supportsVision, true);
+    const pdfOnly = normalizeLiveModelMetadata({ id: "m", modalities: { input: ["text", "pdf"] } });
+    assert.notEqual(pdfOnly?.supportsVision, true);
+    const videoOnly = normalizeLiveModelMetadata({ id: "m", modalities: { input: ["text", "video"] } });
+    assert.notEqual(videoOnly?.supportsVision, true);
+  });
+
+  it("still distinguishes audio/video/pdf flags", () => {
+    const audioModel = normalizeLiveModelMetadata({ id: "m", modalities: { input: ["audio", "text"] } });
+    assert.ok(audioModel);
+    assert.equal(audioModel.supportsAudio, true);
+    assert.equal(audioModel.supportsVision, undefined);
+    const videoModel = normalizeLiveModelMetadata({ id: "m", modalities: { input: ["video", "text"] } });
+    assert.ok(videoModel);
+    assert.equal(videoModel.supportsVideo, true);
+    const pdfModel = normalizeLiveModelMetadata({ id: "m", modalities: { input: ["pdf", "text"] } });
+    assert.ok(pdfModel);
+    assert.equal(pdfModel.supportsPdf, true);
+  });
+
+  it("falls back to the attachment hint when modalities are absent", () => {
+    const attached = normalizeLiveModelMetadata({ id: "m", attachment: true });
+    assert.equal(attached?.supportsVision, true);
+    const plain = normalizeLiveModelMetadata({ id: "m" });
+    assert.notEqual(plain?.supportsVision, true);
   });
 });

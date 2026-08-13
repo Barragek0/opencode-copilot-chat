@@ -2827,7 +2827,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     } catch (error) {
       const message = getErrorMessage(error);
       this.log(`Could not fetch model status metadata from models.dev. Applying local unavailable model filter only. ${message}`);
-      return uniqueModelIds.filter((modelId) => !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId));
+      return uniqueModelIds.filter(
+        (modelId) => !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId) && (this.definition.filterModel?.(modelId) ?? true),
+      );
     }
   }
 }

@@ -383,7 +383,10 @@ export function resolveModelMetadata(
     source: liveMetadata ? "live" : cachedMetadata ? "models.dev" : fallbackMetadata ? "fallback" : "default",
     cost: liveMetadata?.cost ?? cachedMetadata?.cost ?? fallbackMetadata?.cost,
     reasoningOptions: liveMetadata?.reasoningOptions ?? cachedMetadata?.reasoningOptions,
-    temperature: liveMetadata?.temperature ?? cachedMetadata?.temperature,
+    // The bundled fallback propagates `temperature: false` (models whose API
+    // rejects the parameter) so the request body omits it even when the live
+    // models.dev fetch is unavailable.
+    temperature: liveMetadata?.temperature ?? cachedMetadata?.temperature ?? fallbackMetadata?.temperature,
   };
 }
 
@@ -485,8 +488,12 @@ function detectModalityFlags(
   const inputModalities = Array.isArray(modalities?.input) ? modalities.input : undefined;
 
   if (inputModalities?.length) {
+    // Only actual image-capable modalities imply vision. A model that accepts
+    // audio/pdf/video but no images must NOT advertise imageInput: true —
+    // VS Code would forward image attachments the model cannot process.
+    const visionModalities = new Set(["image", "image_url", "input_image"]);
     return {
-      supportsVision: inputModalities.some((m) => m !== "text"),
+      supportsVision: inputModalities.some((m) => visionModalities.has(m.toLowerCase())) || undefined,
       supportsAudio: inputModalities.includes("audio") || undefined,
       supportsVideo: inputModalities.includes("video") || undefined,
       supportsPdf: inputModalities.includes("pdf") || undefined,
