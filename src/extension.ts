@@ -2181,6 +2181,15 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     // (issue #106, see step 2 below).
     if (apiKey) {
       await this.markByokGroupConfigured();
+    } else if (opts.configuration !== undefined) {
+      // A group call with a non-undefined configuration that carries no API
+      // key is a per-model configuration group (only `settings`, no key —
+      // e.g. a `reasoningEffort` picked in the model picker). VS Code
+      // resolves its configuration to `{}` here. The groupless call already
+      // served the models via SecretStorage, so serving them again would
+      // duplicate every model (issue #131). The per-model settings still
+      // apply at request time via `modelConfiguration`.
+      return [];
     }
 
     // 2. Fall back to the extension's own secret storage when BYOK did not
