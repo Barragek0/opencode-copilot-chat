@@ -570,26 +570,36 @@ export class GoUsageTracker {
     const nowMs = Date.now();
     const clamp = (v: number, limit: number) => Math.round(Math.min(100, (v / limit) * 100) * 10) / 10;
 
-    // When namespaced (per-profile), skip the shared SQLite — it has no
-    // key column, so reading it would mix quota from all accounts.
+    // The CLI database is DEVICE-level usage (it has no per-key column), so
+    // it is safe for the device rows (Today / Yesterday / Codebase). The
+    // subscription METERS must stay account-scoped: the legacy (un-namespaced)
+    // tracker derives them from the CLI rows, while per-profile trackers
+    // derive them from their own tracked entries (the server-accurate meters
+    // from syncServerUsage overlay them either way).
     const isPerProfile = this.storageKeySuffix.length > 0;
-    let summary: UsageSummary;
-    if (!isPerProfile) {
-      const sqliteRows = readOpenCodeHistory();
-      if (sqliteRows) {
-        summary = this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
-      } else {
-        // Fall back to extension-tracked data (works without CLI).
-        summary = this.buildSummaryFromTracked(nowMs, clamp);
-      }
-    } else {
-      summary = this.buildSummaryFromTracked(nowMs, clamp);
+    const sqliteRows = readOpenCodeHistory();
+    if (!isPerProfile && sqliteRows) {
+      return this.serverUsage
+        ? mergeServerUsage(this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp), this.serverUsage, GO_LIMITS)
+        : this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
     }
 
-    // Overlay the server-accurate meters when a recent snapshot exists
-    // (fetched via syncServerUsage). Today / Yesterday / per-session spend
-    // remain local.
-    return this.serverUsage ? mergeServerUsage(summary, this.serverUsage, GO_LIMITS) : summary;
+    // Per-profile, or no CLI history available: meters from tracked entries,
+    // device rows enriched with the CLI history when it exists.
+    const base = this.buildSummaryFromTracked(nowMs, clamp);
+    if (!sqliteRows) {
+      return this.serverUsage ? mergeServerUsage(base, this.serverUsage, GO_LIMITS) : base;
+    }
+    const dayMs = this.dayStartMs(nowMs);
+    const enriched: UsageSummary = {
+      ...base,
+      today: this.dailyUsage(sqliteRows, dayMs),
+      yesterday: this.dailyUsage(sqliteRows, dayMs - 24 * 60 * 60 * 1000),
+      codebase: this.codebaseUsage(sqliteRows),
+      hasData: base.hasData || sqliteRows.length > 0,
+      sqliteAvailable: true,
+    };
+    return this.serverUsage ? mergeServerUsage(enriched, this.serverUsage, GO_LIMITS) : enriched;
   }
 
   private dayStartMs(nowMs: number): number {
