@@ -241,6 +241,41 @@
           "default": "qwen3.5-plus",
           "markdownDescription": "Model used for inline code suggestions. Prefer the non-thinking Qwen options — measured: `qwen3.5-plus` with `enable_thinking=false` returns in ~1.5s with zero hidden reasoning, while reasoning models (e.g. `deepseek-v4-flash`) burn 100+ reasoning tokens even with thinking off."
         },
+        "opencodego.inlineSuggestionsDebounceMs": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "maximum": 2000,
+          "markdownDescription": "Delay after the last keystroke before an inline suggestion is requested. Lower = snappier but more requests; higher = fewer requests but slower appearance."
+        },
+        "opencodego.inlineSuggestionsTimeoutMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 500,
+          "maximum": 15000,
+          "markdownDescription": "Maximum time an inline suggestion request may take before it is abandoned (the ghost text then simply doesn't appear)."
+        },
+        "opencodego.inlineSuggestionsMaxTokens": {
+          "type": "number",
+          "default": 128,
+          "minimum": 16,
+          "maximum": 1024,
+          "markdownDescription": "Maximum tokens a completion may produce. Shorter = faster; longer = more complete suggestions."
+        },
+        "opencodego.inlineSuggestionsPrefixLines": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "Context window: how many lines before the cursor are sent with each suggestion request. More context = better completions, slightly slower."
+        },
+        "opencodego.inlineSuggestionsSuffixChars": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "maximum": 5000,
+          "markdownDescription": "Context window: how many characters after the cursor are sent with each suggestion request (0 disables the suffix)."
+        },
         "opencodego.stripThinkTags": {
           "type": "string",
           "enum": [
