@@ -1984,7 +1984,7 @@ function usageWebviewHtml(profileLabel: string): string {
               var c = el('circle', { cx: p.x, cy: p.y, r: '7', fill: 'transparent', stroke: 'none' });
               c.addEventListener('mousemove', function (ev) {
                 showTooltip(ev.clientX, ev.clientY,
-                  '<span class="t-line">' + s.model + ' · ' + dayLabel(p.p.dayStart) + '</span><b>' + fmtUsd(p.p.cost) + '</b>' +
+                  '<span class="t-line">' + esc(s.model) + ' · ' + dayLabel(p.p.dayStart) + '</span><b>' + fmtUsd(p.p.cost) + '</b>' +
                   '<div class="t-sub">' + fmtCount(p.p.tokens) + ' tokens · ' + fmtCount(p.p.requests) + ' requests</div>');
               });
               c.addEventListener('mouseleave', hideTooltip);
@@ -2029,7 +2029,7 @@ function usageWebviewHtml(profileLabel: string): string {
               var dd = el('circle', { cx: pt.x, cy: pt.y, r: '3.5', fill: pt.color, stroke: '#161a20', 'stroke-width': '2' });
               svg.appendChild(dd);
               dots2.push(dd);
-              if (pt.p.cost > 0) lines2.push('<div class="t-sub"><span class="l-swatch" style="background:' + pt.color + ';display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px"></span>' + pt.model + ': <b>' + fmtUsd(pt.p.cost) + '</b></div>');
+              if (pt.p.cost > 0) lines2.push('<div class="t-sub"><span class="l-swatch" style="background:' + pt.color + ';display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px"></span>' + esc(pt.model) + ': <b>' + fmtUsd(pt.p.cost) + '</b></div>');
             });
             showTooltip(ev.clientX, ev.clientY,
               '<span class="t-line">' + dayLabel(best.p.dayStart) + '</span>' +
@@ -2042,7 +2042,7 @@ function usageWebviewHtml(profileLabel: string): string {
           var legend = document.getElementById('legend');
           legend.innerHTML = series.slice(0, 8).map(function (s, i) {
             var color = MODEL_COLORS[i % MODEL_COLORS.length];
-            return '<span class="l-item"><span class="l-swatch" style="background:' + color + '"></span>' + s.model + '</span>';
+            return '<span class="l-item"><span class="l-swatch" style="background:' + color + '"></span>' + esc(s.model) + '</span>';
           }).join('') + (series.length > 8 ? '<span class="l-more">+' + (series.length - 8) + ' more</span>' : '');
         }
 
@@ -3493,7 +3493,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     try {
       const metadataSnapshot = await this.getMetadataSnapshot();
       const filteredModelIds = uniqueModelIds.filter(
-        (modelId) => !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId) && !shouldHideDeprecatedModel(modelId, this.baseVendor, metadataSnapshot),
+        (modelId) =>
+          !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId) &&
+          !shouldHideDeprecatedModel(modelId, this.baseVendor, metadataSnapshot) &&
+          (this.definition.filterModel?.(modelId) ?? true),
       );
 
       const removedModelIds = uniqueModelIds.filter((modelId) => !filteredModelIds.includes(modelId));
