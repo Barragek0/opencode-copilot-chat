@@ -48,6 +48,7 @@ import {
 import { providerEnabledSetting } from "./providerEnablement";
 import { isInternalDataPart, isReasoningMarkerPart, readReasoningMarker } from "./chatParts";
 import { registerInlineCompletions } from "./autocomplete";
+import { completionUsageToSeries, type CompletionUsageDay } from "./autocomplete/usage";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
 import { providerModelDisplayName } from "./modelNames";
@@ -56,6 +57,94 @@ import { calculateModelLimits, type ModelLimits } from "./modelLimits";
 import { buildResponsesRequestEnvelope, joinedTextContent, responsesInputItemsFromMessage } from "./responsesRequest";
 import { runtimeDiagnosticsLines } from "./runtimeDiagnostics";
 import { estimatePromptTokenCount, estimateTokenCount } from "./tokenEstimate";
+import {
+  AGENTS_BYOK_BRIDGE_STATE_KEY,
+  AGENT_HOST_BYOK_ENABLED_SETTING,
+  AGENT_HOST_BYOK_MINOR_VERSION,
+  CAPACITY_LIMITED_MODEL_NOTES,
+  COMPLETION_USAGE_KEY,
+  CONFIG_SECTION,
+  DEFAULT_REQUEST_TIMEOUT_SECONDS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
+  DEFAULT_VISION_PROXY_PROMPT,
+  EXTENSION_ID,
+  FALLBACK_USER_AGENT,
+  FREE_ZEN_MODEL_IDS,
+  IMAGE_TOKEN_ESTIMATE,
+  KNOWN_UNAVAILABLE_MODEL_IDS,
+  MAX_HISTORY_IMAGES_KEPT,
+  MAX_TOOL_RESULT_IMAGE_BYTES,
+  MESSAGE_NAME_TOKEN_OVERHEAD,
+  MESSAGE_TOKEN_OVERHEAD,
+  MODEL_LIST_CACHE_KEY_PREFIX,
+  MODEL_LIST_CACHE_TTL_MS,
+  MODEL_LIST_FETCH_MAX_RETRIES,
+  MODEL_LIST_FETCH_RETRY_BASE_MS,
+  MODEL_LIST_FETCH_TIMEOUT_MS,
+  MODEL_METADATA_FETCH_TIMEOUT_MS,
+  OPEN_CODE_CLIENT,
+  RECENT_TRANSPORT_SUMMARY_LIMIT,
+  RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
+  SECRET_KEY,
+  SETTING_AGENTS_WINDOW,
+  SETTING_AUTO_ENABLE_AGENTS_WINDOW,
+  SETTING_DEBUG_REASONING,
+  SETTING_ENABLED,
+  SETTING_FREE_ONLY,
+  SETTING_MAX_INPUT_TOKENS,
+  SETTING_MAX_TOKENS,
+  SETTING_REQUEST_TIMEOUT_SECONDS,
+  SETTING_SHOW_PROVIDER_PREFIX,
+  SETTING_SHOW_USAGE_STATUS_BAR,
+  SETTING_STREAM_IDLE_TIMEOUT_SECONDS,
+  SETTING_STRIP_THINK_TAGS,
+  SETTING_TEMPERATURE,
+  SETTING_THINKING_DEEPSEEK,
+  SETTING_THINKING_GLM,
+  SETTING_THINKING_KIMI,
+  SETTING_THINKING_MIMO,
+  SETTING_THINKING_MINIMAX,
+  SETTING_THINKING_OPENAI,
+  SETTING_THINKING_QWEN,
+  SETTING_THINKING_QWEN_BUDGET,
+  SETTING_VISION_PROXY_WHOLE_CONVERSATION,
+  SUPPORT_AGENTS_WINDOW_SETTING,
+  SUPPORT_AGENTS_WINDOW_STATE_KEY,
+  TEST_CONNECTION_TIMEOUT_MS,
+  THINKING_DEFAULTS,
+  TOOL_CALL_TOKEN_OVERHEAD,
+  TOOL_RESULT_TOKEN_OVERHEAD,
+  VISION_PROXY_MODEL_ID_KEY,
+  VISION_PROXY_PROMPT_KEY,
+  DEFAULT_USAGE_CODEBASE_ROW,
+  DEFAULT_USAGE_CODEBASE_WINDOW_DAYS,
+  DEFAULT_USAGE_DAY_BOUNDARY,
+  DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS,
+  DEFAULT_USAGE_CHART_DAYS,
+  DEFAULT_USAGE_ROLLING_SESSION_METER,
+  DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE,
+  SETTING_USAGE_CODEBASE_ROW,
+  SETTING_USAGE_CODEBASE_WINDOW_DAYS,
+  SETTING_USAGE_DAY_BOUNDARY,
+  SETTING_USAGE_REFRESH_INTERVAL_SECONDS,
+  SETTING_USAGE_CHART_DAYS,
+  SETTING_USAGE_ROLLING_SESSION_METER,
+  SETTING_USAGE_TODAY_YESTERDAY_SOURCE,
+  type UsageTodayYesterdaySource,
+} from "./config";
+import {
+  escapeHtml,
+  formatCount,
+  formatRelativeTime,
+  formatTokenCount,
+  formatUsd,
+  getErrorMessage,
+  isRecord,
+  sleep,
+  toFiniteNumber,
+} from "./utils";
+import { parseToolInput as parseToolInputShared } from "./toolCallAccumulator";
+import { isFreeModel } from "./metadata";
 
 import { formatCacheHitRatio, formatUsageStatusBarText, formatUsageStatusBarTooltip, type UsageSnapshot } from "./usage";
 import {
@@ -64,6 +153,7 @@ import {
   formatGoUsageStatusBarText,
   buildUsageQuickPickItems,
   estimateCost,
+  type GoUsageTrackerOptions,
   type UsageBaselineTargets,
 } from "./goUsageTracker";
 import { resolveResponseApiKey } from "./apiKeyResolution";
@@ -83,10 +173,6 @@ import {
   type UsageProfile,
 } from "./usageProfile";
 
-const SECRET_KEY = "opencodego.apiKey";
-const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
-const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
-
 /**
  * VS Code core settings the extension manages (auto-configures and reverts)
  * so OpenCode models work in the Agents window (issue #122):
@@ -100,14 +186,6 @@ const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummari
  *   vendors are not registered, and neither the model picker nor the
  *   "+ Add Models" list knows OpenCode Go/Zen.
  */
-const AGENT_HOST_BYOK_ENABLED_SETTING = "byokModels.enabled";
-const SUPPORT_AGENTS_WINDOW_SETTING = "supportAgentsWindow";
-const EXTENSION_ID = "ltmoerdani.opencode-copilot-chat";
-/** How many VS Code versions old the agent-host BYOK bridge goes back to. */
-const AGENT_HOST_BYOK_MINOR_VERSION = 129;
-/** globalState keys tracking that the extension enabled each setting itself. */
-const AGENTS_BYOK_BRIDGE_STATE_KEY = "opencode.agentsByokBridge.v1";
-const SUPPORT_AGENTS_WINDOW_STATE_KEY = "opencode.supportAgentsWindow.v1";
 
 let usageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
@@ -122,6 +200,74 @@ let usageWebviewPanel: vscode.WebviewPanel | undefined;
 let profilesCache: UsageProfile[] = [];
 let activeProfileFingerprint: string = LEGACY_FINGERPRINT;
 
+/**
+ * Resolvers for the per-view usage knobs, read live from configuration so
+ * changing a setting repaints the status bar / tooltip / card immediately.
+ */
+function usageTrackerOptions(): GoUsageTrackerOptions {
+  const config = () => vscode.workspace.getConfiguration(CONFIG_SECTION);
+  return {
+    resolveWorkspaceFolders: () => vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
+    resolveTodayYesterdaySource: () =>
+      config().get<UsageTodayYesterdaySource>(SETTING_USAGE_TODAY_YESTERDAY_SOURCE, DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE),
+    resolveCodebaseWindowDays: () => config().get<number>(SETTING_USAGE_CODEBASE_WINDOW_DAYS, DEFAULT_USAGE_CODEBASE_WINDOW_DAYS),
+    resolveDayBoundary: () => config().get<"utc" | "local">(SETTING_USAGE_DAY_BOUNDARY, DEFAULT_USAGE_DAY_BOUNDARY),
+  };
+}
+
+/** Whether the detailed usage views show the server 5h rolling meter. */
+function usageRollingMeterVisible(): boolean {
+  return vscode.workspace
+    .getConfiguration(CONFIG_SECTION)
+    .get<boolean>(SETTING_USAGE_ROLLING_SESSION_METER, DEFAULT_USAGE_ROLLING_SESSION_METER);
+}
+
+/** Whether the detailed usage views show the all-time codebase row. */
+function usageCodebaseRowVisible(): boolean {
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_USAGE_CODEBASE_ROW, DEFAULT_USAGE_CODEBASE_ROW);
+}
+
+/** Every usage-view setting — a change to any of these repaints immediately. */
+const USAGE_DISPLAY_SETTING_KEYS = [
+  SETTING_USAGE_TODAY_YESTERDAY_SOURCE,
+  SETTING_USAGE_CODEBASE_ROW,
+  SETTING_USAGE_CODEBASE_WINDOW_DAYS,
+  SETTING_USAGE_DAY_BOUNDARY,
+  SETTING_USAGE_ROLLING_SESSION_METER,
+  SETTING_USAGE_REFRESH_INTERVAL_SECONDS,
+];
+
+/**
+ * Realtime usage updates: re-render the status bar (and webview) on a
+ * configurable cadence so terminal-side OpenCode CLI usage, server meters and
+ * day rollovers show up without waiting for the next chat request. The
+ * interval re-reads the setting on every tick, so changes apply live.
+ */
+function startUsageRefreshLoop(context: vscode.ExtensionContext): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (): void => {
+    timer = setTimeout(() => {
+      refreshGoUsageStatusBar();
+      schedule();
+    }, usageRefreshIntervalSeconds() * 1000);
+  };
+  schedule();
+  context.subscriptions.push({
+    dispose: () => {
+      if (timer) clearTimeout(timer);
+    },
+  });
+}
+
+function usageRefreshIntervalSeconds(): number {
+  return Math.max(
+    5,
+    vscode.workspace
+      .getConfiguration(CONFIG_SECTION)
+      .get<number>(SETTING_USAGE_REFRESH_INTERVAL_SECONDS, DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS),
+  );
+}
+
 /** Look up (or create) the GoUsageTracker for a given key fingerprint. */
 function getOrCreateTracker(fingerprint: string): GoUsageTracker {
   // The singleton tracker does not have a storage suffix
@@ -135,6 +281,7 @@ function getOrCreateTracker(fingerprint: string): GoUsageTracker {
     },
     (modelId) => modelMetadataSnapshot?.providers[GO_VENDOR]?.[modelId]?.cost,
     fingerprint,
+    usageTrackerOptions(),
   );
   goUsageTrackers.set(fingerprint, tracker);
   return tracker;
@@ -246,30 +393,6 @@ interface ProviderDefinition {
 
 type ModelEndpointKind = "chat-completions" | "messages" | "responses" | "google";
 
-const FREE_ZEN_MODEL_IDS = new Set(["big-pickle"]);
-const KNOWN_UNAVAILABLE_MODEL_IDS = new Set(["ring-2.6-1t", "ring-2.6-1t-free", "trinity-large-preview-free"]);
-const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
-const OPEN_CODE_CLIENT = "vscode-copilot-chat";
-/** Fallback only — overridden at runtime by {@link getUserAgent} from packageJSON. */
-const FALLBACK_USER_AGENT = "opencode-copilot-chat/0.4.1 VSCode";
-
-/**
- * Hard ceiling for a single model-list fetch (connect + headers + body).
- *
- * Without this, undici's default `headersTimeout` (300s) can leave the picker
- * stuck for up to 5 minutes on a hung TCP connection (issue #78).
- */
-const MODEL_LIST_FETCH_TIMEOUT_MS = 15_000;
-/** Max retry attempts for transient network failures during model-list fetch. */
-const MODEL_LIST_FETCH_MAX_RETRIES = 3;
-/** Base delay for exponential backoff (500ms, 1s, 2s). */
-const MODEL_LIST_FETCH_RETRY_BASE_MS = 500;
-/** TTL for the last successful model-list snapshot cached in globalState. */
-const MODEL_LIST_CACHE_TTL_MS = 60 * 60 * 1000;
-/** globalState key suffix per vendor; full key = `${base}::<vendor>`. */
-const MODEL_LIST_CACHE_KEY_PREFIX = "opencode.modelListCache.v1";
-
 let cachedUserAgent: string | undefined;
 
 /**
@@ -304,8 +427,12 @@ function getUserAgent(): string {
  *   AbortSignal.timeout is transient and can be retried.
  */
 function isTransientFetchError(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") return false;
-  if (error instanceof DOMException && error.name === "TimeoutError") return true;
+  // DOMException is a global since Node 17; guard anyway so a hypothetical
+  // older host never crashes inside error classification.
+  if (typeof DOMException === "function" && error instanceof DOMException) {
+    if (error.name === "AbortError") return false;
+    if (error.name === "TimeoutError") return true;
+  }
   const cause = (error as { cause?: { code?: string; name?: string } } | undefined)?.cause;
   const code = cause?.code ?? (error as { code?: string } | undefined)?.code;
   const name = cause?.name ?? (error as { name?: string } | undefined)?.name;
@@ -322,7 +449,7 @@ function isTransientFetchError(error: unknown): boolean {
   // Extract HTTP status from either an explicit `.status` field or the
   // "Model list request failed (NNN): ..." message pattern.
   const explicitStatus = (error as { status?: number } | undefined)?.status;
-  const msg = error instanceof Error ? error.message : String(error);
+  const msg = getErrorMessage(error);
   const msgMatch = msg.match(/\((\d{3})\)/);
   const httpStatus = typeof explicitStatus === "number" ? explicitStatus : msgMatch ? Number(msgMatch[1]) : undefined;
   if (typeof httpStatus === "number") {
@@ -330,42 +457,6 @@ function isTransientFetchError(error: unknown): boolean {
     return false;
   }
   return false;
-}
-
-/**
- * Promise-based delay that rejects with AbortError if the token fires.
- *
- * Used to back off between model-list fetch retries without leaking
- * CancellationToken subscriptions.
- *
- * A single subscription suffices for already-cancelled tokens: VS Code's
- * cancellation tokens invoke listeners registered after cancellation
- * (shortcutEvent), and Promises ignore double settlement.
- */
-function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
-  if (token?.isCancellationRequested) {
-    return Promise.reject(new DOMException("Aborted", "AbortError"));
-  }
-  return new Promise((resolve, reject) => {
-    const state: { timer?: ReturnType<typeof setTimeout>; subscription?: vscode.Disposable } = {};
-    const finish = (cancelled: boolean) => {
-      if (state.timer) clearTimeout(state.timer);
-      state.subscription?.dispose();
-      if (cancelled) {
-        reject(new DOMException("Aborted", "AbortError"));
-      } else {
-        resolve();
-      }
-    };
-    state.timer = setTimeout(() => {
-      finish(false);
-    }, ms);
-    if (token) {
-      state.subscription = token.onCancellationRequested(() => {
-        finish(true);
-      });
-    }
-  });
 }
 
 /** Create an agent-variant provider definition that inherits URLs, models, and filters from a base. */
@@ -413,6 +504,7 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
       "minimax-m2.7",
       "minimax-m2.5",
       "qwen3.7-max",
+      "qwen3.7-plus",
       "qwen3.6-plus",
       "qwen3.5-plus",
       "gpt-5.6-luna",
@@ -472,7 +564,7 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
       "big-pickle",
     ],
     filterModel: (modelId) =>
-      vscode.workspace.getConfiguration("opencodego").get<boolean>("freeOnly", true)
+      vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_FREE_ONLY, true)
         ? modelId.endsWith("-free") || FREE_ZEN_MODEL_IDS.has(modelId)
         : true,
   };
@@ -589,11 +681,6 @@ type ConfiguredLanguageModelResponseOptions = vscode.ProvideLanguageModelChatRes
   configuration?: LanguageModelConfiguration;
 };
 
-const MESSAGE_TOKEN_OVERHEAD = 4;
-const MESSAGE_NAME_TOKEN_OVERHEAD = 1;
-const TOOL_CALL_TOKEN_OVERHEAD = 10;
-const TOOL_RESULT_TOKEN_OVERHEAD = 6;
-const IMAGE_TOKEN_ESTIMATE = 1024;
 /**
  * Hard upper limit (in bytes of raw image data) for a single image embedded
  * in a tool result. MCP screenshots from chrome-devtools-mcp / playwright-mcp
@@ -603,7 +690,6 @@ const IMAGE_TOKEN_ESTIMATE = 1024;
  * failed" rejections from OpenCode Go. Larger images are replaced with a
  * placeholder text part so the model still knows an image was returned.
  */
-const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
 
 /**
  * Maximum number of image attachments (top-level + tool-result combined) to
@@ -632,18 +718,6 @@ const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
  * still knows a screenshot existed at that point in the conversation (useful
  * for understanding agent-loop context) without incurring the payload cost.
  */
-const MAX_HISTORY_IMAGES_KEPT = 2;
-
-// Models live on the OpenCode Zen gateway but with constrained GPU capacity.
-// They were re-enabled by the OpenCode team after a brief shutdown
-// ("Qwen 3.6 Plus — free, again. Round 2. We found more GPUs.") so they are
-// NOT deprecated, but agentic workloads with long histories or large tool
-// catalogs can still hit 5xx during traffic bursts. Surface this so users know
-// to retry or fall back to another free model if the request fails.
-const CAPACITY_LIMITED_MODEL_NOTES: Record<string, string> = {
-  "qwen3.6-plus-free":
-    "Free relaunch with limited GPU capacity. Stable for short prompts; bursty traffic or very large tool catalogs may return 5xx - retry or fall back to 'deepseek-v4-flash-free' / 'big-pickle'. Paid 'qwen3.6-plus' has no quota.",
-};
 
 let modelMetadataSnapshot: CachedModelMetadataSnapshot | undefined;
 let modelMetadataRefreshPromise: Promise<CachedModelMetadataSnapshot> | undefined;
@@ -718,8 +792,6 @@ interface AnthropicRequestMessage {
   content: AnthropicContentBlock[];
 }
 
-const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 interface RecentTransportSummary extends TransportRequestSummary {
   recordedAt: string;
   endpointKind: string;
@@ -738,6 +810,8 @@ export function activate(context: vscode.ExtensionContext) {
     (modelId) => {
       return modelMetadataSnapshot?.providers[GO_VENDOR]?.[modelId]?.cost;
     },
+    "",
+    usageTrackerOptions(),
   );
   _extensionContext = context;
   _usageLogChannel = goUsageLogChannel;
@@ -752,6 +826,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   ensureUsageStatusBar(context);
   ensureGoUsageStatusBar(context);
+  // Startup diagnostic: report whether the CLI history is readable so any
+  // silent zero-usage state is immediately visible in the usage output
+  // channel (the tracker also logs the exact failure reason on error).
+  {
+    const startupTracker = activeGoUsageTracker();
+    if (startupTracker) {
+      const startupSummary = startupTracker.getSummary();
+      goUsageLogChannel.appendLine(
+        `[go-usage] CLI history available: ${String(startupSummary.sqliteAvailable)} — ` +
+          `today=${String(startupSummary.today.requests)} req, codebase=${String(startupSummary.codebase.requests)} req`,
+      );
+    }
+  }
   // Pull the server-accurate account meters once at startup (TTL-guarded).
   void (async () => {
     const apiKey = await context.secrets.get(SECRET_KEY);
@@ -779,16 +866,19 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
     vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
-    vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled("opencodego", "OpenCode Go")),
+    vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled(GO_VENDOR, "OpenCode Go")),
     vscode.commands.registerCommand("opencodego.configureUtilityModels", () => configureUtilityModels()),
     vscode.commands.registerCommand("opencodezen.diagnostics", () => zenProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodezen.manage", () => zenProvider.manage()),
     vscode.commands.registerCommand("opencodezen.refreshModels", () => zenProvider.refreshModels()),
-    vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled("opencodezen", "OpenCode Zen")),
+    vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled(ZEN_VENDOR, "OpenCode Zen")),
     vscode.commands.registerCommand("opencodego.modelPickerDiagnostics", () => showModelPickerDiagnostics()),
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => {
       showUsageWebview(context);
+    }),
+    vscode.commands.registerCommand("opencodego.refreshUsage", () => {
+      refreshGoUsageStatusBar();
     }),
     vscode.commands.registerCommand("opencodego.setUsageTargets", async () => {
       const tracker = activeGoUsageTracker();
@@ -804,22 +894,22 @@ export function activate(context: vscode.ExtensionContext) {
       const tracker = activeGoUsageTracker();
       if (!tracker) return;
       const summary = tracker.getSummary();
-      const items = buildUsageQuickPickItems(summary, tracker.hasServerUsage);
+      const items = buildUsageQuickPickItems(summary, tracker.hasServerUsage, usageRollingMeterVisible());
 
-      const sessionCost = tracker.getCurrentSessionCost();
-      if (sessionCost && sessionCost.cost > 0) {
-        const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
-        const sessionItem: vscode.QuickPickItem = {
-          label: `$(comment) Latest Session (est)`,
-          description: `$${sessionCost.cost.toFixed(4)}`,
-          detail: `${tokens(totalTokens)} tokens · ${String(sessionCost.requests)} requests`,
+      // All-time usage in the current workspace (from the OpenCode CLI
+      // history) — replaces the old "Latest Session (est)" estimate row.
+      if (usageCodebaseRowVisible()) {
+        const codebaseItem: vscode.QuickPickItem = {
+          label: "$(repo) Codebase",
+          description: formatUsd(summary.codebase.cost),
+          detail: `${formatTokenCount(summary.codebase.tokens)} tokens · ${formatCount(summary.codebase.requests)} requests`,
           alwaysShow: true,
         };
         const dailyIdx = items.findIndex((i) => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
         if (dailyIdx >= 0) {
-          items.splice(dailyIdx + 1, 0, sessionItem);
+          items.splice(dailyIdx + 1, 0, codebaseItem);
         } else {
-          items.push(sessionItem);
+          items.push(codebaseItem);
         }
       }
 
@@ -868,17 +958,6 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand("opencodego.showUsageDetails");
       } else if (action === "openConsole") {
         void vscode.env.openExternal(vscode.Uri.parse("https://opencode.ai"));
-      } else if (action === "resetTracked") {
-        const confirm = await vscode.window.showWarningMessage(
-          "Reset all locally tracked usage data (Today, Yesterday, session spend)? Server-synced meters are unaffected.",
-          { modal: true },
-          "Reset",
-        );
-        if (confirm !== "Reset") return;
-        tracker.clear();
-        refreshGoUsageStatusBar();
-        updateWebviewContent();
-        vscode.window.showInformationMessage("Locally tracked usage data cleared.");
       } else if (action === "switchProfile" && "_fp" in picked) {
         void setActiveProfile((picked as { _fp: string })._fp);
       }
@@ -956,7 +1035,7 @@ export function activate(context: vscode.ExtensionContext) {
   ];
 
   // Agent-host providers for the Copilot Agents window (opt-in via config).
-  const enableAgents = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
+  const enableAgents = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true);
   if (enableAgents && (goProviderEnabled || zenProviderEnabled)) {
     const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
     const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
@@ -976,17 +1055,20 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("opencodego.showUsageStatusBar")) {
+      if (event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_SHOW_USAGE_STATUS_BAR}`)) {
         resetUsageStatusBar();
       }
-      if (event.affectsConfiguration("opencodego.showProviderPrefix")) {
+      if (event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_SHOW_PROVIDER_PREFIX}`)) {
         for (const provider of modelInfoProviders) {
           provider.notifyModelInfoChanged();
         }
       }
-      if (event.affectsConfiguration("opencodego.agentsWindow") || event.affectsConfiguration("opencodego.autoEnableAgentsWindow")) {
-        const agentsWindowEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
-        const autoEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("autoEnableAgentsWindow", true);
+      if (
+        event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_AGENTS_WINDOW}`) ||
+        event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_AUTO_ENABLE_AGENTS_WINDOW}`)
+      ) {
+        const agentsWindowEnabled = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true);
+        const autoEnabled = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AUTO_ENABLE_AGENTS_WINDOW, true);
         if (agentsWindowEnabled && autoEnabled) {
           void ensureAgentsWindowSupport(context);
         } else if (!agentsWindowEnabled) {
@@ -996,8 +1078,21 @@ export function activate(context: vscode.ExtensionContext) {
           void revertAgentsWindowSupport(context);
         }
       }
+      // Any usage-display setting change repaints the status bar / panel
+      // immediately (no waiting for the next request or refresh tick).
+      if (USAGE_DISPLAY_SETTING_KEYS.some((key) => event.affectsConfiguration(`${CONFIG_SECTION}.${key}`))) {
+        if (event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_USAGE_CHART_DAYS}`)) {
+          usageChartWindowDays = vscode.workspace
+            .getConfiguration(CONFIG_SECTION)
+            .get<number>(SETTING_USAGE_CHART_DAYS, DEFAULT_USAGE_CHART_DAYS);
+        }
+        refreshGoUsageStatusBar();
+        updateWebviewContent();
+      }
     }),
   );
+
+  startUsageRefreshLoop(context);
 
   void warmModelPickerMetadata();
 
@@ -1005,7 +1100,9 @@ export function activate(context: vscode.ExtensionContext) {
   // `opencodego.inlineSuggestions`; the provider reads the config live.
   registerInlineCompletions(context, {
     chatCompletionsUrl: PROVIDERS[GO_VENDOR].chatCompletionsUrl,
-    resolveApiKey: async () => _extensionContext?.secrets.get(SECRET_KEY),
+    // Same resolution order as the chat path: the active profile's own key
+    // first (covers multi-profile / BYOK-group setups), then the secret.
+    resolveApiKey: async () => profileApiKeys.get(activeProfileFingerprint) ?? _extensionContext?.secrets.get(SECRET_KEY),
   });
 }
 
@@ -1029,7 +1126,7 @@ async function configureUtilityModels(): Promise<void> {
  */
 async function toggleProviderEnabled(vendor: string, displayName: string): Promise<void> {
   const cfg = vscode.workspace.getConfiguration(vendor);
-  const current = cfg.get<boolean>("enabled", true);
+  const current = cfg.get<boolean>(SETTING_ENABLED, true);
   const next = !current;
   await cfg.update("enabled", next, vscode.ConfigurationTarget.Global);
 
@@ -1086,8 +1183,8 @@ function isModernAgentHostVscode(): boolean {
  *   anything was changed.
  */
 async function ensureAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
-  const opencodeCfg = vscode.workspace.getConfiguration("opencodego");
-  if (!opencodeCfg.get<boolean>("agentsWindow", true) || !opencodeCfg.get<boolean>("autoEnableAgentsWindow", true)) {
+  const opencodeCfg = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  if (!opencodeCfg.get<boolean>(SETTING_AGENTS_WINDOW, true) || !opencodeCfg.get<boolean>(SETTING_AUTO_ENABLE_AGENTS_WINDOW, true)) {
     return;
   }
 
@@ -1153,7 +1250,7 @@ async function warmModelPickerMetadata(): Promise<void> {
     ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true) ? [GO_VENDOR] : []),
     ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true) ? [ZEN_VENDOR] : []),
   ];
-  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true) && vendors.length > 0) {
+  if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true) && vendors.length > 0) {
     vendors.push(AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
   }
   await Promise.allSettled(vendors.map((v) => vscode.lm.selectChatModels({ vendor: v })));
@@ -1161,7 +1258,7 @@ async function warmModelPickerMetadata(): Promise<void> {
 
 async function showModelPickerDiagnostics(): Promise<void> {
   const vendors: string[] = [GO_VENDOR, ZEN_VENDOR, "copilot"];
-  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true)) {
+  if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true)) {
     vendors.splice(2, 0, AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
   }
   const sections: string[] = [];
@@ -1217,7 +1314,7 @@ async function showThinkingEffortPicker(): Promise<void> {
     placeHolder: `Set ${family.family.label} → Thinking value`,
   });
   if (!choice) return;
-  const cfg = vscode.workspace.getConfiguration("opencodego.thinking");
+  const cfg = vscode.workspace.getConfiguration(`${CONFIG_SECTION}.thinking`);
   await cfg.update(family.family.key, choice, vscode.ConfigurationTarget.Global);
   vscode.window.showInformationMessage(`OpenCode Thinking — ${family.family.label}: ${choice}`);
 }
@@ -1237,7 +1334,7 @@ function ensureUsageStatusBar(context: vscode.ExtensionContext): vscode.StatusBa
 }
 
 function shouldShowUsageStatusBar(): boolean {
-  return vscode.workspace.getConfiguration("opencodego").get("showUsageStatusBar", true);
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get(SETTING_SHOW_USAGE_STATUS_BAR, true);
 }
 
 function resetUsageStatusBar(): void {
@@ -1300,7 +1397,7 @@ function refreshGoUsageStatusBar(): void {
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const baseText = formatGoUsageStatusBarText(s);
   goUsageStatusBarItem.text = activeProfile && profilesCache.length > 1 ? `${baseText} [${activeProfile.label}]` : baseText;
-  goUsageStatusBarItem.tooltip = buildUsageTooltip(s, tracker.getCurrentSessionCost());
+  goUsageStatusBarItem.tooltip = buildUsageTooltip(s);
   goUsageStatusBarItem.show();
   updateWebviewContent();
 
@@ -1331,177 +1428,746 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
     return;
   }
 
-  usageWebviewPanel = vscode.window.createWebviewPanel("opencodego.usageWebview", "OpenCode Usage Summary", vscode.ViewColumn.Beside, {
-    enableScripts: false,
+  usageWebviewPanel = vscode.window.createWebviewPanel("opencodego.usageWebview", "OpenCode Usage", vscode.ViewColumn.Beside, {
+    enableScripts: true,
     retainContextWhenHidden: true,
   });
 
   usageWebviewPanel.onDidDispose(
     () => {
       usageWebviewPanel = undefined;
+      usageWebviewRendered = false;
     },
     null,
     context.subscriptions,
   );
 
+  usageWebviewPanel.webview.onDidReceiveMessage(
+    (message: { type?: string }) => {
+      switch (message.type) {
+        case "refresh":
+          refreshGoUsageStatusBar();
+          break;
+        case "setTargets":
+          void vscode.commands.executeCommand("opencodego.setUsageTargets");
+          break;
+        case "renameProfile":
+          void vscode.commands.executeCommand("opencodego.renameActiveProfile");
+          break;
+        case "window": {
+          const days = Number((message as { days?: unknown }).days);
+          if (Number.isFinite(days) && days >= 0 && days <= 370) {
+            usageChartWindowDays = days;
+            updateWebviewContent();
+          }
+          break;
+        }
+      }
+    },
+    null,
+    context.subscriptions,
+  );
+
+  usageWebviewRendered = false;
   updateWebviewContent();
+}
+
+/** Escape a JSON payload for embedding in an HTML <script> block. */
+function jsonForWebview(value: unknown): string {
+  return JSON.stringify(value).replace(/<\//g, "<\\/");
+}
+
+/** Whether the usage webview has received its initial HTML (data flows via postMessage after that). */
+let usageWebviewRendered = false;
+/** Selected chart window in days (0 = lifetime); the webview toggles it via message. */
+let usageChartWindowDays: number = vscode.workspace
+  .getConfiguration(CONFIG_SECTION)
+  .get<number>(SETTING_USAGE_CHART_DAYS, DEFAULT_USAGE_CHART_DAYS);
+
+/** Build the chart/stat payload shown by the usage webview. */
+function usageWebviewData(): Record<string, unknown> | undefined {
+  if (!goUsageTracker) return undefined;
+  const tracker = activeGoUsageTracker();
+  if (!tracker) return undefined;
+  const s = tracker.getSummary();
+  const windowDays = usageChartWindowDays;
+  const series = tracker.getUsageSeries(windowDays);
+  const completionDays = contextCompletionUsage();
+  // The completion series must share the EXACT day buckets of the usage
+  // series (they can differ in length on lifetime windows), otherwise the
+  // charts misalign and hovers resolve to undefined values.
+  const completions = completionUsageToSeries(
+    completionDays,
+    trackerDayStart(tracker),
+    windowDays,
+    series.days.length > 0 ? series.days[0].dayStart : undefined,
+  );
+  const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
+  const showRolling = usageRollingMeterVisible();
+
+  const rings = [
+    ...(showRolling
+      ? [
+          {
+            key: "session",
+            label: "Session (5h)",
+            percent: s.session.percent,
+            spent: s.session.spent,
+            limit: s.session.limit,
+            resetsIn: formatRelativeTime(s.session.resetsAt),
+          },
+        ]
+      : []),
+    {
+      key: "weekly",
+      label: "Weekly",
+      percent: s.weekly.percent,
+      spent: s.weekly.spent,
+      limit: s.weekly.limit,
+      resetsIn: formatRelativeTime(s.weekly.resetsAt),
+    },
+    {
+      key: "monthly",
+      label: "Monthly",
+      percent: s.monthly.percent,
+      spent: s.monthly.spent,
+      limit: s.monthly.limit,
+      resetsIn: formatRelativeTime(s.monthly.resetsAt),
+    },
+  ];
+
+  return {
+    profile: activeProfile?.label ?? "OpenCode Go",
+    showRename: nonLegacyCount(profilesCache) > 0,
+    windowDays,
+    completions,
+    rings,
+    stats: {
+      total: { label: "Codebase", cost: s.codebase.cost, tokens: s.codebase.tokens, requests: s.codebase.requests },
+      today: { label: "Today", cost: s.today.cost, tokens: s.today.tokens, requests: s.today.requests },
+      yesterday: { label: "Yesterday", cost: s.yesterday.cost, tokens: s.yesterday.tokens, requests: s.yesterday.requests },
+    },
+    days: series.days,
+    byModel: series.byModel,
+  };
+}
+
+/** Read the persisted per-day completion counters. */
+function contextCompletionUsage(): CompletionUsageDay[] {
+  const stored = _extensionContext?.globalState.get<CompletionUsageDay[]>(COMPLETION_USAGE_KEY, []);
+  return Array.isArray(stored) ? stored : [];
+}
+
+/** Day-start used by the current tracker (matches the chart boundary). */
+function trackerDayStart(_tracker: GoUsageTracker): number {
+  const now = new Date();
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get<"utc" | "local">(SETTING_USAGE_DAY_BOUNDARY, "utc") === "local"
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    : Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }
 
 function updateWebviewContent(): void {
   if (!usageWebviewPanel || !goUsageTracker) return;
-  const tracker = activeGoUsageTracker();
-  if (!tracker) {
+  const data = usageWebviewData();
+  if (!data) {
     usageWebviewPanel.webview.html = `<html><body><p>No active tracker</p></body></html>`;
+    usageWebviewRendered = false;
     return;
   }
-  const s = tracker.getSummary();
-  const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
-  const profileLabel = activeProfile?.label ?? "OpenCode Go";
 
-  usageWebviewPanel.webview.html = `
+  if (!usageWebviewRendered) {
+    // First paint: render the full page. Later refreshes only push new data
+    // via postMessage so the user's active tab and chart stay in place.
+    usageWebviewPanel.webview.html = usageWebviewHtml(String(data.profile));
+    usageWebviewRendered = true;
+  }
+  void usageWebviewPanel.webview.postMessage({ type: "usage", data });
+}
+
+function usageWebviewHtml(profileLabel: string): string {
+  const data = usageWebviewData() ?? {};
+  return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>OpenCode Usage Summary — ${escapeSvg(profileLabel)}</title>
-      <style>
-        :root {
-          --bg: var(--vscode-editorWidget-background, #252526);
-          --border: var(--vscode-widget-border, #3c3c3c);
-          --text: var(--vscode-foreground, #cccccc);
-          --text-dim: var(--vscode-descriptionForeground, #9d9d9d);
-          --accent: var(--vscode-textLink-foreground, #3794ff);
-          --track: var(--vscode-widget-border, #3c3c3c);
-          --divider: var(--vscode-widget-border, #3c3c3c);
-        }
-        * { box-sizing: border-box; }
-        body {
-          margin: 0;
-          height: 100vh;
-          background: var(--vscode-editor-background, #1e1e1e);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 16px;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif;
-        }
-        .card {
-          width: 320px;
-          background: var(--bg);
-          border: 1px solid var(--border);
-          border-radius: 6px;
-          color: var(--text);
-          font-size: 13px;
-          padding: 16px;
-        }
-        .title {
-          font-size: 13px;
-          font-weight: 600;
-          margin-bottom: 14px;
-        }
-        .row-label {
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          margin-bottom: 6px;
-        }
-        .row-label .name { font-weight: 600; font-size: 13px; }
-        .row-label .resets { font-size: 11px; color: var(--text-dim); }
-        .bar {
-          height: 4px;
-          width: 100%;
-          background: var(--track);
-          border-radius: 2px;
-          overflow: hidden;
-          margin-bottom: 6px;
-        }
-        .bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
-        .row-sub {
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          margin-bottom: 16px;
-          font-size: 12px;
-        }
-        .row-sub .used { color: var(--text-dim); }
-        .row-sub .pct { font-weight: 600; }
-        .section:last-of-type .row-sub { margin-bottom: 14px; }
-        .divider { border-top: 1px solid var(--divider); margin: 0 -16px 12px; }
-        .stats { display: flex; justify-content: space-between; margin-bottom: 10px; }
-        .stats:last-of-type { margin-bottom: 14px; }
-        .stat { flex: 1; }
-        .stat .label { color: var(--text-dim); font-size: 11px; margin-bottom: 2px; }
-        .stat .value { font-weight: 600; font-size: 13px; }
-        .footer {
-          display: flex;
-          gap: 16px;
-          padding-top: 12px;
-          border-top: 1px solid var(--divider);
-          margin: 0 -16px;
-          padding-left: 16px;
-        }
-        .footer a { color: var(--accent); font-size: 12px; text-decoration: none; }
-        .footer a:hover { text-decoration: underline; }
-      </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+    <title>OpenCode Usage</title>
+    <style>
+      :root{
+        --bg-0: #101216; --bg-1: #161a20; --bg-2: #1b2029; --bg-3: #222936;
+        --line: #242a33; --line-soft: #1b2028;
+        --text-hi: #eef1f5; --text-mid: #9aa4b2; --text-lo: #5b6472;
+        --amber: #e3b341; --teal: #3fdbb0; --coral: #ef7f6b; --blue: #5aa9ff; --violet: #a98ef9;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --s: clamp(10px, 1.6vh, 18px);
+        --radius: clamp(8px, 1vh, 14px);
+      }
+      *{box-sizing:border-box; margin:0; padding:0;}
+      html, body{ height:100%; width:100%; overflow:hidden; background:var(--bg-0); color:var(--text-hi); font-family:var(--sans); -webkit-font-smoothing:antialiased; }
+      body{
+        display:grid; grid-template-rows:auto auto 1fr; grid-template-areas:"topbar" "rings" "main";
+        row-gap: var(--s); height:100vh; padding: var(--s);
+        background:
+          radial-gradient(1100px 500px at 90% -20%, rgba(227,179,65,0.05), transparent 60%),
+          radial-gradient(900px 500px at -10% 0%, rgba(63,219,176,0.04), transparent 55%),
+          var(--bg-0);
+      }
+      ::selection{ background:#7a6427; color:var(--text-hi); }
+      *{ min-width:0; min-height:0; }
+
+      .topbar{ grid-area:topbar; display:flex; align-items:center; gap: var(--s); }
+      .topbar .actions{ margin-left:auto; display:flex; gap: calc(var(--s)/2); flex:none; }
+      .brand{ display:flex; align-items:center; gap: clamp(6px,1vw,10px); min-width:0; }
+      .brand .mark{
+        width: clamp(20px, 2.4vh, 28px); height: clamp(20px, 2.4vh, 28px);
+        border-radius: 7px; background:linear-gradient(135deg, var(--amber), var(--coral));
+        display:flex; align-items:center; justify-content:center;
+        font-family:var(--mono); font-weight:700; font-size: clamp(9px, 1.2vh, 12px);
+        line-height:1; color:#141205; flex:none;
+      }
+      .brand .name{ font-weight:700; font-size: clamp(12px, 1.6vh, 15px); letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .brand .sub{ color:var(--text-lo); font-size: clamp(9px, 1.1vh, 11px); font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+      .rings-row{ grid-area:rings; display:flex; gap: var(--s); }
+      .ring-card{
+        flex:1 1 0; background:var(--bg-1); border:1px solid var(--line-soft); border-radius: var(--radius);
+        padding: var(--s); display:flex; align-items:center; gap: var(--s); overflow:hidden;
+      }
+      .ring-wrap{ position:relative; width: clamp(38px, 6vh, 58px); height: clamp(38px, 6vh, 58px); flex:none; }
+      .ring-wrap svg{ width:100%; height:100%; transform:rotate(-90deg); display:block; }
+      .ring-bg{ fill:none; stroke:var(--bg-3); stroke-width:8; }
+      .ring-fg{ fill:none; stroke-width:8; stroke-linecap:round; transition:stroke-dashoffset 1s cubic-bezier(.4,0,.2,1); }
+      .ring-card.session .ring-fg{ stroke:var(--blue); }
+      .ring-card.weekly .ring-fg{ stroke:var(--amber); }
+      .ring-card.monthly .ring-fg{ stroke:var(--teal); }
+      .ring-pct{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-weight:700; font-size: clamp(9px, 1.4vh, 13px); }
+      .ring-info{ min-width:0; overflow:hidden; }
+      .ring-info .label{ font-size: clamp(10px, 1.3vh, 12.5px); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ring-info .reset{ font-family:var(--mono); font-size: clamp(8.5px, 1vh, 10.5px); color:var(--text-lo); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ring-info .amounts{ font-family:var(--mono); font-size: clamp(9.5px, 1.2vh, 12px); color:var(--text-mid); margin-top: clamp(3px,0.5vh,6px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ring-info .amounts b{ color:var(--text-hi); font-weight:700; }
+
+      .main-panel{
+        grid-area:main; background:var(--bg-1); border:1px solid var(--line-soft); border-radius: var(--radius);
+        padding: var(--s); display:flex; flex-direction:column; gap: var(--s); overflow:hidden; position:relative;
+      }
+      .panel-top{ display:flex; align-items:center; justify-content:space-between; gap: var(--s); flex:none; flex-wrap:nowrap; }
+      .tabs{ display:flex; gap: calc(var(--s)/3); background:var(--bg-2); border:1px solid var(--line-soft); border-radius: calc(var(--radius) - 2px); padding: calc(var(--s)/5); flex:none; }
+      .tab-btn{
+        font-family:var(--sans); font-weight:600; font-size: clamp(9.5px, 1.1vh, 11.5px);
+        padding: calc(var(--s)/2.4) calc(var(--s)*0.85); border-radius: calc(var(--radius) - 4px);
+        border:none; background:transparent; color:var(--text-mid); cursor:pointer; white-space:nowrap;
+        transition: background .15s ease, color .15s ease;
+      }
+      .tab-btn:hover{ color:var(--text-hi); }
+      .tab-btn.active{ background:var(--bg-3); color:var(--text-hi); }
+      .tab-btn .sw{ display:inline-block; width:7px; height:7px; border-radius:2px; margin-right:6px; opacity:.55; }
+      .tab-btn.active .sw{ opacity:1; }
+
+      .stat-chips{ display:flex; gap: var(--s); flex:none; }
+      .stat-chip{ text-align:right; }
+      .stat-chip .k{ font-size: clamp(8.5px, 1vh, 10px); color:var(--text-lo); text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+      .stat-chip .v{ font-family:var(--mono); font-weight:700; font-size: clamp(12px, 1.5vh, 15px); color:var(--text-hi); white-space:nowrap; margin-top:2px; }
+
+      .chart-box{ position:relative; flex:1; min-height:0; }
+      .chart-box svg{ width:100%; height:100%; display:block; overflow:visible; }
+      .chart-box text{ font-family:var(--mono); }
+
+      /* cursor-follow tooltip */
+      .ttip{
+        position:absolute; pointer-events:none; z-index:5; display:none;
+        background:var(--bg-3); border:1px solid var(--line); border-radius:6px;
+        padding:6px 9px; font-family:var(--mono); font-size:11px; color:var(--text-hi);
+        white-space:nowrap; box-shadow:0 4px 14px rgba(0,0,0,.35);
+      }
+      .ttip .t-line{ color:var(--text-lo); margin-right:6px; }
+      .ttip b{ color:var(--text-hi); }
+      .ttip .t-sub{ color:var(--text-mid); font-size:10px; margin-top:2px; }
+
+      .btn{
+        background:var(--bg-2); border:1px solid var(--line); color:var(--text-mid);
+        font-family:var(--sans); font-size: clamp(9.5px, 1.1vh, 11px); font-weight:600;
+        padding: clamp(5px, 0.8vh, 8px) clamp(10px, 1.4vh, 14px);
+        border-radius: calc(var(--radius) - 4px); text-decoration:none; cursor:pointer;
+        white-space:nowrap; transition: background .15s ease, color .15s ease, border-color .15s ease;
+      }
+      .btn:hover{ background:var(--bg-3); color:var(--text-hi); border-color:var(--text-lo); }
+      .btn.primary{ color:var(--text-hi); border-color:var(--line); }
+      .btn.primary:hover{ border-color:var(--amber); }
+
+      .legend{ display:flex; gap: clamp(10px, 1.4vh, 16px); flex-wrap:wrap; flex:none; align-items:center; padding: 2px 0 0 2px; }
+      .legend .l-item{ display:flex; align-items:center; gap:7px; font-size: clamp(10px, 1.2vh, 12px); line-height:1; color:var(--text-mid); white-space:nowrap; }
+      .legend .l-swatch{ width: clamp(10px, 1.2vh, 12px); height: clamp(10px, 1.2vh, 12px); border-radius:3px; flex:none; display:inline-block; }
+      .legend .l-more{ color:var(--text-lo); font-size: clamp(9px, 1.05vh, 11px); }
+
+      @media (max-width: 620px){
+        .rings-row{ flex-wrap:wrap; }
+        .ring-card{ flex:1 1 100%; }
+        .panel-top{ flex-wrap:wrap; }
+        .stat-chips{ display:none; }
+      }
+      @media (prefers-reduced-motion: reduce){ *{ transition:none !important; animation:none !important; } }
+    </style>
     </head>
     <body>
-      <div class="card">
-        <div class="title">${escapeSvg(profileLabel)} - Usage</div>
-
-        ${usageCardSectionHtml("Session (5h rolling)", s.session)}
-        ${usageCardSectionHtml("Weekly", s.weekly)}
-        ${usageCardSectionHtml("Monthly", s.monthly)}
-
-        <div class="divider"></div>
-
-        ${usageCardStatsHtml("Today", s.today)}
-        ${usageCardStatsHtml("Yesterday", s.yesterday)}
-
-        <div class="footer">
-          <a href="command:opencodego.setUsageTargets">Set spent targets</a>
-          ${nonLegacyCount(profilesCache) > 0 ? '<a href="command:opencodego.renameActiveProfile">Rename</a>' : ""}
+      <div class="topbar">
+        <div class="brand">
+          <div class="mark">OC</div>
+          <div class="name" id="brandName">${escapeHtml(profileLabel)}</div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="btnWindow" title="Switch the chart window: week / 14 days / month / lifetime">14 days</button>
+          <button class="btn" id="btnTargets" title="Set manual spent targets for Session / Weekly / Monthly">Set targets</button>
+          <button class="btn" id="btnRename" title="Rename the active profile" style="display:none">Rename</button>
+          <button class="btn primary" id="btnRefresh" title="Refresh usage data now">Refresh</button>
         </div>
       </div>
+
+      <div class="rings-row" id="rings"></div>
+
+      <div class="main-panel">
+        <div class="panel-top">
+          <div class="tabs" id="tabs">
+            <button class="tab-btn active" data-metric="spend"><span class="sw" style="background:var(--amber)"></span>Spend</button>
+            <button class="tab-btn" data-metric="requests"><span class="sw" style="background:var(--blue)"></span>Requests</button>
+            <button class="tab-btn" data-metric="tokens"><span class="sw" style="background:var(--teal)"></span>Tokens</button>
+            <button class="tab-btn" data-metric="models"><span class="sw" style="background:var(--coral)"></span>Models</button>
+            <button class="tab-btn" data-metric="suggested"><span class="sw" style="background:var(--violet)"></span>Suggested</button>
+            <button class="tab-btn" data-metric="approved"><span class="sw" style="background:#7fd1a8"></span>Approved</button>
+          </div>
+          <div class="stat-chips" id="statChips"></div>
+        </div>
+        <div class="legend" id="legend"></div>
+        <div class="chart-box" id="chartBox">
+          <svg id="chartSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="ttip" id="ttip"></div>
+        </div>
+      </div>
+
+      <script type="application/json" id="usage-data">${jsonForWebview(data)}</script>
+      <script>
+      (function () {
+        'use strict';
+        var vscode = acquireVsCodeApi();
+        var DATA = JSON.parse(document.getElementById('usage-data').textContent);
+        var MODEL_COLORS = ['#e3b341','#5aa9ff','#3fdbb0','#ef7f6b','#a98ef9','#7fd1a8'];
+        var svgNS = 'http://www.w3.org/2000/svg';
+        var svg = document.getElementById('chartSvg');
+        var box = document.getElementById('chartBox');
+        var chips = document.getElementById('statChips');
+        var ttip = document.getElementById('ttip');
+        var current = 'spend';
+
+        function el(tag, attrs, text) {
+          var n = document.createElementNS(svgNS, tag);
+          for (var k in attrs) n.setAttribute(k, attrs[k]);
+          if (text !== undefined) n.textContent = text;
+          return n;
+        }
+        function clear() { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+        function fmtUsd(v) { return v >= 1000 ? '$' + (v/1000).toFixed(2) + 'K' : '$' + v.toFixed(2); }
+        function fmtCount(v) {
+          if (v >= 1e9) return (v/1e9).toFixed(1) + 'B';
+          if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+          if (v >= 1e3) return (v/1e3).toFixed(1) + 'k';
+          return String(v);
+        }
+        function fmtTokens(v) { return fmtCount(v); }
+        function dayLabel(ms) {
+          var d = new Date(ms);
+          return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        }
+        function niceMax(v) {
+          if (v <= 0) return 1;
+          var mag = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+          var norm = v / mag;
+          return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+        }
+        // Round tick step (1/2/2.5/5 x 10^n) so axis gaps stay clean: never
+        // 1.25 / 2.50 / 3.75-style odd divisions.
+        function niceStep(v) {
+          if (v <= 0) return 1;
+          var mag = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+          var norm = v / mag;
+          var cand = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+          return cand * mag;
+        }
+        // Round the max up to a multiple of a round step, then emit 0..top ticks.
+        // forceInt keeps counts whole (suggestions/approvals never show 2.5).
+        function axisTicks(maxVal, bands, forceInt) {
+          var step = niceStep(maxVal / Math.max(1, bands));
+          if (forceInt) step = Math.max(1, Math.round(step));
+          var top = Math.ceil(maxVal / step) * step;
+          var ticks = [];
+          for (var v = top; v > -1e-9; v -= step) ticks.push(Math.round(v * 10000) / 10000);
+          return { top: top, step: step, ticks: ticks };
+        }
+        function fmtAxisUsd(v) {
+          if (v >= 1000) return fmtUsd(v);
+          return '$' + String(Math.round(v * 100) / 100);
+        }
+        function metricValues(m) {
+          if (m === 'spend') return DATA.days.map(function (d) { return d.cost; });
+          if (m === 'requests') return DATA.days.map(function (d) { return d.requests; });
+          if (m === 'tokens') return DATA.days.map(function (d) { return d.tokens; });
+          var vals = (DATA.completions || []).map(function (d) { return m === 'suggested' ? d.suggested : d.approved; });
+          // zero-fill so every day bucket has a value (lifetime ranges differ)
+          while (vals.length < DATA.days.length) vals.push(0);
+          return vals;
+        }
+        function metricFmt(m) {
+          if (m === 'spend') return fmtUsd;
+          return fmtCount;
+        }
+        function metricUnit(m) {
+          if (m === 'spend') return '';
+          if (m === 'requests') return ' requests';
+          if (m === 'tokens') return ' tokens';
+          return m === 'suggested' ? ' suggestions' : ' approvals';
+        }
+        function metricColor(m) {
+          return m === 'spend' ? '#e3b341' : m === 'requests' ? '#5aa9ff' : m === 'tokens' ? '#3fdbb0' : m === 'suggested' ? '#a98ef9' : '#7fd1a8';
+        }
+        function metricTotal(m) {
+          var vals = metricValues(m);
+          return vals.reduce(function (a, b) { return a + b; }, 0);
+        }
+        function showTooltip(x, y, html) {
+          ttip.innerHTML = html;
+          ttip.style.display = 'block';
+          var r = box.getBoundingClientRect();
+          var px = x - r.left + 16, py = y - r.top + 14;
+          if (px + 220 > r.width) px = x - r.left - 220;
+          if (py + 60 > r.height) py = y - r.top - 60;
+          ttip.style.left = px + 'px';
+          ttip.style.top = py + 'px';
+        }
+        function hideTooltip() { ttip.style.display = 'none'; }
+
+        function drawLine(m) {
+          var W = box.clientWidth, H = box.clientHeight;
+          if (!W || !H) return;
+          svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+          clear();
+          var padL = 44, padR = 10, padT = 12, padB = 24;
+          var plotW = Math.max(1, W - padL - padR), plotH = Math.max(1, H - padT - padB);
+          var vals = metricValues(m);
+          var maxVal = niceMax(Math.max.apply(null, vals) * 1.15);
+          var isCount = m === 'suggested' || m === 'approved';
+          var axis = axisTicks(maxVal, 4, isCount);
+          maxVal = axis.top;
+          var color = metricColor(m);
+          var fmt = metricFmt(m), unit = metricUnit(m);
+          var fmtAxis = m === 'spend' ? fmtAxisUsd : fmt;
+          function daySub(day) {
+            if (isCount) {
+              var c = { suggested: 0, approved: 0 };
+              (DATA.completions || []).forEach(function (d) { if (d.dayStart === day.dayStart) c = d; });
+              return fmtCount(c.suggested) + ' suggestions · ' + fmtCount(c.approved) + ' approved';
+            }
+            return fmtCount(day.tokens) + ' tokens · ' + fmtCount(day.requests) + ' requests';
+          }
+          var n = DATA.days.length;
+
+          var defs = el('defs', {});
+          var grad = el('linearGradient', { id: 'grad', x1: '0', y1: '0', x2: '0', y2: '1' });
+          grad.appendChild(el('stop', { offset: '0%', 'stop-color': color, 'stop-opacity': '0.30' }));
+          grad.appendChild(el('stop', { offset: '100%', 'stop-color': color, 'stop-opacity': '0' }));
+          defs.appendChild(grad);
+          svg.appendChild(defs);
+
+          axis.ticks.forEach(function (v) {
+            var gy = padT + plotH - (v / maxVal) * plotH;
+            svg.appendChild(el('line', { x1: padL, y1: gy, x2: W - padR, y2: gy, stroke: 'rgba(255,255,255,0.06)', 'stroke-width': '1' }));
+            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmtAxis(v)));
+          });
+
+          var step = n > 1 ? plotW / (n - 1) : plotW;
+          var points = DATA.days.map(function (d, i) {
+            var x = padL + step * i;
+            var y = padT + plotH - (vals[i] / maxVal) * plotH;
+            return { x: x, y: y, v: vals[i], day: d };
+          });
+
+          var labelEvery = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(plotW / 46))));
+          DATA.days.forEach(function (d, i) {
+            if (i % labelEvery !== 0 && i !== n - 1) return;
+            svg.appendChild(el('text', { x: padL + step * i, y: H - 6, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '9' }, dayLabel(d.dayStart)));
+          });
+
+          var pathD = points.map(function (p, i) { return (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+          var areaD = pathD + ' L' + points[points.length - 1].x.toFixed(1) + ',' + (padT + plotH) + ' L' + points[0].x.toFixed(1) + ',' + (padT + plotH) + ' Z';
+          svg.appendChild(el('path', { d: areaD, fill: 'url(#grad)', stroke: 'none' }));
+          svg.appendChild(el('path', { d: pathD, fill: 'none', stroke: color, 'stroke-width': '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+
+          // whole-chart hover: nearest day gets a guide line, dot and tooltip
+          var guide = el('line', { y1: padT, y2: padT + plotH, stroke: 'rgba(255,255,255,0.18)', 'stroke-width': '1', 'stroke-dasharray': '3 3' });
+          var dot = el('circle', { r: '3.5', fill: color, stroke: '#161a20', 'stroke-width': '2' });
+          var overlay = el('rect', { x: padL, y: padT, width: plotW, height: plotH, fill: 'transparent' });
+          overlay.addEventListener('mousemove', function (ev) {
+            var r = svg.getBoundingClientRect();
+            var px = ev.clientX - r.left;
+            var best = points[0], bd = Infinity;
+            points.forEach(function (p) { var d = Math.abs(p.x - px); if (d < bd) { bd = d; best = p; } });
+            guide.setAttribute('x1', String(best.x)); guide.setAttribute('x2', String(best.x));
+            dot.setAttribute('cx', String(best.x)); dot.setAttribute('cy', String(best.y));
+            svg.appendChild(guide); svg.appendChild(dot);
+            showTooltip(ev.clientX, ev.clientY,
+              '<span class="t-line">' + dayLabel(best.day.dayStart) + '</span><b>' + fmt(best.v) + '</b>' + unit +
+              '<div class="t-sub">' + daySub(best.day) + '</div>');
+          });
+          overlay.addEventListener('mouseleave', function () { guide.remove(); dot.remove(); hideTooltip(); });
+          svg.appendChild(overlay);
+          svg.appendChild(el('line', { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: '#242a33', 'stroke-width': '1' }));
+        }
+
+        function drawModelLines() {
+          var W = box.clientWidth, H = box.clientHeight;
+          if (!W || !H) return;
+          svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+          clear();
+
+          // per-model daily spend, ranked by total
+          var totals = {};
+          var perModel = {};
+          DATA.byModel.forEach(function (p) {
+            totals[p.model] = (totals[p.model] || 0) + p.cost;
+            (perModel[p.model] = perModel[p.model] || []).push(p);
+          });
+          var models = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; });
+          if (models.length === 0) {
+            svg.appendChild(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '11' }, 'No model usage in the selected window'));
+            return;
+          }
+
+          var series = models.map(function (model) {
+            return {
+              model: model,
+              total: totals[model],
+              values: DATA.days.map(function (d) {
+                var hit = null;
+                (perModel[model] || []).forEach(function (p) { if (p.dayStart === d.dayStart) hit = p; });
+                return hit ? hit : { cost: 0, tokens: 0, requests: 0, dayStart: d.dayStart };
+              }),
+            };
+          });
+          var maxVal = niceMax(Math.max.apply(null, series.map(function (s) { return s.total; })) * 1.15);
+          var axis = axisTicks(maxVal, 4);
+          maxVal = axis.top;
+
+          var padL = 44, padR = 10, padT = 12, padB = 24;
+          var plotW = Math.max(1, W - padL - padR), plotH = Math.max(1, H - padT - padB);
+          var n = DATA.days.length;
+          var step = n > 1 ? plotW / (n - 1) : plotW;
+
+          axis.ticks.forEach(function (v) {
+            var gy = padT + plotH - (v / maxVal) * plotH;
+            svg.appendChild(el('line', { x1: padL, y1: gy, x2: W - padR, y2: gy, stroke: 'rgba(255,255,255,0.06)', 'stroke-width': '1' }));
+            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmtAxisUsd(v)));
+          });
+          var labelEvery = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(plotW / 46))));
+          DATA.days.forEach(function (d, i) {
+            if (i % labelEvery !== 0 && i !== n - 1) return;
+            svg.appendChild(el('text', { x: padL + step * i, y: H - 6, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '9' }, dayLabel(d.dayStart)));
+          });
+
+          // one overlapping line per model (spend), colored per model
+          series.forEach(function (s, si) {
+            var color = MODEL_COLORS[si % MODEL_COLORS.length];
+            var pts = s.values.map(function (p, i) {
+              return { x: padL + step * i, y: padT + plotH - (p.cost / maxVal) * plotH, p: p };
+            });
+            var d = pts.map(function (p, i) { return (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+            svg.appendChild(el('path', { d: d, fill: 'none', stroke: color, 'stroke-width': '1.6', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+            pts.forEach(function (p, i) {
+              if (p.p.cost <= 0) return;
+              var c = el('circle', { cx: p.x, cy: p.y, r: '7', fill: 'transparent', stroke: 'none' });
+              c.addEventListener('mousemove', function (ev) {
+                showTooltip(ev.clientX, ev.clientY,
+                  '<span class="t-line">' + esc(s.model) + ' · ' + dayLabel(p.p.dayStart) + '</span><b>' + fmtUsd(p.p.cost) + '</b>' +
+                  '<div class="t-sub">' + fmtCount(p.p.tokens) + ' tokens · ' + fmtCount(p.p.requests) + ' requests</div>');
+              });
+              c.addEventListener('mouseleave', hideTooltip);
+              svg.appendChild(c);
+            });
+          });
+
+          svg.appendChild(el('line', { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: '#242a33', 'stroke-width': '1' }));
+
+          // whole-chart hover: nearest day highlights every model's point and
+          // lists each model's spend for that day
+          var guide2 = el('line', { y1: padT, y2: padT + plotH, stroke: 'rgba(255,255,255,0.18)', 'stroke-width': '1', 'stroke-dasharray': '3 3' });
+          var dots2 = [];
+          var overlay2 = el('rect', { x: padL, y: padT, width: plotW, height: plotH, fill: 'transparent' });
+          var modelPts = [];
+          series.forEach(function (s, si) {
+            var color2 = MODEL_COLORS[si % MODEL_COLORS.length];
+            s.values.forEach(function (p, i) {
+              modelPts.push({
+                x: padL + step * i,
+                y: padT + plotH - (p.cost / maxVal) * plotH,
+                model: s.model,
+                color: color2,
+                p: p,
+                i: i
+              });
+            });
+          });
+          overlay2.addEventListener('mousemove', function (ev) {
+            var r = svg.getBoundingClientRect();
+            var px = ev.clientX - r.left;
+            var best = null, bd = Infinity;
+            modelPts.forEach(function (pt) { var d = Math.abs(pt.x - px); if (d < bd) { bd = d; best = pt; } });
+            if (!best) return;
+            guide2.setAttribute('x1', String(best.x)); guide2.setAttribute('x2', String(best.x));
+            svg.appendChild(guide2);
+            dots2.forEach(function (d2) { d2.remove(); });
+            dots2.length = 0;
+            var lines2 = [];
+            modelPts.forEach(function (pt) {
+              if (pt.i !== best.i) return;
+              var dd = el('circle', { cx: pt.x, cy: pt.y, r: '3.5', fill: pt.color, stroke: '#161a20', 'stroke-width': '2' });
+              svg.appendChild(dd);
+              dots2.push(dd);
+              if (pt.p.cost > 0) lines2.push('<div class="t-sub"><span class="l-swatch" style="background:' + pt.color + ';display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px"></span>' + esc(pt.model) + ': <b>' + fmtUsd(pt.p.cost) + '</b></div>');
+            });
+            showTooltip(ev.clientX, ev.clientY,
+              '<span class="t-line">' + dayLabel(best.p.dayStart) + '</span>' +
+              (lines2.length ? lines2.join('') : '<span class="t-sub">No model spend this day</span>'));
+          });
+          overlay2.addEventListener('mouseleave', function () { guide2.remove(); dots2.forEach(function (d2) { d2.remove(); }); dots2.length = 0; hideTooltip(); });
+          svg.appendChild(overlay2);
+
+          // legend (up to 8 models, ranked by total spend)
+          var legend = document.getElementById('legend');
+          legend.innerHTML = series.slice(0, 8).map(function (s, i) {
+            var color = MODEL_COLORS[i % MODEL_COLORS.length];
+            return '<span class="l-item"><span class="l-swatch" style="background:' + color + '"></span>' + esc(s.model) + '</span>';
+          }).join('') + (series.length > 8 ? '<span class="l-more">+' + (series.length - 8) + ' more</span>' : '');
+        }
+
+        function render(key) {
+          current = key;
+          var fmt = metricFmt(key), unit = metricUnit(key);
+          if (key === 'models') {
+            chips.innerHTML =
+              '<div class="stat-chip"><div class="k">Total spend</div><div class="v">' + fmtUsd(metricTotal('spend')) + '</div></div>';
+            drawModelLines();
+            return;
+          }
+          document.getElementById('legend').innerHTML = '';
+          if (key === 'suggested' || key === 'approved') {
+            chips.innerHTML = '';
+            drawLine(key);
+            return;
+          }
+          var st = DATA.stats;
+          var totalKey = key === 'spend' ? 'total' : key;
+          chips.innerHTML =
+            '<div class="stat-chip"><div class="k">' + st.today.label + '</div><div class="v">' + fmt(key === 'spend' ? st.today.cost : st.today[key]) + '</div></div>' +
+            '<div class="stat-chip"><div class="k">' + st.yesterday.label + '</div><div class="v">' + fmt(key === 'spend' ? st.yesterday.cost : st.yesterday[key]) + '</div></div>' +
+            '<div class="stat-chip"><div class="k">' + (key === 'spend' ? st.total.label : 'Total ' + key) + '</div><div class="v">' + fmt(key === 'spend' ? st.total.cost : st.total[key]) + '</div></div>';
+          void unit;
+          drawLine(key);
+        }
+
+        document.getElementById('tabs').addEventListener('click', function (e) {
+          var btn = e.target.closest('.tab-btn');
+          if (!btn) return;
+          document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          render(btn.dataset.metric);
+        });
+
+        // rings (re-rendered on every data refresh)
+        function renderRings() {
+          var ringsBox = document.getElementById('rings');
+          ringsBox.innerHTML = DATA.rings.map(function (r) {
+            var c = 2 * Math.PI * 24;
+            return '<div class="ring-card ' + r.key + '">' +
+              '<div class="ring-wrap"><svg viewBox="0 0 58 58">' +
+              '<circle class="ring-bg" cx="29" cy="29" r="24"></circle>' +
+              '<circle class="ring-fg" cx="29" cy="29" r="24" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + c.toFixed(1) + '" data-pct="' + r.percent + '"></circle>' +
+              '</svg><div class="ring-pct">' + Math.round(r.percent) + '%</div></div>' +
+              '<div class="ring-info"><div class="label">' + r.label + '</div>' +
+              '<div class="reset">resets in ' + r.resetsIn + '</div>' +
+              '<div class="amounts"><b>' + fmtUsd(r.spent) + '</b> / ' + fmtUsd(r.limit) + '</div></div></div>';
+          }).join('');
+          document.querySelectorAll('.ring-fg').forEach(function (circle) {
+            var pct = Math.max(0, Math.min(100, parseFloat(circle.getAttribute('data-pct'))));
+            var c = 2 * Math.PI * 24;
+            requestAnimationFrame(function () {
+              setTimeout(function () { circle.style.strokeDashoffset = String(c - (pct / 100) * c); }, 120);
+            });
+          });
+        }
+
+        var resizeTimer = null;
+        function scheduleRedraw() {
+          if (resizeTimer) cancelAnimationFrame(resizeTimer);
+          resizeTimer = requestAnimationFrame(function () { render(current); });
+        }
+        if (window.ResizeObserver) new ResizeObserver(scheduleRedraw).observe(box);
+        else window.addEventListener('resize', scheduleRedraw);
+
+        // buttons -> extension host
+        var refreshBtn = document.getElementById('btnRefresh');
+        document.getElementById('btnTargets').addEventListener('click', function () { vscode.postMessage({ type: 'setTargets' }); });
+        document.getElementById('btnRename').addEventListener('click', function () { vscode.postMessage({ type: 'renameProfile' }); });
+        refreshBtn.addEventListener('click', function () {
+          refreshBtn.textContent = 'Refreshing\u2026';
+          vscode.postMessage({ type: 'refresh' });
+        });
+
+        // live data updates keep the active tab (no full page reload)
+        window.addEventListener('message', function (ev) {
+          var msg = ev.data;
+          if (!msg || msg.type !== 'usage') return;
+          DATA = msg.data;
+          document.getElementById('brandName').textContent = DATA.profile;
+          document.getElementById('btnRename').style.display = DATA.showRename ? '' : 'none';
+          windowBtn.textContent = windowLabel(DATA.windowDays);
+          refreshBtn.textContent = 'Refresh';
+          renderRings();
+          render(current);
+        });
+
+        document.getElementById('brandName').textContent = DATA.profile;
+
+        // window toggle: week -> 14 days -> month -> lifetime
+        var WINDOWS = [
+          { days: 7, label: 'Week' },
+          { days: 14, label: '14 days' },
+          { days: 30, label: 'Month' },
+          { days: 0, label: 'Lifetime' }
+        ];
+        function windowLabel(days) {
+          for (var i = 0; i < WINDOWS.length; i++) if (WINDOWS[i].days === days) return WINDOWS[i].label;
+          return days + ' days';
+        }
+        var windowBtn = document.getElementById('btnWindow');
+        windowBtn.textContent = windowLabel(DATA.windowDays);
+        windowBtn.addEventListener('click', function () {
+          var idx = 0;
+          for (var i = 0; i < WINDOWS.length; i++) if (WINDOWS[i].days === DATA.windowDays) idx = i;
+          var next = WINDOWS[(idx + 1) % WINDOWS.length];
+          windowBtn.textContent = next.label;
+          vscode.postMessage({ type: 'window', days: next.days });
+        });
+
+        renderRings();
+        render('spend');
+      })();
+      </script>
     </body>
     </html>
   `;
 }
 
-/** One meter section: label + resets, bar, used + percent. */
-function usageCardSectionHtml(label: string, p: _UsageSummary["session"]): string {
-  const pct = p.percent.toFixed(1);
-  const width = Math.min(Math.max(p.percent, 0), 100);
-  return [
-    '<div class="section">',
-    '<div class="row-label">',
-    `<span class="name">${escapeSvg(label)}</span>`,
-    `<span class="resets">Resets in ${escapeSvg(rel(p.resetsAt))}</span>`,
-    "</div>",
-    `<div class="bar"><div class="bar-fill" style="width:${width}%"></div></div>`,
-    '<div class="row-sub">',
-    `<span class="used">${escapeSvg(`${usd(p.spent)} / ${usd(p.limit)} used`)}</span>`,
-    `<span class="pct">${pct}%</span>`,
-    "</div>",
-    "</div>",
-  ].join("");
-}
-
-/** One stats row: three label-over-value columns. */
-function usageCardStatsHtml(label: string, day: _UsageSummary["today"]): string {
-  return [
-    '<div class="stats">',
-    `<div class="stat"><div class="label">${escapeSvg(label)}</div><div class="value">${escapeSvg(usd(day.cost))}</div></div>`,
-    `<div class="stat"><div class="label">Requests</div><div class="value">${day.requests}</div></div>`,
-    `<div class="stat"><div class="label">Tokens</div><div class="value">${escapeSvg(tokens(day.tokens))}</div></div>`,
-    "</div>",
-  ].join("");
-}
-
-function buildUsageTooltip(
-  s: ReturnType<GoUsageTracker["getSummary"]>,
-  sessionCost?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
-): vscode.MarkdownString {
+function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>): vscode.MarkdownString {
   const md = new vscode.MarkdownString("", true);
   md.supportHtml = true;
   md.isTrusted = true;
@@ -1511,7 +2177,7 @@ function buildUsageTooltip(
   // The hover shows the summary card only; Set spent targets / Rename are
   // available from the Command Palette (opencodego.setUsageTargets,
   // opencodego.renameActiveProfile).
-  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="440">`);
+  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, profileLabel)}" width="440">`);
   return md;
 }
 
@@ -1622,20 +2288,12 @@ async function showUsageTargetEditor(tracker: GoUsageTracker): Promise<UsageBase
 
 type _UsageSummary = ReturnType<GoUsageTracker["getSummary"]>;
 
-function usageTooltipSvgDataUri(
-  s: _UsageSummary,
-  sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
-  profileLabel?: string,
-): string {
-  const svg = buildUsageTooltipSvg(s, sc, profileLabel);
+function usageTooltipSvgDataUri(s: _UsageSummary, profileLabel?: string): string {
+  const svg = buildUsageTooltipSvg(s, profileLabel);
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function buildUsageTooltipSvg(
-  s: _UsageSummary,
-  sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
-  profileLabel?: string,
-): string {
+function buildUsageTooltipSvg(s: _UsageSummary, profileLabel?: string): string {
   // Stable geometry: fixed card width and fixed columns, so the layout never
   // shifts when session data appears or a day has no usage yet.
   const width = 440;
@@ -1648,11 +2306,11 @@ function buildUsageTooltipSvg(
   const line = "#333333";
   const font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
-  const svgTitle = escapeSvg(profileLabel ? `${profileLabel} - Usage` : "OpenCode Go - Usage");
+  const svgTitle = escapeHtml(profileLabel ? `${profileLabel} - Usage` : "OpenCode Go - Usage");
   const noDataMsg = s.hasData ? null : nonLegacyCount(profilesCache) > 0 ? "No data yet for this profile." : "No usage data yet.";
 
   const text = (value: string, x: number, y: number, size: number, weight = 400, color = fg, anchor: "start" | "end" = "start"): string =>
-    `<text x="${String(x)}" y="${String(y)}" fill="${color}" font-family="${font}" font-size="${String(size)}" font-weight="${String(weight)}" text-anchor="${anchor}">${escapeSvg(value)}</text>`;
+    `<text x="${String(x)}" y="${String(y)}" fill="${color}" font-family="${font}" font-size="${String(size)}" font-weight="${String(weight)}" text-anchor="${anchor}">${escapeHtml(value)}</text>`;
 
   const bar = (pct: number, x: number, y: number, barWidth: number): string => {
     const clamped = Math.min(Math.max(pct, 0), 100);
@@ -1669,10 +2327,10 @@ function buildUsageTooltipSvg(
   const period = (label: string, p: _UsageSummary["session"], y: number): string =>
     [
       text(label, padX, y, 14, 700),
-      text(`Resets in ${rel(p.resetsAt)}`, right, y, 12, 400, muted, "end"),
+      text(`Resets in ${formatRelativeTime(p.resetsAt)}`, right, y, 12, 400, muted, "end"),
       bar(p.percent, padX, y + 14, 340),
       text(`${p.percent.toFixed(1)}%`, right, y + 21, 14, 700, fg, "end"),
-      text(`${usd(p.spent)} / ${usd(p.limit)} used`, padX, y + 36, 13, 400, fg),
+      text(`${formatUsd(p.spent)} / ${formatUsd(p.limit)} used`, padX, y + 36, 13, 400, fg),
     ].join("");
 
   // Device-local rows share one fixed column grid: label, cost, requests,
@@ -1680,11 +2338,11 @@ function buildUsageTooltipSvg(
   const deviceRow = (label: string, cost: number, requests: number, tokenCount: number, y: number): string =>
     [
       text(label, padX, y, 13, 400, muted),
-      text(usd(cost), 120, y, 13, 700),
+      text(formatUsd(cost), 120, y, 13, 700),
       text("Requests:", 190, y, 13, 400, muted),
-      text(String(requests), 262, y, 13, 700),
+      text(formatCount(requests), 262, y, 13, 700),
       text("Tokens:", 305, y, 13, 400, muted),
-      text(tokens(tokenCount), 385, y, 13, 700),
+      text(formatTokenCount(tokenCount), 385, y, 13, 700),
     ].join("");
 
   if (!s.hasData) {
@@ -1696,57 +2354,30 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   // Title starts at the same 14px gutter as the sides. Meter rows, the
   // divider and the device rows keep a consistent 14px rhythm.
   const meterRows = [
-    ["Session (5h rolling)", s.session, 56],
+    ...(usageRollingMeterVisible() ? ([["Session (5h rolling)", s.session, 56]] as const) : []),
     ["Weekly", s.weekly, 116],
     ["Monthly", s.monthly, 176],
   ] as const;
-  const dividerY = 226;
-  const firstRowY = 248;
+  const dividerY = 46 + meterRows.length * 60;
+  const firstRowY = dividerY + 22;
   const rowGap = 24;
   // All three rows are always rendered (zeros included) so the card is
   // stable regardless of whether a session is currently active.
-  const sessionCost = sc && sc.cost > 0 ? sc : { cost: 0, requests: 0, promptTokens: 0, completionTokens: 0 };
   const deviceRows: Array<[string, number, number, number, number]> = [];
-  deviceRows.push([
-    "Session (est):",
-    sessionCost.cost,
-    sessionCost.requests,
-    sessionCost.promptTokens + sessionCost.completionTokens,
-    firstRowY,
-  ]);
-  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + rowGap]);
-  deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + 2 * rowGap]);
+  if (usageCodebaseRowVisible()) {
+    deviceRows.push(["Codebase:", s.codebase.cost, s.codebase.requests, s.codebase.tokens, firstRowY]);
+  }
+  const codebaseOffset = usageCodebaseRowVisible() ? 1 : 0;
+  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + codebaseOffset * rowGap]);
+  deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + (codebaseOffset + 1) * rowGap]);
 
-  const height = firstRowY + 2 * rowGap + 14;
+  const height = firstRowY + (deviceRows.length - 1) * rowGap + 14;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 ${text(svgTitle, padX, 28, 16, 700)}
 ${meterRows.map(([label, periodValue, y]) => period(label, periodValue, y)).join("")}
 <line x1="${padX}" y1="${dividerY}" x2="${right}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
 ${deviceRows.map(([label, cost, requests, tokenCount, y]) => deviceRow(label, cost, requests, tokenCount, y)).join("")}</svg>`;
-}
-
-function escapeSvg(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function usd(v: number): string {
-  return `$${v.toFixed(2)}`;
-}
-function tokens(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toString();
-}
-function rel(date: Date): string {
-  const min = Math.max(0, Math.floor((date.getTime() - Date.now()) / 60_000));
-  if (min < 60) return `${String(min)}m`;
-  const h = Math.floor(min / 60),
-    m = min % 60;
-  if (h < 24) return m ? `${String(h)}h ${String(m)}m` : `${String(h)}h`;
-  const d = Math.floor(h / 24),
-    rh = h % 24;
-  return rh ? `${String(d)}d ${String(rh)}h` : `${String(d)}d`;
 }
 
 class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel> {
@@ -2075,7 +2706,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           max_tokens: 10,
           stream: false,
         }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(TEST_CONNECTION_TIMEOUT_MS),
       });
 
       const responseText = await response.text();
@@ -2091,7 +2722,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         );
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.log(`Test connection error: ${message}`);
       vscode.window.showErrorMessage(`${this.definition.displayName}: Connection error - ${message}`);
     } finally {
@@ -2123,7 +2754,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     try {
       models = await vscode.lm.selectChatModels({ vendor: this.definition.vendor });
     } catch (error) {
-      modelSelectionError = error instanceof Error ? error.message : String(error);
+      modelSelectionError = getErrorMessage(error);
     }
 
     const hasStoredApiKey = Boolean(await this.context.secrets.get(SECRET_KEY));
@@ -2271,7 +2902,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     const settings = getSettings();
     const metadataSnapshot = await this.getMetadataSnapshot();
-    const showProviderPrefix = vscode.workspace.getConfiguration("opencodego").get<boolean>("showProviderPrefix", true);
+    const showProviderPrefix = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_SHOW_PROVIDER_PREFIX, true);
 
     // CONTRACT: VS Code calls provideLanguageModelChatInformation frequently
     // (every ~300ms during UI refresh). Per-model logging produces thousands
@@ -2299,7 +2930,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
       const capacityNote = CAPACITY_LIMITED_MODEL_NOTES[modelId];
       const modalityBadges = formatModalityBadges(metadata);
-      const baseDetail = this.baseVendor === ZEN_VENDOR && isFreeZenModel(modelId) ? "Free" : this.definition.displayName;
+      const baseDetail = this.baseVendor === ZEN_VENDOR && isFreeModel(modelId) ? "Free" : this.definition.displayName;
       const baseTooltip = `${this.definition.displayName} model: ${modelId}`;
       const configurationSchema = modelConfigurationSchema(modelId, metadata);
 
@@ -2444,7 +3075,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       // When `opencodego.visionProxyWholeConversation` is on, describe the whole
       // conversation instead of only the message with a new image, so descriptions
       // keep conversation context (at the cost of more tokens).
-      const describeWholeConversation = vscode.workspace.getConfiguration("opencodego").get<boolean>("visionProxyWholeConversation", false);
+      const describeWholeConversation = vscode.workspace
+        .getConfiguration(CONFIG_SECTION)
+        .get<boolean>(SETTING_VISION_PROXY_WHOLE_CONVERSATION, false);
       let imagesHandled = false;
       try {
         this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}${describeWholeConversation ? " (whole conversation)" : ""}`);
@@ -2479,7 +3112,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           );
         }
       } catch (err) {
-        this.log(`[vision-proxy] Error: ${err instanceof Error ? err.message : String(err)}`);
+        this.log(`[vision-proxy] Error: ${getErrorMessage(err)}`);
       }
 
       // If the proxy didn't handle the images (error, empty response, or
@@ -2670,7 +3303,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       });
       this.log(`Request completed: model=${model.id}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.log(`ERROR model=${model.id}: ${message}`);
       if (error instanceof OpenCodeRequestError) {
         vscode.window.showErrorMessage(error.userMessage);
@@ -2746,8 +3379,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           .filter((id): id is string => typeof id === "string" && id.length > 0)
           .filter((id) => this.definition.filterModel?.(id) ?? true);
 
-        const resolved = this.filterAvailableModels(ids?.length ? ids : this.definition.fallbackModels);
-        const filtered = await resolved;
+        const filtered = await this.filterAvailableModels(ids?.length ? ids : this.definition.fallbackModels);
         // Persist the successful snapshot for future fallback coverage.
         this.cachedModelList = { ids: filtered, fetchedAt: Date.now() };
         void this.context.globalState.update(this.modelListCacheKey, this.cachedModelList);
@@ -2762,7 +3394,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         }
         // 2. Classify the error. Timeout (AbortError without token cancel)
         //    and transient network errors are retryable; HTTP 4xx is not.
-        const aborted = error instanceof DOMException && error.name === "AbortError";
+        const aborted = typeof DOMException === "function" && error instanceof DOMException && error.name === "AbortError";
         const transient = aborted || isTransientFetchError(error);
         // 3. On final attempt or non-transient error, fall through to
         //    cache/bundled fallback below.
@@ -2821,11 +3453,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   private errMsg(error: unknown): string {
-    if (error instanceof Error) {
-      const cause = (error as { cause?: { code?: string; name?: string; message?: string } }).cause;
-      return cause?.code ? `${error.message} [${cause.code}]` : error.message;
-    }
-    return String(error);
+    const message = getErrorMessage(error);
+    const cause = (error as { cause?: { code?: string; name?: string; message?: string } } | null | undefined)?.cause;
+    return cause?.code ? `${message} [${cause.code}]` : message;
   }
 
   /**
@@ -2866,7 +3496,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     try {
       const metadataSnapshot = await this.getMetadataSnapshot();
       const filteredModelIds = uniqueModelIds.filter(
-        (modelId) => !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId) && !shouldHideDeprecatedModel(modelId, this.baseVendor, metadataSnapshot),
+        (modelId) =>
+          !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId) &&
+          !shouldHideDeprecatedModel(modelId, this.baseVendor, metadataSnapshot) &&
+          (this.definition.filterModel?.(modelId) ?? true),
       );
 
       const removedModelIds = uniqueModelIds.filter((modelId) => !filteredModelIds.includes(modelId));
@@ -2876,9 +3509,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
       return filteredModelIds;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.log(`Could not fetch model status metadata from models.dev. Applying local unavailable model filter only. ${message}`);
-      return uniqueModelIds.filter((modelId) => !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId));
+      return uniqueModelIds.filter(
+        (modelId) => !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId) && (this.definition.filterModel?.(modelId) ?? true),
+      );
     }
   }
 }
@@ -2921,7 +3556,7 @@ async function refreshOpenCodeModelMetadata(
 
   modelMetadataRefreshPromise = (async () => {
     const response = await fetch(MODELS_DEV_API_URL, {
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(MODEL_METADATA_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -2940,13 +3575,13 @@ async function refreshOpenCodeModelMetadata(
     .catch((error: unknown) => {
       const cached = modelMetadataSnapshot ?? context.globalState.get<CachedModelMetadataSnapshot>(MODEL_METADATA_CACHE_KEY);
       if (cached) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         output?.appendLine(`[metadata] refresh failed, using cached snapshot: ${message}`);
         modelMetadataSnapshot = cached;
         return cached;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       const fallback = bundledModelMetadataSnapshot();
       output?.appendLine(`[metadata] refresh failed, using bundled snapshot: ${message}`);
       modelMetadataSnapshot = fallback;
@@ -3271,7 +3906,7 @@ function googleContentsFromMessages(messages: ApiMessage[]): Record<string, unkn
         parts.push({ text });
       }
       for (const toolCall of message.tool_calls ?? []) {
-        const args = parseToolInput(toolCall.function.arguments);
+        const args = parseToolInputShared(toolCall.function.arguments);
         parts.push({ functionCall: { name: toolCall.function.name, args } });
         toolNamesById.set(toolCall.id, toolCall.function.name);
       }
@@ -3373,19 +4008,6 @@ function googleFunctionResponseContent(
   }
 
   return { name, content: text, parts };
-}
-
-function parseToolInput(value: string): object {
-  if (!value.trim()) {
-    return {};
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 // The official OpenCode client sends these headers on every request. The Zen
@@ -3520,7 +4142,7 @@ function sanitizeToolSchema(schema: unknown): object {
   }
 
   return {
-    type: sanitized.type === "object" ? "object" : "object",
+    type: "object",
     properties: isRecord(sanitized.properties) ? sanitized.properties : {},
     ...(Array.isArray(sanitized.required) ? { required: sanitized.required } : {}),
   };
@@ -3849,21 +4471,7 @@ async function convertMessage(
 }
 
 function dataPartToBase64(data: Uint8Array): string {
-  let output = "";
-
-  for (let index = 0; index < data.length; index += 3) {
-    const first = data[index] ?? 0;
-    const second = data[index + 1] ?? 0;
-    const third = data[index + 2] ?? 0;
-    const chunk = (first << 16) | (second << 8) | third;
-
-    output += BASE64_ALPHABET[(chunk >> 18) & 63];
-    output += BASE64_ALPHABET[(chunk >> 12) & 63];
-    output += index + 1 < data.length ? BASE64_ALPHABET[(chunk >> 6) & 63] : "=";
-    output += index + 2 < data.length ? BASE64_ALPHABET[chunk & 63] : "=";
-  }
-
-  return output;
+  return Buffer.from(data).toString("base64");
 }
 
 function reasoningForToolCalls(toolCalls: OpenAiToolCall[], reasoningContentByToolCallId: ReadonlyMap<string, string>): string | undefined {
@@ -4197,26 +4805,35 @@ function pickThinkingModelConfiguration(override: Record<string, unknown> | unde
 }
 
 function getSettings(): ApiSettings {
-  const config = vscode.workspace.getConfiguration("opencodego");
+  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
 
+  // Config values are sanitized so a misconfigured (e.g. string) value never
+  // reaches the request body and 400s upstream.
   return {
-    temperature: config.get("temperature", 0.2),
-    maxOutputTokensOverride: config.get("maxTokens", 0),
-    maxInputTokensOverride: config.get("maxInputTokens", 0),
-    debugReasoning: config.get("debugReasoning", false),
-    requestTimeoutMs: Math.max(config.get("requestTimeoutSeconds", DEFAULT_REQUEST_TIMEOUT_MS / 1000), 1) * 1000,
-    streamIdleTimeoutMs: Math.max(config.get("streamIdleTimeoutSeconds", DEFAULT_STREAM_IDLE_TIMEOUT_MS / 1000), 1) * 1000,
+    temperature: toFiniteNumber(config.get(SETTING_TEMPERATURE, 0.2), 0.2),
+    maxOutputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_TOKENS, 0), 0, 0),
+    maxInputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_INPUT_TOKENS, 0), 0, 0),
+    debugReasoning: config.get(SETTING_DEBUG_REASONING, false),
+    requestTimeoutMs:
+      toFiniteNumber(config.get(SETTING_REQUEST_TIMEOUT_SECONDS, DEFAULT_REQUEST_TIMEOUT_SECONDS), DEFAULT_REQUEST_TIMEOUT_SECONDS, 1) *
+      1000,
+    streamIdleTimeoutMs:
+      toFiniteNumber(
+        config.get(SETTING_STREAM_IDLE_TIMEOUT_SECONDS, DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS),
+        DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
+        1,
+      ) * 1000,
     thinking: {
-      deepseek: config.get<ThinkingSettings["deepseek"]>("thinking.deepseek", "off"),
-      glm: config.get<ThinkingSettings["glm"]>("thinking.glm", "off"),
-      kimi: config.get<ThinkingSettings["kimi"]>("thinking.kimi", "off"),
-      minimax: config.get<ThinkingSettings["minimax"]>("thinking.minimax", "off"),
-      openai: config.get<ThinkingSettings["openai"]>("thinking.openai", "off"),
-      qwen: config.get<ThinkingSettings["qwen"]>("thinking.qwen", "off"),
-      qwenBudget: config.get<ThinkingSettings["qwenBudget"]>("thinking.qwenBudget", "auto"),
-      mimo: config.get<ThinkingSettings["mimo"]>("thinking.mimo", "off"),
+      deepseek: config.get<ThinkingSettings["deepseek"]>(SETTING_THINKING_DEEPSEEK, THINKING_DEFAULTS.deepseek),
+      glm: config.get<ThinkingSettings["glm"]>(SETTING_THINKING_GLM, THINKING_DEFAULTS.glm),
+      kimi: config.get<ThinkingSettings["kimi"]>(SETTING_THINKING_KIMI, THINKING_DEFAULTS.kimi),
+      minimax: config.get<ThinkingSettings["minimax"]>(SETTING_THINKING_MINIMAX, THINKING_DEFAULTS.minimax),
+      openai: config.get<ThinkingSettings["openai"]>(SETTING_THINKING_OPENAI, THINKING_DEFAULTS.openai),
+      qwen: config.get<ThinkingSettings["qwen"]>(SETTING_THINKING_QWEN, THINKING_DEFAULTS.qwen),
+      qwenBudget: config.get<ThinkingSettings["qwenBudget"]>(SETTING_THINKING_QWEN_BUDGET, THINKING_DEFAULTS.qwenBudget),
+      mimo: config.get<ThinkingSettings["mimo"]>(SETTING_THINKING_MIMO, THINKING_DEFAULTS.mimo),
     },
-    stripThinkTags: config.get<ApiSettings["stripThinkTags"]>("stripThinkTags", "auto"),
+    stripThinkTags: config.get<ApiSettings["stripThinkTags"]>(SETTING_STRIP_THINK_TAGS, "auto"),
   };
 }
 
@@ -4260,10 +4877,7 @@ function formatModalityBadges(metadata: ResolvedModelMetadata): string {
   if (metadata.supportsVideo) {
     badges.push("Video");
   }
-  if (metadata.supportsAudio && !metadata.supportsVideo && !metadata.supportsPdf) {
-    badges.push("Audio");
-  }
-  if (metadata.supportsAudio && (metadata.supportsVideo || metadata.supportsPdf)) {
+  if (metadata.supportsAudio) {
     badges.push("Audio");
   }
   return badges.join(" · ");
@@ -4285,14 +4899,6 @@ function resolveRawModelId(modelId: string): string {
     }
   }
   return base;
-}
-
-function isFreeZenModel(modelId: string): boolean {
-  return modelId.endsWith("-free") || FREE_ZEN_MODEL_IDS.has(modelId);
-}
-
-function isFreeModel(modelId: string): boolean {
-  return FREE_ZEN_MODEL_IDS.has(modelId) || modelId.endsWith("-free");
 }
 
 /** Result of a vision-proxy pass: per-message descriptions plus cache stats. */
@@ -4329,33 +4935,13 @@ function collectRequestParts(msg: vscode.LanguageModelChatRequestMessage): (vsco
  * the proxy describe ONLY the message that contains a new image, instead of
  * re-sending the whole conversation on every turn.
  */
-function buildVisionRequestMessage(msg: vscode.LanguageModelChatRequestMessage, visionPrompt: string): vscode.LanguageModelChatMessage[] {
-  const requestMessages: vscode.LanguageModelChatMessage[] = [];
-  const parts = collectRequestParts(msg);
-  if (parts.length > 0) {
-    requestMessages.push(
-      new vscode.LanguageModelChatMessage(
-        msg.role === vscode.LanguageModelChatMessageRole.Assistant
-          ? vscode.LanguageModelChatMessageRole.Assistant
-          : vscode.LanguageModelChatMessageRole.User,
-        parts,
-      ),
-    );
-  }
-  // Append the vision prompt
-  if (visionPrompt) {
-    requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
-  }
-  return requestMessages;
-}
-
 /**
- * Build a vision-model request over the WHOLE conversation: keep image and
- * text parts from every message (dropping tool parts), then append the vision
- * prompt. Used when `opencodego.visionProxyWholeConversation` is enabled, so
- * descriptions carry full conversation context (at the cost of more tokens).
+ * Build a vision-model request: keep image and text parts from every message
+ * (dropping tool parts), then append the vision prompt. Used both for the
+ * per-message path (single message) and the whole-conversation path (all
+ * messages) when `opencodego.visionProxyWholeConversation` is enabled.
  */
-function buildWholeConversationRequest(
+function buildVisionRequest(
   messages: readonly vscode.LanguageModelChatRequestMessage[],
   visionPrompt: string,
 ): vscode.LanguageModelChatMessage[] {
@@ -4465,7 +5051,7 @@ async function proxyVision(
     if (imageIndices.length > 0) {
       cacheMisses++;
       const model = await resolveVisionModel();
-      const response = await model.sendRequest(buildWholeConversationRequest(messages, visionPrompt), {}, token);
+      const response = await model.sendRequest(buildVisionRequest(messages, visionPrompt), {}, token);
       let fullDescription = "";
       for await (const part of response.text) {
         fullDescription += part;
@@ -4501,7 +5087,7 @@ async function proxyVision(
     // At least one new image → describe only this message and cache the result.
     cacheMisses++;
     const model = await resolveVisionModel();
-    const response = await model.sendRequest(buildVisionRequestMessage(msg, visionPrompt), {}, token);
+    const response = await model.sendRequest(buildVisionRequest([msg], visionPrompt), {}, token);
     let fullDescription = "";
     for await (const part of response.text) {
       fullDescription += part;
@@ -4519,12 +5105,6 @@ async function proxyVision(
 // ---------------------------------------------------------------------------
 // Vision proxy — globalState storage keys & defaults
 // ---------------------------------------------------------------------------
-
-const VISION_PROXY_MODEL_ID_KEY = "opencodego.visionProxyModelId";
-const VISION_PROXY_PROMPT_KEY = "opencodego.visionProxyPrompt";
-const DEFAULT_VISION_PROXY_PROMPT =
-  "Describe this image in detail so a text-only model can understand what it shows. " +
-  "Include all visible text, layout, colors, objects, and context.";
 
 /**
  * True when a vision proxy model has been configured (non-empty model ID
@@ -4744,8 +5324,4 @@ function costCategory(cost: { input: number; output: number }): string {
   if (weighted <= 25) return "medium";
   if (weighted <= 50) return "high";
   return "very_high";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

@@ -121,16 +121,9 @@ function detectFamily(id: string): string {
 // Build test parameters using extension's buildThinkingPayload
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SETTINGS: ThinkingSettings = {
-  deepseek: "off",
-  glm: "off",
-  kimi: "off",
-  minimax: "off",
-  openai: "off",
-  qwen: "off",
-  qwenBudget: "auto",
-  mimo: "off",
-};
+import { THINKING_DEFAULTS } from "../src/config.js";
+
+const DEFAULT_SETTINGS: ThinkingSettings = { ...THINKING_DEFAULTS };
 
 function buildThinkingTests(model: ModelInfo): ParamTest[] {
   const id = model.id;

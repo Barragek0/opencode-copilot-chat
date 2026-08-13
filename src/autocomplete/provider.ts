@@ -15,6 +15,8 @@ export interface InlineCompletionProviderOptions {
   engine: CompletionEngine;
   /** Resolve the API key (async; the caller owns caching/fallbacks). */
   resolveApiKey: () => Promise<string | undefined>;
+  /** Called once when a ghost-text suggestion is actually returned to VS Code. */
+  onSuggestion?: (text: string, position: vscode.Position, document: vscode.TextDocument) => void;
   /** Whether suggestions are currently enabled (config-driven). */
   isEnabled: () => boolean;
   /** The model to use for suggestions (config-driven). */
@@ -44,6 +46,13 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
     if (!this.options.isEnabled()) {
       return Promise.resolve(undefined);
+    }
+
+    // Keep the debounce window live: a config change applies on the next
+    // keystroke instead of requiring the provider to be recreated.
+    const debounceMs = this.options.resolveDebounceMs();
+    if (debounceMs !== this.debouncer.delayMs) {
+      this.debouncer.delayMs = debounceMs;
     }
 
     const text = document.getText();
@@ -97,6 +106,7 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
           return;
         }
         finish([new vscode.InlineCompletionItem(result.text, new vscode.Range(position, position))]);
+        this.options.onSuggestion?.(result.text, position, document);
       });
     });
   }

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import * as vscode from "vscode";
+import { getErrorMessage } from "./utils";
 
 export function runtimeDiagnosticsLines(context: vscode.ExtensionContext): string[] {
   const packageJson = context.extension.packageJSON as { version?: unknown };
@@ -51,6 +52,6 @@ function windowsIntegrityLevel(): string {
     if (/S-1-16-4096/i.test(groups)) return "low";
     return "unknown";
   } catch (error) {
-    return `unavailable (${error instanceof Error ? error.message : String(error)})`;
+    return `unavailable (${getErrorMessage(error)})`;
   }
 }

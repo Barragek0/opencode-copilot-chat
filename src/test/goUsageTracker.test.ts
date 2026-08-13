@@ -6,6 +6,17 @@ import fs from "node:fs";
 import os from "node:os";
 import type { ModelCost } from "../metadata.js";
 import type { TransportRequestSummary } from "../streaming.js";
+import {
+  GO_USAGE_LOG_KEY,
+  GO_USAGE_BASELINE_KEY,
+  GO_SESSION_COSTS_KEY,
+  GO_SESSION_IDLE_MS,
+  GO_MAX_SESSIONS,
+  GO_SERVER_USAGE_KEY,
+} from "../config.js";
+import type { GoUsageApiResponse } from "../goUsageSync";
+import type { HistoryRow, UsageDaily, UsageLogEntry, UsageSummary } from "../goUsageTracker.js";
+import type { UsageSeries } from "../goUsageTracker.js";
 
 // ── Types (populated by dynamic import in before()) ────────────────────────
 
@@ -17,6 +28,18 @@ let estimateCost: (
   externalCost?: ModelCost,
   liveCostResolver?: (modelId: string) => ModelCost | undefined,
 ) => number;
+
+let sumDailyUsage: (rows: HistoryRow[], entries: UsageLogEntry[], dayStartMs: number, source?: "auto" | "cli" | "extension") => UsageDaily;
+let buildUsageSeries: (
+  rows: HistoryRow[],
+  entries: UsageLogEntry[],
+  days: number,
+  dayStartMs: number,
+  source?: "auto" | "cli" | "extension",
+) => UsageSeries;
+let isCwdInWorkspace: (cwd: string | undefined, workspaceFolders: readonly string[]) => boolean;
+let normalizeCwd: (value: string) => string;
+let startOfLocalDay: (nowMs: number) => number;
 
 interface SessionSummary {
   sessionId: string;
@@ -31,6 +54,8 @@ interface GoUsageTrackerInstance {
   record(summary: TransportRequestSummary, externalCost?: ModelCost): void;
   getCurrentSessionCost(): SessionSummary | undefined;
   getRecentSessionCosts(limit?: number): SessionSummary[];
+  getSummary(): UsageSummary;
+  readonly hasServerUsage: boolean;
   clear(): void;
 }
 
@@ -38,6 +63,7 @@ type GoUsageTrackerConstructor = new (
   context: unknown,
   log?: (msg: string) => void,
   costResolver?: (modelId: string) => ModelCost | undefined,
+  storageKeySuffix?: string,
 ) => GoUsageTrackerInstance;
 
 let GoUsageTracker: GoUsageTrackerConstructor;
@@ -129,6 +155,11 @@ describe("goUsageTracker", () => {
     const mod = await import("../goUsageTracker.js");
     estimateCost = mod.estimateCost;
     GoUsageTracker = mod.GoUsageTracker as GoUsageTrackerConstructor;
+    sumDailyUsage = mod.sumDailyUsage;
+    buildUsageSeries = mod.buildUsageSeries;
+    isCwdInWorkspace = mod.isCwdInWorkspace;
+    normalizeCwd = mod.normalizeCwd;
+    startOfLocalDay = mod.startOfLocalDay;
   });
 
   // ════════════════════════════════════════════════════════════════════════
@@ -312,10 +343,10 @@ describe("goUsageTracker", () => {
 
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 100, completionTokens: 50 }));
 
-        const storedEntries = context.globalState.get("opencodego.usageLog.v1", []);
+        const storedEntries = context.globalState.get(GO_USAGE_LOG_KEY, []);
         assert.equal(storedEntries.length, 1);
 
-        const storedSessions = context.globalState.get<SessionSummary[]>("opencodego.sessionCosts.v1", []);
+        const storedSessions = context.globalState.get<SessionSummary[]>(GO_SESSION_COSTS_KEY, []);
         assert.equal(storedSessions.length, 1);
         assert.equal(storedSessions[0].sessionId, "s1");
       });
@@ -402,7 +433,7 @@ describe("goUsageTracker", () => {
       it("restores entries and session costs from stored state", () => {
         const now = Date.now();
         const initial: Record<string, unknown> = {
-          "opencodego.usageLog.v1": [
+          [GO_USAGE_LOG_KEY]: [
             {
               timestamp: now,
               modelId: "qwen3.6-plus",
@@ -413,7 +444,7 @@ describe("goUsageTracker", () => {
               sessionId: "restored-session",
             },
           ],
-          "opencodego.sessionCosts.v1": [
+          [GO_SESSION_COSTS_KEY]: [
             {
               sessionId: "restored-session",
               cost: 0.5,
@@ -423,7 +454,7 @@ describe("goUsageTracker", () => {
               lastActivity: now,
             },
           ],
-          "opencodego.usageBaseline.v1": {},
+          [GO_USAGE_BASELINE_KEY]: {},
         };
 
         const tracker = new GoUsageTracker(createMockContext(initial));
@@ -438,16 +469,16 @@ describe("goUsageTracker", () => {
 
       it("filters invalid entries during restore", () => {
         const initial: Record<string, unknown> = {
-          "opencodego.usageLog.v1": [
+          [GO_USAGE_LOG_KEY]: [
             { timestamp: Date.now(), modelId: "valid", cost: 0.1, promptTokens: 10, completionTokens: 5, cachedTokens: 0, sessionId: "s1" },
             { modelId: "no-timestamp", cost: 0.1, promptTokens: 10, completionTokens: 5, cachedTokens: 0 }, // missing timestamp
             { timestamp: "string-not-number", modelId: "bad-type", cost: 0.1, promptTokens: 10, completionTokens: 5, cachedTokens: 0 }, // timestamp wrong type
           ],
-          "opencodego.sessionCosts.v1": [
+          [GO_SESSION_COSTS_KEY]: [
             { sessionId: "s1", cost: 0.1, requests: 1, promptTokens: 10, completionTokens: 5, lastActivity: Date.now() },
             { cost: 0.2, requests: 1, promptTokens: 20, completionTokens: 10 }, // missing sessionId
           ],
-          "opencodego.usageBaseline.v1": {},
+          [GO_USAGE_BASELINE_KEY]: {},
         };
 
         const tracker = new GoUsageTracker(createMockContext(initial));
@@ -482,7 +513,7 @@ describe("goUsageTracker", () => {
         tracker.record(makeSummary({ sessionId: "old", promptTokens: 1, completionTokens: 0 }));
 
         // Advance past the 2-hour idle threshold
-        mock.timers.tick(2 * 60 * 60 * 1000 + 1000);
+        mock.timers.tick(GO_SESSION_IDLE_MS + 1000);
 
         tracker.record(makeSummary({ sessionId: "new", promptTokens: 1, completionTokens: 0 }));
 
@@ -502,7 +533,7 @@ describe("goUsageTracker", () => {
         tracker.record(makeSummary({ sessionId: "s2", promptTokens: 1, completionTokens: 0 }));
 
         // Advance past idle threshold
-        mock.timers.tick(2 * 60 * 60 * 1000 + 1000);
+        mock.timers.tick(GO_SESSION_IDLE_MS + 1000);
 
         tracker.record(makeSummary({ sessionId: "s3", promptTokens: 1, completionTokens: 0 }));
 
@@ -518,7 +549,7 @@ describe("goUsageTracker", () => {
         }
 
         const sessions = tracker.getRecentSessionCosts(100);
-        assert.equal(sessions.length, 50, "should be capped at MAX_SESSIONS");
+        assert.equal(sessions.length, GO_MAX_SESSIONS, "should be capped at MAX_SESSIONS");
         // The oldest session (s0) should have been removed
         assert.equal(
           sessions.find((s) => s.sessionId === "s0"),
@@ -598,5 +629,209 @@ describe("goUsageTracker", () => {
         assert.equal(session.requests, 2);
       });
     });
+  });
+});
+
+describe("sumDailyUsage", () => {
+  const now = new Date();
+  const dayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const rows: HistoryRow[] = [
+    { createdMs: dayMs + 1000, cost: 0.1, tokensInput: 100, tokensOutput: 50, tokensReasoning: 20, tokensCacheRead: 10, cwd: "/repo" },
+    { createdMs: dayMs - 60_000, cost: 0.2, tokensInput: 200, tokensOutput: 100, tokensReasoning: 0, tokensCacheRead: 0, cwd: "/repo" },
+  ];
+  const entries: UsageLogEntry[] = [
+    {
+      timestamp: dayMs + 500,
+      modelId: "qwen3.6-plus",
+      cost: 0.05,
+      promptTokens: 30,
+      completionTokens: 10,
+      cachedTokens: 0,
+      sessionId: "s1",
+    },
+  ];
+
+  it("merges CLI rows and extension entries in auto mode", () => {
+    const total = sumDailyUsage(rows, entries, dayMs, "auto");
+    assert.equal(total.requests, 2);
+    assert.equal(total.tokens, 210);
+    assert.ok(Math.abs(total.cost - 0.15) < 1e-9, `expected ~0.15, got ${String(total.cost)}`);
+  });
+
+  it("excludes rows before the day window", () => {
+    const total = sumDailyUsage(rows, [], dayMs, "cli");
+    assert.equal(total.requests, 1, "only the row inside the window counts");
+    assert.equal(total.tokens, 170, "input + output + reasoning");
+  });
+
+  it("cli source ignores extension entries", () => {
+    const total = sumDailyUsage([], entries, dayMs, "cli");
+    assert.deepEqual(total, { cost: 0, requests: 0, tokens: 0 });
+  });
+
+  it("extension source ignores CLI rows", () => {
+    const total = sumDailyUsage(rows, entries, dayMs, "extension");
+    assert.equal(total.requests, 1);
+    assert.equal(total.tokens, 40);
+  });
+});
+
+describe("isCwdInWorkspace / normalizeCwd", () => {
+  it("normalizes trailing separators", () => {
+    assert.equal(normalizeCwd("/repo/"), "/repo");
+    assert.equal(normalizeCwd("/repo//"), "/repo");
+  });
+
+  it("matches exact, parent and subfolder layouts", () => {
+    assert.ok(isCwdInWorkspace("/repo", ["/repo"]));
+    assert.ok(isCwdInWorkspace("/repo/src", ["/repo"]), "CLI ran in a subfolder of the opened repo");
+    assert.ok(isCwdInWorkspace("/repo", ["/repo/src"]), "user opened a subfolder of the project");
+  });
+
+  it("rejects unrelated directories and missing input", () => {
+    assert.ok(!isCwdInWorkspace("/other", ["/repo"]));
+    assert.ok(!isCwdInWorkspace(undefined, ["/repo"]));
+    assert.ok(!isCwdInWorkspace("/repo", []));
+  });
+});
+
+describe("startOfLocalDay", () => {
+  it("returns the local midnight of the given time", () => {
+    const now = new Date();
+    const localMidnight = startOfLocalDay(now.getTime());
+    const d = new Date(localMidnight);
+    assert.equal(d.getHours(), 0);
+    assert.equal(d.getMinutes(), 0);
+    assert.equal(d.getSeconds(), 0);
+    assert.ok(localMidnight <= now.getTime());
+  });
+});
+
+describe("server usage snapshot persistence", () => {
+  const snapshot: GoUsageApiResponse = {
+    usage: {
+      rolling: { status: "ok", percent: 27, resetsAt: "2026-08-13T14:32:10.000Z" },
+      weekly: { status: "ok", percent: 62, resetsAt: "2026-08-17T00:00:00.000Z" },
+      monthly: { status: "rate-limited", percent: 100, resetsAt: "2026-08-31T00:00:00.000Z" },
+    },
+  };
+
+  it("restores the persisted snapshot on construction (instant startup)", () => {
+    const tracker = new GoUsageTracker(createMockContext({ [GO_SERVER_USAGE_KEY]: snapshot }));
+    assert.equal(tracker.hasServerUsage, true, "snapshot must be available before any network fetch");
+    const summary = tracker.getSummary();
+    assert.equal(summary.session.percent, 27);
+    assert.equal(summary.weekly.percent, 62);
+    assert.equal(summary.monthly.percent, 100);
+  });
+
+  it("uses namespaced storage for per-profile trackers", () => {
+    const tracker = new GoUsageTracker(createMockContext(), undefined, undefined, "fp-1234");
+    const summary = tracker.getSummary();
+    // No snapshot stored for this profile yet → meters fall back to local estimates.
+    assert.equal(tracker.hasServerUsage, false);
+    assert.ok(summary.weekly.limit > 0);
+  });
+});
+
+describe("buildUsageSeries", () => {
+  const now = new Date();
+  const dayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const DAY = 24 * 60 * 60 * 1000;
+
+  const rows: HistoryRow[] = [
+    {
+      createdMs: dayMs - DAY,
+      cost: 0.1,
+      tokensInput: 100,
+      tokensOutput: 50,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "qwen3.6-plus",
+    },
+    {
+      createdMs: dayMs - DAY + 1000,
+      cost: 0.2,
+      tokensInput: 200,
+      tokensOutput: 100,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "deepseek-v4-flash",
+    },
+    {
+      createdMs: dayMs,
+      cost: 0.3,
+      tokensInput: 300,
+      tokensOutput: 150,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "qwen3.6-plus",
+    },
+    {
+      createdMs: dayMs + DAY * 5,
+      cost: 0.4,
+      tokensInput: 400,
+      tokensOutput: 200,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "qwen3.6-plus",
+    },
+  ];
+  const entries: UsageLogEntry[] = [
+    { timestamp: dayMs, modelId: "glm-5", cost: 0.05, promptTokens: 30, completionTokens: 10, cachedTokens: 0, sessionId: "s1" },
+  ];
+
+  it("buckets rows and entries into per-day totals over the window", () => {
+    const series = buildUsageSeries(rows, entries, 14, dayMs, "auto");
+    assert.equal(series.days.length, 14);
+    const oldest = series.days[0]; // oldest bucket = dayMs - 13*DAY
+    assert.equal(oldest.dayStart, dayMs - 13 * DAY);
+    assert.equal(oldest.cost, 0, "day before any usage stays zero");
+
+    const yesterday = series.days[13 - 1];
+    assert.equal(yesterday.requests, 2);
+    assert.ok(Math.abs(yesterday.cost - 0.3) < 1e-9);
+    assert.equal(yesterday.tokens, 450);
+
+    const today = series.days[13];
+    assert.equal(today.requests, 2, "row + entry on the last day");
+    assert.equal(today.tokens, 450 + 40);
+  });
+
+  it("excludes rows outside the window", () => {
+    const series = buildUsageSeries(rows, [], 3, dayMs, "cli");
+    // A 3-day window ending at dayMs covers dayMs-2*DAY .. dayMs; the
+    // dayMs + DAY*5 row is outside and must be excluded.
+    const total = series.days.reduce((sum, d) => sum + d.requests, 0);
+    assert.equal(total, 3, "three rows are inside the 3-day window, the future one is not");
+  });
+
+  it("groups per-model per-day rows with correct totals", () => {
+    const series = buildUsageSeries(rows, entries, 14, dayMs, "auto");
+    const qwen = series.byModel.filter((p) => p.model === "qwen3.6-plus");
+    assert.equal(qwen.length, 2, "the dayMs + DAY*5 row is outside the 14-day window ending at dayMs");
+    const qwenToday = qwen.find((p) => p.dayStart === dayMs);
+    assert.equal(qwenToday?.cost, 0.3);
+    const glm = series.byModel.find((p) => p.model === "glm-5");
+    assert.equal(glm?.requests, 1);
+  });
+
+  it("cli source ignores extension entries", () => {
+    const series = buildUsageSeries(rows, entries, 14, dayMs, "cli");
+    assert.ok(!series.byModel.some((p) => p.model === "glm-5"));
+  });
+
+  it("lifetime windows (days=0) span from the earliest usage day", () => {
+    const series = buildUsageSeries(rows, entries, 0, dayMs, "auto");
+    // earliest row = dayMs - DAY → 2 buckets: yesterday + today
+    assert.equal(series.days.length, 2);
+    assert.equal(series.days[0].dayStart, dayMs - DAY);
+    assert.equal(series.days[1].dayStart, dayMs);
+    assert.equal(series.days[0].requests, 2);
+    assert.equal(series.days[1].requests, 2);
   });
 });

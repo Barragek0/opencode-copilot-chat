@@ -7,22 +7,13 @@
  * Run: npx tsx scripts/verify-estimate-token-count.ts
  */
 
-// ── Heuristic under test (same logic as extension.ts after fix) ──────────────
+// ── Heuristic under test (the REAL production estimator) ────────────────────
+// Imported from src/ so this script can never drift from what the extension
+// actually runs. The `old` variant below is kept as a historical comparison.
 
-function estimateTokenCount(value: string): number {
-  if (!value) return 0;
+import { estimateTokenCount } from "../src/tokenEstimate.js";
 
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) return 0;
-
-  const cjkCharacters = normalized.match(/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/gu)?.length ?? 0;
-  const charEstimate = Math.ceil(normalized.length / 4);
-  const codeBuffer = Math.ceil(charEstimate * 0.1);
-
-  return Math.max(1, Math.ceil(charEstimate + codeBuffer + cjkCharacters));
-}
-
-// ── Old heuristic (for comparison) ───────────────────────────────────────────
+// ── Old heuristic (historical copy, for comparison only) ────────────────────
 
 function oldEstimateTokenCount(value: string): number {
   if (!value) return 0;
@@ -62,10 +53,11 @@ interface TestCase {
  * for JSON-heavy payloads because structural characters inflate the word count.
  */
 function generateChatPayload(targetTokens: number, hasToolCalls: boolean): string {
-  // At 1 token ≈ 4 chars for English, targetChars ≈ targetTokens * 4
-  // But JSON structure adds overhead (brackets, quotes, commas), so we need
-  // more characters. Actual ratio for JSON chat: ~5-6 chars/token
-  const targetChars = Math.floor(targetTokens * 5.5);
+  // At 1 token ≈ 4 chars for English prose/code, targetChars ≈ targetTokens * 4.
+  // The production estimator charges exactly ~4.4 chars/token (n/4 + 10%), so
+  // generating at a higher ratio would overstate the estimate and make the
+  // budget collapse artificially. 4.3 keeps a small margin for JSON syntax.
+  const targetChars = Math.floor(targetTokens * 4.3);
 
   const messages: string[] = [];
   // System prompt
@@ -328,18 +320,18 @@ const testCases: TestCase[] = [
 ];
 
 // ── Verification logic ───────────────────────────────────────────────────────
+// The "new" budget is computed with the production calculateModelLimits so the
+// script verifies the real shipped behavior.
 
-const MIN_OUTPUT_BUDGET = 4096;
-const TOKEN_ESTIMATE_SAFETY_MARGIN = 64;
+import { calculateModelLimits } from "../src/modelLimits.js";
 
 function computeMaxTokens(promptTokens: number | undefined, contextWindow: number, maxOutputTokens: number): number {
-  const promptReserve = (promptTokens ?? Math.floor(contextWindow * 0.8)) + TOKEN_ESTIMATE_SAFETY_MARGIN;
-  const safeOutputBudget = Math.max(MIN_OUTPUT_BUDGET, contextWindow - promptReserve);
-  return Math.min(maxOutputTokens, safeOutputBudget);
+  const limits = calculateModelLimits({ contextWindow, maxOutputTokens }, { maxInputTokens: contextWindow, promptTokens });
+  return limits.maxOutputTokens;
 }
 
 function computeMaxTokensOld(promptTokens: number | undefined, contextWindow: number, maxOutputTokens: number): number {
-  const promptReserve = (promptTokens ?? Math.floor(contextWindow * 0.8)) + TOKEN_ESTIMATE_SAFETY_MARGIN;
+  const promptReserve = (promptTokens ?? Math.floor(contextWindow * 0.8)) + 64;
   const safeOutputBudget = Math.max(1, contextWindow - promptReserve);
   return Math.min(maxOutputTokens, safeOutputBudget);
 }

@@ -92,7 +92,14 @@ describe("autocomplete — engine parsing", () => {
 
   it("cleanCompletion strips fences and surrounding whitespace", () => {
     assert.equal(cleanCompletion("```ts\nconst x = 1;\n```"), "const x = 1;");
-    assert.equal(cleanCompletion("  \nconst y = 2;\n  "), "const y = 2;");
+    // leading spaces are stripped, the leading newline is kept
+    assert.equal(cleanCompletion("  \nconst y = 2;\n  "), "\nconst y = 2;");
+  });
+
+  it("cleanCompletion strips leading spaces/tabs but keeps leading newlines", () => {
+    // A completion continuing on a new (nested) line must keep its line break.
+    assert.equal(cleanCompletion("  return true;"), "return true;");
+    assert.equal(cleanCompletion("\n    return inner;\n  }"), "\n    return inner;\n  }");
   });
 });
 
@@ -135,6 +142,18 @@ describe("autocomplete — Debouncer", () => {
     assert.equal(runs, 1, "only the latest debounced run executes");
     assert.equal(first.aborted, true, "superseded run is aborted");
     assert.equal(second.aborted, false);
+    d.dispose();
+  });
+
+  it("delayMs is mutable so config changes apply live", async () => {
+    const d = new Debouncer(120);
+    let runs = 0;
+    d.debounce(() => {
+      runs += 1;
+    });
+    d.delayMs = 20;
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(runs, 1, "run fires on the updated (shorter) window");
     d.dispose();
   });
 });

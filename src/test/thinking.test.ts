@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  bodyRequestsThinking,
   buildThinkingPayload,
   buildFamilyThinkingSchema,
   applyRequestThinkingOverride,
@@ -284,5 +285,32 @@ describe("applyRequestThinkingOverride — GLM with effort values (issue #61)", 
       reasoningEffort: "medium",
     });
     assert.equal(resultMed.glm, "off"); // stays at default
+  });
+});
+
+describe("bodyRequestsThinking", () => {
+  it("detects reasoning_effort", () => {
+    assert.equal(bodyRequestsThinking({ reasoning_effort: "high" }), true);
+  });
+
+  it("detects budget_tokens", () => {
+    assert.equal(bodyRequestsThinking({ budget_tokens: 8192 }), true);
+  });
+
+  it("detects enable_thinking: true", () => {
+    assert.equal(bodyRequestsThinking({ enable_thinking: true }), true);
+    assert.equal(bodyRequestsThinking({ enable_thinking: false }), false);
+  });
+
+  it("detects Anthropic-style thinking blocks (Kimi K2.7 / MiniMax M3)", () => {
+    assert.equal(bodyRequestsThinking({ thinking: { type: "enabled", keep: "all" } }), true);
+    assert.equal(bodyRequestsThinking({ thinking: { type: "adaptive" } }), true);
+    assert.equal(bodyRequestsThinking({ thinking: { type: "disabled" } }), false);
+  });
+
+  it("returns false for empty or thinking-off bodies", () => {
+    assert.equal(bodyRequestsThinking(undefined), false);
+    assert.equal(bodyRequestsThinking({}), false);
+    assert.equal(bodyRequestsThinking({ temperature: 0.2 }), false);
   });
 });

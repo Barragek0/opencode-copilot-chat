@@ -20,6 +20,7 @@ import {
   normalizeResponsesFullResponse,
   normalizeResponsesStreamEvent,
 } from "./routing";
+import { bodyRequestsThinking } from "./thinking";
 import { createReasoningMarkerPart, createUsageDataParts } from "./chatParts";
 import {
   clearContextWindowRequest,
@@ -29,6 +30,7 @@ import {
 } from "./contextWindowHookBridge";
 import { formatUsageLogLine } from "./usage";
 import { parseToolInput, ToolCallAccumulator, type PendingToolCall } from "./toolCallAccumulator";
+import { getErrorMessage, isRecord, sleepWithCancellation } from "./utils";
 
 export interface StreamRequestOptions {
   url: string;
@@ -95,7 +97,11 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
   // CoT and should remain in the thinking panel.
   const isGoGateway = options.url.includes("/zen/go/");
   const body = options.body as Record<string, unknown> | undefined;
-  const hasReasoningEffort = isGoGateway && (typeof body?.reasoning_effort === "string" || typeof body?.budget_tokens === "number");
+  // "Thinking is ON" whenever the body asks for reasoning through any channel
+  // (reasoning_effort, budget_tokens, enable_thinking, thinking block — Kimi
+  // K2.7 and MiniMax M3 route through chat-completions with Anthropic-style
+  // shapes), see bodyRequestsThinking().
+  const hasReasoningEffort = isGoGateway && bodyRequestsThinking(body);
   const treatReasoningAsContent = isGoGateway && !hasReasoningEffort;
   if (isGoGateway) {
     options.output?.appendLine(
@@ -293,36 +299,6 @@ function emitThinkingPart(
     // Defensive: never let a thinking-part emit failure break the visible response.
     return false;
   }
-}
-
-/**
- * Wait for `ms` milliseconds, aborting early if the token is cancelled.
- *
- * The shared completion path clears the timer and disposes the cancellation
- * listener. A second cancellation check closes the registration race.
- */
-function sleepWithCancellation(ms: number, token: vscode.CancellationToken): Promise<void> {
-  if (token.isCancellationRequested) return Promise.resolve();
-
-  return new Promise((resolve) => {
-    const state: { cancellation?: vscode.Disposable; settled: boolean } = { settled: false };
-    const finish = () => {
-      if (state.settled) return;
-      state.settled = true;
-      clearTimeout(timer);
-      state.cancellation?.dispose();
-      resolve();
-    };
-    const timer = setTimeout(finish, ms);
-    state.cancellation = token.onCancellationRequested(finish);
-
-    // Close the race between the initial check and listener registration.
-    if (state.settled) {
-      state.cancellation.dispose();
-    } else if (token.isCancellationRequested) {
-      finish();
-    }
-  });
 }
 
 async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): Promise<void> {
@@ -670,7 +646,7 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
       throw requestError;
     }
     emitSummary(0, 0, {
-      errorMessage: error instanceof Error ? error.message : String(error),
+      errorMessage: getErrorMessage(error),
     });
     throw error;
   } finally {
@@ -869,19 +845,114 @@ class ThinkTagFilter {
   }
 }
 
-class OpenAiResponseExtractor {
-  private readonly toolCallAccumulator = new ToolCallAccumulator();
-  private reasoningContent = "";
-  private emittedTextLength = 0;
-  private emittedToolCallsCount = 0;
+/**
+ * Shared state + behavior for the OpenAI- and Anthropic-style stream
+ * extractors: text/reasoning accounting, think-tag filtering, live reasoning
+ * emission, and the end-of-stream reasoning fallback.
+ */
+abstract class BaseResponseExtractor {
+  protected reasoningContent = "";
+  protected emittedTextLength = 0;
+  protected emittedToolCallsCount = 0;
   /**
-   * Total reasoning characters seen across the entire stream. Unlike
-   * `reasoningContent` (which is cleared by flushToolCalls/flushReasoningFallback
-   * for tool-call replication), this counter is monotonically increasing and
+   * Total reasoning characters seen across the entire stream (monotonic).
+   * Unlike `reasoningContent` (cleared by tool-call flushes), this counter is
    * used for the [stream-summary] log line so metrics stay accurate.
    */
-  private totalReasoningChars = 0;
+  protected totalReasoningChars = 0;
 
+  constructor(
+    protected readonly onReasoningContent?: (toolCallIds: string[], reasoningContent: string) => void,
+    protected readonly onReasoningDebug?: (reasoningContent: string) => void,
+    protected readonly thinkFilter?: ThinkTagFilter,
+    protected readonly progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
+    protected readonly localRequestId?: string,
+    protected readonly output?: vscode.OutputChannel,
+  ) {}
+
+  get emittedText(): number {
+    return this.emittedTextLength;
+  }
+
+  get emittedTools(): number {
+    return this.emittedToolCallsCount;
+  }
+
+  get reasoningChars(): number {
+    return this.totalReasoningChars;
+  }
+
+  /** Split text through the think-tag filter (if active). */
+  protected filterText(text: string): { visible: string; thinking: string } {
+    if (!text) {
+      return { visible: "", thinking: "" };
+    }
+    if (!this.thinkFilter) {
+      return { visible: text, thinking: "" };
+    }
+    return this.thinkFilter.process(text);
+  }
+
+  /**
+   * Accumulate reasoning for tool-call replication and — when the thinking
+   * part API is available — stream it live to the Copilot Chat UI as
+   * `LanguageModelThinkingPart` so `chat.agent.thinkingStyle` applies.
+   */
+  protected handleReasoning(reasoning: string): string {
+    if (!reasoning) {
+      return "";
+    }
+    this.reasoningContent += reasoning;
+    this.totalReasoningChars += reasoning.length;
+    if (this.progress) {
+      emitThinkingPart(this.localRequestId, this.progress, reasoning);
+    }
+    return reasoning;
+  }
+
+  /** Emit the shared end-of-stream reasoning fallback. */
+  flushReasoningFallback(progress: vscode.Progress<vscode.LanguageModelResponsePart2>, localRequestId?: string): void {
+    // Flush any remaining text in the think filter
+    if (this.thinkFilter) {
+      const { visible, thinking } = this.thinkFilter.finish();
+      if (visible) {
+        this.emittedTextLength += visible.length;
+        reportProgressPart(localRequestId, progress, new vscode.LanguageModelTextPart(visible));
+      }
+      if (thinking) {
+        // Surface remaining think-filter carry through the thinking part channel.
+        this.handleReasoning(thinking);
+      }
+    }
+
+    const reasoning = this.reasoningContent.trim();
+    if (!reasoning) {
+      return;
+    }
+    // If the thinking part API is available, reasoning was already streamed
+    // live during extractStreamParts via handleReasoning(). The accumulated
+    // reasoningContent is retained only for tool-call replication
+    // (flushToolCalls → onReasoningContent). Nothing more to emit here.
+    if (thinkingPartConstructor) {
+      this.reasoningContent = "";
+      return;
+    }
+    // Legacy fallback (API unavailable): emit reasoning as plain text only
+    // when the response is otherwise empty, to avoid breaking the visible
+    // output. This preserves the pre-fix safety-net semantics.
+    if (this.emittedTextLength > 0 || this.emittedToolCallsCount > 0) {
+      this.reasoningContent = "";
+      return;
+    }
+    this.onReasoningDebug?.(this.reasoningContent);
+    reportProgressPart(localRequestId, progress, new vscode.LanguageModelTextPart(reasoning));
+    this.emittedTextLength += reasoning.length;
+    this.reasoningContent = "";
+  }
+}
+
+class OpenAiResponseExtractor extends BaseResponseExtractor {
+  private readonly toolCallAccumulator = new ToolCallAccumulator();
   /**
    * Reasoning loop suppression state.
    *
@@ -898,23 +969,16 @@ class OpenAiResponseExtractor {
    */
   private readonly reasoningFragmentSuffixes: string[] = [];
   private static readonly REASONING_LOOP_SUFFIX_MATCHES = 6;
+  /** Reasoning emitted as visible text (gateway bug #37635, thinking OFF). */
+  private reasoningAsContent = "";
 
   constructor(
-    private readonly onReasoningContent?: (toolCallIds: string[], reasoningContent: string) => void,
-    private readonly onReasoningDebug?: (reasoningContent: string) => void,
-    private readonly thinkFilter?: ThinkTagFilter,
-    /**
-     * Progress reporter used to stream reasoning chunks to the Copilot Chat UI
-     * as `LanguageModelThinkingPart`. When provided (together with
-     * `localRequestId`), reasoning is surfaced live so that
-     * `chat.agent.thinkingStyle` applies (fixes #22, #71).
-     */
-    private readonly progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
-    private readonly localRequestId?: string,
-    /**
-     * Optional output channel for debug logging.
-     */
-    private readonly output?: vscode.OutputChannel,
+    onReasoningContent?: (toolCallIds: string[], reasoningContent: string) => void,
+    onReasoningDebug?: (reasoningContent: string) => void,
+    thinkFilter?: ThinkTagFilter,
+    progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
+    localRequestId?: string,
+    output?: vscode.OutputChannel,
     /**
      * Workaround for opencode-go gateway bug (#37635).
      *
@@ -930,37 +994,14 @@ class OpenAiResponseExtractor {
      * - Zen gateway and all non-Go models are never affected.
      */
     private readonly treatReasoningAsContent = false,
-  ) {}
-
-  get emittedText(): number {
-    return this.emittedTextLength;
-  }
-
-  get emittedTools(): number {
-    return this.emittedToolCallsCount;
-  }
-
-  get reasoningChars(): number {
-    return this.totalReasoningChars;
+  ) {
+    super(onReasoningContent, onReasoningDebug, thinkFilter, progress, localRequestId, output);
   }
 
   /** Whether the reasoning loop suppression was triggered. */
   get reasoningLoopSuppressed(): boolean {
     return this._reasoningLoopSuppressed;
   }
-
-  /**
-   * Accumulate reasoning for tool-call replication, and — when the thinking
-   * part API is available — stream it live to the Copilot Chat UI.
-   *
-   * Also detects reasoning loops: if total reasoning chars exceeds a threshold
-   * without any visible text or tool calls being emitted, the model is likely
-   * stuck and further thinking parts are suppressed.
-   *
-   * Returns the reasoning string that was handled (for logging/debug).
-   */
-  /** Reasoning emitted as visible text (gateway bug #37635, thinking OFF). */
-  private reasoningAsContent = "";
 
   /**
    * Emit an internal marker part carrying the reasoning that was surfaced as
@@ -976,14 +1017,21 @@ class OpenAiResponseExtractor {
     return part;
   }
 
-  private handleReasoning(reasoning: string): string {
+  /**
+   * Accumulate reasoning for tool-call replication, and — when the thinking
+   * part API is available — stream it live to the Copilot Chat UI.
+   *
+   * Also detects reasoning loops: if the same 40-char suffix repeats across
+   * 6+ consecutive chunks, the model is stuck and further thinking parts are
+   * suppressed (accumulation continues for tool-call replication).
+   */
+  override handleReasoning(reasoning: string): string {
     if (!reasoning) {
       return "";
     }
     this.reasoningContent += reasoning;
     this.totalReasoningChars += reasoning.length;
 
-    // Reasoning loop guard: suppress if suffix repetition detected
     if (this.shouldSuppressThinkingEmit(reasoning)) {
       // Accumulate but don't emit — loop detected
       return reasoning;
@@ -1005,10 +1053,6 @@ class OpenAiResponseExtractor {
    * chunks. This catches actual word-level repetition loops without false
    * positives on fresh conversations where the model legitimately reasons
    * for thousands of chars before producing output.
-   *
-   * A char-budget guard was previously used but removed because it triggered
-   * false positives on normal fresh conversations (model can legitimately
-   * produce 3000+ thinking chars before visible output or tool calls).
    */
   private shouldSuppressThinkingEmit(chunk: string): boolean {
     if (this._reasoningLoopSuppressed) {
@@ -1021,7 +1065,7 @@ class OpenAiResponseExtractor {
       const lastSuffix = this.reasoningFragmentSuffixes.at(-1);
       if (lastSuffix !== undefined && suffix === lastSuffix) {
         this.reasoningFragmentSuffixes.push(suffix);
-        if (this.reasoningFragmentSuffixes.length >= 6) {
+        if (this.reasoningFragmentSuffixes.length >= OpenAiResponseExtractor.REASONING_LOOP_SUFFIX_MATCHES) {
           this._reasoningLoopSuppressed = true;
           this.output?.appendLine(`[mimo] reasoning loop: suffix repeated 6x. Suppressing thinking parts.`);
         }
@@ -1114,18 +1158,7 @@ class OpenAiResponseExtractor {
     return parts;
   }
 
-  /** Split text through the think-tag filter (if active). */
-  private filterText(text: string): { visible: string; thinking: string } {
-    if (!text) {
-      return { visible: "", thinking: "" };
-    }
-    if (!this.thinkFilter) {
-      return { visible: text, thinking: "" };
-    }
-    return this.thinkFilter.process(text);
-  }
-
-  flushReasoningFallback(progress: vscode.Progress<vscode.LanguageModelResponsePart2>, localRequestId?: string): void {
+  override flushReasoningFallback(progress: vscode.Progress<vscode.LanguageModelResponsePart2>, localRequestId?: string): void {
     // Emit a visible warning if a reasoning loop was detected and suppressed
     if (this._reasoningLoopSuppressed && !this.reasoningLoopWarningEmitted) {
       this.reasoningLoopWarningEmitted = true;
@@ -1133,43 +1166,7 @@ class OpenAiResponseExtractor {
       reportProgressPart(localRequestId, progress, new vscode.LanguageModelTextPart(warning));
       this.emittedTextLength += warning.length;
     }
-
-    // Flush any remaining text in the think filter
-    if (this.thinkFilter) {
-      const { visible, thinking } = this.thinkFilter.finish();
-      if (visible) {
-        this.emittedTextLength += visible.length;
-        reportProgressPart(localRequestId, progress, new vscode.LanguageModelTextPart(visible));
-      }
-      if (thinking) {
-        // Surface remaining think-filter carry through the thinking part channel.
-        this.handleReasoning(thinking);
-      }
-    }
-
-    const reasoning = this.reasoningContent.trim();
-    if (!reasoning) {
-      return;
-    }
-    // If the thinking part API is available, reasoning was already streamed
-    // live during extractStreamParts via handleReasoning(). The accumulated
-    // reasoningContent is retained only for tool-call replication
-    // (flushToolCalls → onReasoningContent). Nothing more to emit here.
-    if (thinkingPartConstructor) {
-      this.reasoningContent = "";
-      return;
-    }
-    // Legacy fallback (API unavailable): emit reasoning as plain text only
-    // when the response is otherwise empty, to avoid breaking the visible
-    // output. This preserves the pre-fix safety-net semantics.
-    if (this.emittedTextLength > 0 || this.emittedToolCallsCount > 0) {
-      this.reasoningContent = "";
-      return;
-    }
-    this.onReasoningDebug?.(this.reasoningContent);
-    reportProgressPart(localRequestId, progress, new vscode.LanguageModelTextPart(reasoning));
-    this.emittedTextLength += reasoning.length;
-    this.reasoningContent = "";
+    super.flushReasoningFallback(progress, localRequestId);
   }
 
   private collectOpenAiToolCalls(toolCalls: unknown): void {
@@ -1216,57 +1213,8 @@ class OpenAiResponseExtractor {
   }
 }
 
-class AnthropicResponseExtractor {
+class AnthropicResponseExtractor extends BaseResponseExtractor {
   private readonly pendingToolCalls = new Map<number, PendingToolCall>();
-  private reasoningContent = "";
-  private emittedTextLength = 0;
-  private emittedToolCallsCount = 0;
-  /**
-   * Total reasoning characters seen across the entire stream (monotonic).
-   * See OpenAiResponseExtractor.totalReasoningChars for rationale.
-   */
-  private totalReasoningChars = 0;
-
-  constructor(
-    private readonly onReasoningContent?: (toolCallIds: string[], reasoningContent: string) => void,
-    private readonly onReasoningDebug?: (reasoningContent: string) => void,
-    private readonly thinkFilter?: ThinkTagFilter,
-    /**
-     * Progress reporter used to stream reasoning chunks to the Copilot Chat UI
-     * as `LanguageModelThinkingPart`. See OpenAiResponseExtractor for contract.
-     */
-    private readonly progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
-    private readonly localRequestId?: string,
-  ) {}
-
-  get emittedText(): number {
-    return this.emittedTextLength;
-  }
-
-  get emittedTools(): number {
-    return this.emittedToolCallsCount;
-  }
-
-  get reasoningChars(): number {
-    return this.totalReasoningChars;
-  }
-
-  /**
-   * Accumulate reasoning for tool-call replication, and — when the thinking
-   * part API is available — stream it live to the Copilot Chat UI.
-   * Mirror of OpenAiResponseExtractor.handleReasoning.
-   */
-  private handleReasoning(reasoning: string): string {
-    if (!reasoning) {
-      return "";
-    }
-    this.reasoningContent += reasoning;
-    this.totalReasoningChars += reasoning.length;
-    if (this.progress) {
-      emitThinkingPart(this.localRequestId, this.progress, reasoning);
-    }
-    return reasoning;
-  }
 
   extractStreamParts(data: unknown): vscode.LanguageModelResponsePart[] {
     if (!isRecord(data)) {
@@ -1345,11 +1293,10 @@ class AnthropicResponseExtractor {
       return parts;
     }
 
-    // 3. message_delta: contains stop_reason and usage.
+    // 3. message_delta: contains stop_reason and usage. Usage is already
+    //    collected via the onData callback in parseServerSentEvent (which
+    //    updates the real RequestUsageSummary); here we only flush tool calls.
     if (eventType === "message_delta" && delta) {
-      if (isRecord(data.usage)) {
-        updateRequestUsageSummary(this as unknown as RequestUsageSummary, data);
-      }
       if (delta.stop_reason) {
         const toolParts = this.flushToolCalls();
         this.emittedToolCallsCount += toolParts.length;
@@ -1423,56 +1370,6 @@ class AnthropicResponseExtractor {
     }
 
     return parts;
-  }
-
-  /** Split text through the think-tag filter (if active). */
-  private filterText(text: string): { visible: string; thinking: string } {
-    if (!text) {
-      return { visible: "", thinking: "" };
-    }
-    if (!this.thinkFilter) {
-      return { visible: text, thinking: "" };
-    }
-    return this.thinkFilter.process(text);
-  }
-
-  flushReasoningFallback(progress: vscode.Progress<vscode.LanguageModelResponsePart2>, localRequestId?: string): void {
-    // Flush any remaining text in the think filter
-    if (this.thinkFilter) {
-      const { visible, thinking } = this.thinkFilter.finish();
-      if (visible) {
-        this.emittedTextLength += visible.length;
-        reportProgressPart(localRequestId, progress, new vscode.LanguageModelTextPart(visible));
-      }
-      if (thinking) {
-        // Surface remaining think-filter carry through the thinking part channel.
-        this.handleReasoning(thinking);
-      }
-    }
-
-    const reasoning = this.reasoningContent.trim();
-    if (!reasoning) {
-      return;
-    }
-    // If the thinking part API is available, reasoning was already streamed
-    // live during extractStreamParts via handleReasoning(). The accumulated
-    // reasoningContent is retained only for tool-call replication
-    // (flushToolCalls → onReasoningContent). Nothing more to emit here.
-    if (thinkingPartConstructor) {
-      this.reasoningContent = "";
-      return;
-    }
-    // Legacy fallback (API unavailable): emit reasoning as plain text only
-    // when the response is otherwise empty, to avoid breaking the visible
-    // output. This preserves the pre-fix safety-net semantics.
-    if (this.emittedTextLength > 0 || this.emittedToolCallsCount > 0) {
-      this.reasoningContent = "";
-      return;
-    }
-    this.onReasoningDebug?.(this.reasoningContent);
-    reportProgressPart(localRequestId, progress, new vscode.LanguageModelTextPart(reasoning));
-    this.emittedTextLength += reasoning.length;
-    this.reasoningContent = "";
   }
 
   private flushToolCalls(): vscode.LanguageModelToolCallPart[] {
@@ -1711,8 +1608,4 @@ function updateRequestUsageSummary(summary: RequestUsageSummary, data: unknown):
   if (firstChoice && typeof firstChoice.finish_reason === "string") {
     summary.finishReason = firstChoice.finish_reason;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

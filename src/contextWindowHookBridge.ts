@@ -1,5 +1,6 @@
 import type { LanguageModelResponsePart2, Progress } from "vscode";
 import type { UsageSnapshot } from "./usage";
+import { getErrorMessage } from "./utils";
 
 type ContextWindowHookModule = typeof import("./contextWindowHook.js");
 
@@ -57,8 +58,7 @@ async function loadContextWindowHookModule(logDiagnostic?: (message: string) => 
         return hookModule;
       })
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        logDiagnostic?.(`contextWindowHook: failed to import hook module — ${message}`);
+        logDiagnostic?.(`contextWindowHook: failed to import hook module — ${getErrorMessage(error)}`);
         loadingContextWindowHookModule = undefined;
         return null;
       });

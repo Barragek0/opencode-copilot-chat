@@ -139,14 +139,20 @@ export interface ModelsDevResponse {
   "opencode-go"?: ModelsDevProviderRecord;
 }
 
-export const MODELS_DEV_API_URL = "https://models.dev/api.json";
-export const MODEL_METADATA_REVISION = "session-2026-05-21-b";
-export const MODEL_METADATA_CACHE_KEY = "opencode.modelMetadataCache.v5";
-export const MODEL_METADATA_CACHE_TTL_MS = 1 * 60 * 60 * 1000;
+import {
+  DEFAULT_MODEL_CONTEXT_WINDOW,
+  DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
+  FREE_ZEN_MODEL_IDS,
+  MODEL_METADATA_CACHE_TTL_MS,
+  MODEL_METADATA_REVISION,
+} from "./config";
+import { positiveNumber } from "./utils";
+
+export { MODELS_DEV_API_URL, MODEL_METADATA_REVISION, MODEL_METADATA_CACHE_KEY, MODEL_METADATA_CACHE_TTL_MS } from "./config";
 
 const DEFAULT_MODEL_LIMITS: BaseModelLimits = {
-  contextWindow: 262144,
-  maxOutputTokens: 65536,
+  contextWindow: DEFAULT_MODEL_CONTEXT_WINDOW,
+  maxOutputTokens: DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
 };
 
 const MODELS_DEV_PROVIDER_BY_VENDOR: Record<ProviderVendor, keyof ModelsDevResponse> = {
@@ -173,6 +179,7 @@ const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelL
     "minimax-m2.1": { contextWindow: 204800, maxOutputTokens: 131072 },
     "minimax-m2": { contextWindow: 204800, maxOutputTokens: 131072 },
     "qwen3.7-max": { contextWindow: 1000000, maxOutputTokens: 65536 },
+    "qwen3.7-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "qwen3.6-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "qwen3.5-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "gpt-5.6-luna": { contextWindow: 1050000, maxOutputTokens: 128000 },
@@ -237,6 +244,10 @@ const MODELS_WITHOUT_TEMPERATURE = new Set([
   "kimi-k2.7-code",
 ]);
 
+export function isFreeModel(modelId: string): boolean {
+  return FREE_ZEN_MODEL_IDS.has(modelId) || modelId.endsWith("-free");
+}
+
 export const VISION_CAPABLE_MODELS = new Set([
   "minimax-m2.7",
   "minimax-m2.5",
@@ -278,11 +289,6 @@ export const VISION_CAPABLE_MODELS = new Set([
   "gpt-5-codex",
   "gpt-5-nano",
   "grok-build-0.1",
-  "kimi-k2.6",
-  "kimi-k2.5",
-  "qwen3.6-plus",
-  "qwen3.6-plus-free",
-  "qwen3.5-plus",
   "gpt-5.6-luna",
 ]);
 
@@ -378,7 +384,10 @@ export function resolveModelMetadata(
     source: liveMetadata ? "live" : cachedMetadata ? "models.dev" : fallbackMetadata ? "fallback" : "default",
     cost: liveMetadata?.cost ?? cachedMetadata?.cost ?? fallbackMetadata?.cost,
     reasoningOptions: liveMetadata?.reasoningOptions ?? cachedMetadata?.reasoningOptions,
-    temperature: liveMetadata?.temperature ?? cachedMetadata?.temperature,
+    // The bundled fallback propagates `temperature: false` (models whose API
+    // rejects the parameter) so the request body omits it even when the live
+    // models.dev fetch is unavailable.
+    temperature: liveMetadata?.temperature ?? cachedMetadata?.temperature ?? fallbackMetadata?.temperature,
   };
 }
 
@@ -480,8 +489,12 @@ function detectModalityFlags(
   const inputModalities = Array.isArray(modalities?.input) ? modalities.input : undefined;
 
   if (inputModalities?.length) {
+    // Only actual image-capable modalities imply vision. A model that accepts
+    // audio/pdf/video but no images must NOT advertise imageInput: true —
+    // VS Code would forward image attachments the model cannot process.
+    const visionModalities = new Set(["image", "image_url", "input_image"]);
     return {
-      supportsVision: inputModalities.some((m) => m !== "text"),
+      supportsVision: inputModalities.some((m) => visionModalities.has(m.toLowerCase())) || undefined,
       supportsAudio: inputModalities.includes("audio") || undefined,
       supportsVideo: inputModalities.includes("video") || undefined,
       supportsPdf: inputModalities.includes("pdf") || undefined,
@@ -495,10 +508,6 @@ function detectModalityFlags(
     supportsVideo: undefined,
     supportsPdf: undefined,
   };
-}
-
-function positiveNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
 }
 
 function supportsReasoning(modelId: string): boolean {

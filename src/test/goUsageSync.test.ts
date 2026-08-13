@@ -14,6 +14,7 @@ function localSummary(): UsageSummary {
     monthly: { spent: 9, limit: LIMITS.monthly, percent: 15, resetsAt: new Date("2026-08-31T00:00:00Z") },
     today: { cost: 0.4, requests: 3, tokens: 4200 },
     yesterday: { cost: 1.1, requests: 8, tokens: 9800 },
+    codebase: { cost: 12.4, requests: 42, tokens: 512_000 },
     hasData: true,
     sqliteAvailable: false,
   };

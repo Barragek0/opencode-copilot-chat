@@ -2,7 +2,7 @@
   "name": "opencode-copilot-chat",
   "displayName": "OpenCode for Copilot Chat — BYOK 30+ AI Models",
   "description": "Use 30+ frontier AI models (DeepSeek V4, Kimi K2.6, GLM-5.1, Qwen3.7, MiMo V2.5, MiniMax M2.7, free Claude Opus, GPT-5.5, Gemini 3.5, Grok) in GitHub Copilot Chat. Bring Your Own Key — no Copilot Pro needed.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "ltmoerdani",
   "license": "MIT",
   "icon": "media/opencodego.png",
@@ -138,6 +138,65 @@
     "configuration": {
       "title": "OpenCode",
       "properties": {
+        "opencodego.usageTodayYesterdaySource": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "cli",
+            "extension"
+          ],
+          "enumDescriptions": [
+            "Merge the OpenCode CLI history (cost + tokens + requests) with the extension's own tracked requests — the most accurate view when you also use OpenCode in the terminal.",
+            "OpenCode CLI history only — ignores requests the extension tracked itself.",
+            "Extension-tracked requests only — ignores the OpenCode CLI history."
+          ],
+          "default": "auto",
+          "description": "Data source for the Today / Yesterday usage rows."
+        },
+        "opencodego.usageCodebaseRow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the all-time usage row for the current workspace (Codebase), computed from the OpenCode CLI history (per-directory `path.cwd` of each session's messages)."
+        },
+        "opencodego.usageCodebaseWindowDays": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 3650,
+          "description": "How many days of history the Codebase row covers. 0 = forever (all history)."
+        },
+        "opencodego.usageRollingSessionMeter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the server-accurate 5-hour rolling session meter in the usage tooltip, quick-pick and panel. Weekly and monthly meters are always shown."
+        },
+        "opencodego.usageRefreshIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 5,
+          "maximum": 3600,
+          "description": "How often the usage status bar and panel refresh in the background (seconds). Terminal-side (OpenCode CLI) usage and server meters are re-read on this cadence; values below the 60s server-sync TTL only refresh the local CLI history rows."
+        },
+        "opencodego.usageChartDays": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 370,
+          "description": "How many days the usage panel charts cover (daily spend / requests / tokens, per-model and chat-completion breakdowns). 0 = lifetime. The panel's Window button toggles this live (Week / 14 days / Month / Lifetime)."
+        },
+        "opencodego.usageDayBoundary": {
+          "type": "string",
+          "enum": [
+            "utc",
+            "local"
+          ],
+          "enumDescriptions": [
+            "Today / Yesterday rows roll over at midnight UTC.",
+            "Today / Yesterday rows roll over at your local midnight."
+          ],
+          "default": "utc",
+          "description": "Day boundary used for the Today / Yesterday usage rows."
+        },
         "opencodego.temperature": {
           "type": "number",
           "default": 0.2,

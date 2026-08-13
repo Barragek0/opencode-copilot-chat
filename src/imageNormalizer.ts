@@ -1,8 +1,7 @@
 import type * as Photon from "@silvia-odwyer/photon-node";
+import { MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, MAX_IMAGE_BASE64_BYTES } from "./config";
 
-const MAX_IMAGE_WIDTH = 2_000;
-const MAX_IMAGE_HEIGHT = 2_000;
-export const MAX_IMAGE_BASE64_BYTES = 5 * 1024 * 1024;
+export { MAX_IMAGE_BASE64_BYTES } from "./config";
 const JPEG_QUALITIES = [80, 85, 70, 55, 40] as const;
 
 type PhotonModule = typeof Photon;

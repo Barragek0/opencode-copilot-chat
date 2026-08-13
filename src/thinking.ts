@@ -500,6 +500,27 @@ export function buildThinkingPayload(modelId: string, thinking: ThinkingSettings
 }
 
 /**
+ * Whether a request body asks the model to think, through ANY channel the
+ * extension emits: `reasoning_effort`, `budget_tokens`, `enable_thinking`,
+ * or an Anthropic-style `thinking` block (`enabled` / `adaptive`).
+ *
+ * Used by the stream extractor to decide whether `reasoning_content` is
+ * genuine chain-of-thought (goes to the thinking panel) vs. the Go gateway's
+ * "thinking off" mislabeling (surfaced as visible text, issue #37635).
+ */
+export function bodyRequestsThinking(body: Record<string, unknown> | undefined): boolean {
+  if (!body) return false;
+  if (typeof body.reasoning_effort === "string") return true;
+  if (typeof body.budget_tokens === "number") return true;
+  if (body.enable_thinking === true) return true;
+  if (body.thinking !== null && typeof body.thinking === "object") {
+    const type = (body.thinking as Record<string, unknown>).type;
+    return type === "enabled" || type === "adaptive";
+  }
+  return false;
+}
+
+/**
  * Translates Qwen thinking settings into Anthropic-native format when Qwen
  * models are routed through the Anthropic messages endpoint. The gateway
  * expects { type: "enabled"|"disabled" } with an optional budget_tokens field,

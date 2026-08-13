@@ -7,27 +7,34 @@ import { GO_VENDOR } from "./providerTypes";
 import type { ModelCost } from "./metadata";
 import type { TransportRequestSummary } from "./streaming";
 import { fetchGoUsage, mergeServerUsage, GO_USAGE_SYNC_TTL_MS, type GoUsageApiResponse } from "./goUsageSync";
+import {
+  GO_LIMITS,
+  FIVE_HOURS_MS,
+  WEEK_MS,
+  GO_USAGE_LOG_KEY,
+  GO_USAGE_BASELINE_KEY,
+  GO_EVER_TRACKED_KEY,
+  GO_SESSION_COSTS_KEY,
+  GO_MAX_LOG_ENTRIES,
+  GO_SESSION_IDLE_MS,
+  GO_MAX_SESSIONS,
+  GO_SERVER_USAGE_KEY,
+  type UsageTodayYesterdaySource,
+} from "./config";
+import { formatCount, formatTokenCount, formatUsd, formatRelativeTime, getErrorMessage } from "./utils";
+
+export { GO_LIMITS } from "./config";
 
 /** Callback to resolve live model cost from the models.dev metadata cache. */
 export type CostResolver = (modelId: string) => ModelCost | undefined;
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// ─── Constants (values centralized in ./config) ──────────────────────────────
 
-const STORAGE_KEY = "opencodego.usageLog.v1";
-const BASELINE_STORAGE_KEY = "opencodego.usageBaseline.v1";
-const EVER_TRACKED_KEY = "opencodego.everTracked.v1";
-const SESSION_COSTS_KEY = "opencodego.sessionCosts.v1";
-const MAX_LOG_ENTRIES = 2000;
-
-/** OpenCode Go subscription limits in USD, from https://opencode.ai/docs/go */
-export const GO_LIMITS = {
-  session: 12, // $12 per rolling 5-hour window
-  weekly: 30, // $30 per week (Mon–Mon UTC)
-  monthly: 60, // $60 per month (anchor-based)
-} as const;
-
-const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const STORAGE_KEY = GO_USAGE_LOG_KEY;
+const BASELINE_STORAGE_KEY = GO_USAGE_BASELINE_KEY;
+const EVER_TRACKED_KEY = GO_EVER_TRACKED_KEY;
+const SESSION_COSTS_KEY = GO_SESSION_COSTS_KEY;
+const MAX_LOG_ENTRIES = GO_MAX_LOG_ENTRIES;
 
 // ─── Go model pricing ($/1M tokens) — bundled snapshot fallback ────────────
 // This table is a static snapshot kept as a last resort. The primary source
@@ -92,20 +99,29 @@ export interface UsageSummary {
   session: PeriodUsage;
   weekly: PeriodUsage;
   monthly: PeriodUsage;
-  today: {
-    cost: number;
-    requests: number;
-    tokens: number;
-  };
-  yesterday: {
-    cost: number;
-    requests: number;
-    tokens: number;
-  };
+  today: UsageDaily;
+  yesterday: UsageDaily;
+  /** All-time usage in the CURRENT workspace (from OpenCode CLI history). */
+  codebase: UsageDaily;
   hasData: boolean;
   /** When true, cost data comes from the OpenCode CLI SQLite database
       (actual billed amounts). When false, costs are estimated locally. */
   sqliteAvailable: boolean;
+}
+
+/**
+ * Per-view knobs resolved live so the user can pick how usage is presented.
+ * All resolvers are optional — the tracker falls back to sensible defaults.
+ */
+export interface GoUsageTrackerOptions {
+  /** Absolute paths of the current VS Code workspace folders. */
+  resolveWorkspaceFolders?: () => readonly string[];
+  /** Source of the Today/Yesterday rows (default "auto"). */
+  resolveTodayYesterdaySource?: () => UsageTodayYesterdaySource;
+  /** Codebase window in days; 0 = forever (default). */
+  resolveCodebaseWindowDays?: () => number;
+  /** Day boundary for Today/Yesterday ("utc" default | "local"). */
+  resolveDayBoundary?: () => "utc" | "local";
 }
 
 interface UsageBaselinePeriod {
@@ -139,6 +155,42 @@ export interface UsageBaselineTargets {
 function startOfUtcDay(nowMs: number): number {
   const d = new Date(nowMs);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Start of the LOCAL day — used when `usageDayBoundary` is set to "local". */
+export function startOfLocalDay(nowMs: number): number {
+  const d = new Date(nowMs);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Normalize a directory path for matching (trailing separators, Windows case). */
+export function normalizeCwd(value: string): string {
+  let normalized = value.replace(/[\/]+$/, "");
+  if (process.platform === "win32") {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
+
+/**
+ * Whether a CLI row's working directory belongs to the current workspace.
+ * Matches when the folder equals the cwd, is a parent of it (the user opened
+ * the repo root but the CLI ran in a subfolder), or the folder is a subfolder
+ * of the cwd (the user opened a subfolder of the project).
+ */
+export function isCwdInWorkspace(cwd: string | undefined, workspaceFolders: readonly string[]): boolean {
+  if (!cwd || workspaceFolders.length === 0) {
+    return false;
+  }
+  const rowCwd = normalizeCwd(cwd);
+  const sep = process.platform === "win32" ? "\\" : "/";
+  for (const folder of workspaceFolders) {
+    const normalized = normalizeCwd(folder);
+    if (rowCwd === normalized) return true;
+    if (rowCwd.startsWith(`${normalized}${sep}`)) return true;
+    if (normalized.startsWith(`${rowCwd}${sep}`)) return true;
+  }
+  return false;
 }
 
 function startOfUtcWeek(nowMs: number): number {
@@ -253,7 +305,13 @@ const OPENCODE_DB_PATH = path.join(os.homedir(), ".local", "share", "opencode", 
 const HISTORY_ROWS_SQL = `
   SELECT
     CAST(COALESCE(json_extract(data, '$.time.created'), time_created) AS INTEGER) AS createdMs,
-    CAST(json_extract(data, '$.cost') AS REAL) AS cost
+    CAST(json_extract(data, '$.cost') AS REAL) AS cost,
+    CAST(json_extract(data, '$.tokens.input') AS INTEGER) AS tokensInput,
+    CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS tokensOutput,
+    CAST(json_extract(data, '$.tokens.reasoning') AS INTEGER) AS tokensReasoning,
+    CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) AS tokensCacheRead,
+    json_extract(data, '$.path.cwd') AS cwd,
+    json_extract(data, '$.modelID') AS modelId
   FROM message
   WHERE json_valid(data)
     AND json_extract(data, '$.providerID') = 'opencode-go'
@@ -261,32 +319,332 @@ const HISTORY_ROWS_SQL = `
     AND json_type(data, '$.cost') IN ('integer', 'real')
 `;
 
-interface HistoryRow {
+export interface HistoryRow {
   createdMs: number;
   cost: number;
+  tokensInput: number;
+  tokensOutput: number;
+  tokensReasoning: number;
+  tokensCacheRead: number;
+  /** Working directory of the session the message belongs to (OpenCode CLI data). */
+  cwd?: string;
+  /** Model that produced the message (OpenCode CLI data). */
+  modelId?: string;
+}
+
+/** Non-negative finite integer (tokens can legitimately be 0). */
+function positiveNumberish(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+}
+
+/**
+ * Sum one day window across the OpenCode CLI history rows and the extension's
+ * tracked entries. The CLI records terminal usage and the extension records
+ * VS Code usage — they never overlap, so the sum is the user's real combined
+ * usage for the window. `source` selects which inputs participate.
+ */
+export function sumDailyUsage(
+  rows: HistoryRow[],
+  entries: UsageLogEntry[],
+  dayStartMs: number,
+  source: UsageTodayYesterdaySource = "auto",
+): UsageDaily {
+  let cost = 0;
+  let requests = 0;
+  let tokens = 0;
+
+  if (source !== "extension") {
+    for (const row of rows) {
+      if (row.createdMs < dayStartMs) continue;
+      cost += row.cost;
+      requests += 1;
+      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
+    }
+  }
+
+  if (source !== "cli") {
+    for (const entry of entries) {
+      if (entry.timestamp < dayStartMs) continue;
+      cost += entry.cost;
+      requests += 1;
+      tokens += entry.promptTokens + entry.completionTokens;
+    }
+  }
+
+  return { cost, requests, tokens };
+}
+
+/** Per-day / per-workspace usage totals (from CLI history and/or extension tracking). */
+export interface UsageDaily {
+  cost: number;
+  requests: number;
+  tokens: number;
+}
+
+/** One day bucket of the usage chart. */
+export interface UsageDayPoint {
+  /** Unix ms at the START of the day (UTC or local, per the day-boundary setting). */
+  dayStart: number;
+  cost: number;
+  tokens: number;
+  requests: number;
+}
+
+/** Per-model usage for a single day (model bar chart). */
+export interface ModelDayUsage {
+  model: string;
+  dayStart: number;
+  cost: number;
+  tokens: number;
+  requests: number;
+}
+
+/** Time-series data for the usage panel charts. */
+export interface UsageSeries {
+  /** Daily totals, oldest → newest. */
+  days: UsageDayPoint[];
+  /** Per-model-per-day rows (only days with usage are present). */
+  byModel: ModelDayUsage[];
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Bucket CLI rows + extension entries into per-day totals and per-model
+ * per-day rows over the last `days` days (the oldest bucket starts at
+ * `dayStartMs - (days - 1) * DAY_MS`). Pure so it can be unit-tested.
+ */
+export function buildUsageSeries(
+  rows: HistoryRow[],
+  entries: UsageLogEntry[],
+  days: number,
+  dayStartMs: number,
+  source: UsageTodayYesterdaySource = "auto",
+): UsageSeries {
+  // days > 0: the last `days` days ending at dayStartMs; days <= 0: lifetime
+  // from the earliest recorded usage to today (aligned to the day grid).
+  let firstDay: number;
+  if (days > 0) {
+    firstDay = dayStartMs - (Math.max(1, Math.floor(days)) - 1) * DAY_MS;
+  } else {
+    let earliest = dayStartMs;
+    if (source !== "extension") {
+      for (const row of rows) if (row.createdMs < earliest) earliest = row.createdMs;
+    }
+    if (source !== "cli") {
+      for (const entry of entries) if (entry.timestamp < earliest) earliest = entry.timestamp;
+    }
+    firstDay = dayStartMs - Math.ceil((dayStartMs - earliest) / DAY_MS) * DAY_MS;
+  }
+  const bucketCount = Math.round((dayStartMs - firstDay) / DAY_MS) + 1;
+  const buckets: UsageDayPoint[] = Array.from({ length: bucketCount }, (_, i) => ({
+    dayStart: firstDay + i * DAY_MS,
+    cost: 0,
+    tokens: 0,
+    requests: 0,
+  }));
+  const byModel = new Map<string, Map<number, ModelDayUsage>>();
+
+  const add = (model: string | undefined, timestamp: number, cost: number, tokens: number): void => {
+    const index = Math.round((timestamp - firstDay) / DAY_MS);
+    if (index < 0 || index >= bucketCount) return;
+    const day = buckets[index];
+    day.cost += cost;
+    day.tokens += tokens;
+    day.requests += 1;
+
+    const modelName = model ?? "unknown";
+    let byDay = byModel.get(modelName);
+    if (!byDay) {
+      byDay = new Map();
+      byModel.set(modelName, byDay);
+    }
+    const point = byDay.get(index) ?? { model: modelName, dayStart: day.dayStart, cost: 0, tokens: 0, requests: 0 };
+    point.cost += cost;
+    point.tokens += tokens;
+    point.requests += 1;
+    byDay.set(index, point);
+  };
+
+  if (source !== "extension") {
+    for (const row of rows) {
+      add(row.modelId, row.createdMs, row.cost, row.tokensInput + row.tokensOutput + row.tokensReasoning);
+    }
+  }
+  if (source !== "cli") {
+    for (const entry of entries) {
+      add(entry.modelId, entry.timestamp, entry.cost, entry.promptTokens + entry.completionTokens);
+    }
+  }
+
+  return {
+    days: buckets,
+    byModel: [...byModel.entries()].flatMap(([, byDay]) =>
+      [...byDay.entries()].sort((left, right) => left[0] - right[0]).map(([, point]) => point),
+    ),
+  };
+}
+
+/**
+ * The CLI database can be gigabytes large and spawning `sqlite3` is a
+ * synchronous, blocking call — but the usage UI (status bar, tooltip, panel,
+ * quick-pick) re-reads it on every refresh. Memoize the result for a short
+ * window so a burst of refreshes pays the query cost once.
+ */
+const HISTORY_READ_TTL_MS = 3_000;
+let historyCache: { rows: HistoryRow[] | null; fetchedAt: number } | undefined;
+/** Surfaces CLI-history read failures in the usage output channel. */
+let historyReadDiagnostic: ((message: string) => void) | undefined;
+
+/** Wire the diagnostic sink (called once per tracker, last one wins). */
+export function setHistoryReadDiagnostic(log: (message: string) => void): void {
+  historyReadDiagnostic = log;
 }
 
 function readOpenCodeHistory(): HistoryRow[] | null {
-  if (!fs.existsSync(OPENCODE_DB_PATH)) return null;
+  const now = Date.now();
+  if (historyCache && now - historyCache.fetchedAt < HISTORY_READ_TTL_MS) {
+    return historyCache.rows;
+  }
+  const rows = readOpenCodeHistoryUncached();
+  historyCache = { rows, fetchedAt: now };
+  return rows;
+}
 
-  try {
-    const result = execFileSync("sqlite3", ["-readonly", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
-      timeout: 5000,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const rows: unknown = JSON.parse(result);
-    if (!Array.isArray(rows)) return null;
-    return rows.filter((row): row is HistoryRow => {
+function readOpenCodeHistoryUncached(): HistoryRow[] | null {
+  if (!fs.existsSync(OPENCODE_DB_PATH)) {
+    historyReadDiagnostic?.(`[go-usage] CLI history: database not found at ${OPENCODE_DB_PATH}`);
+    return null;
+  }
+
+  // The `sqlite3` binary may be missing from the extension host's PATH (it is
+  // often only available from the Android SDK, e.g. launched from a terminal),
+  // so Node's built-in reader is tried first — zero external dependencies.
+  const viaNode = readHistoryViaNodeSqlite();
+  if (viaNode !== undefined) {
+    return viaNode;
+  }
+
+  return readHistoryViaSqliteCli();
+}
+
+/** Normalize raw rows (shared by both readers). */
+function normalizeHistoryRows(rows: unknown): HistoryRow[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((row): row is HistoryRow => {
       if (!row || typeof row !== "object") return false;
       const candidate = row as Partial<HistoryRow>;
       return (
         typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
       );
-    });
-  } catch {
+    })
+    .map((row) => ({
+      createdMs: row.createdMs,
+      cost: row.cost,
+      tokensInput: positiveNumberish(row.tokensInput),
+      tokensOutput: positiveNumberish(row.tokensOutput),
+      tokensReasoning: positiveNumberish(row.tokensReasoning),
+      tokensCacheRead: positiveNumberish(row.tokensCacheRead),
+      cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
+      modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
+    }));
+}
+
+/**
+ * Read the CLI history with Node's built-in `node:sqlite` (no binary on the
+ * host PATH needed). Returns `undefined` when the module is unavailable on
+ * this host so the caller can fall back to the `sqlite3` binary.
+ */
+function readHistoryViaNodeSqlite(): HistoryRow[] | null | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { DatabaseSync } = require("node:sqlite") as {
+      DatabaseSync?: new (
+        path: string,
+        options?: { readOnly?: boolean },
+      ) => {
+        prepare(sql: string): { all(): Record<string, unknown>[] };
+        close(): void;
+      };
+    };
+    if (typeof DatabaseSync !== "function") {
+      return undefined;
+    }
+    // Transient busy/lock states (CLI checkpointing the WAL) resolve quickly.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const db = new DatabaseSync(OPENCODE_DB_PATH, { readOnly: true });
+        try {
+          const rows = db.prepare(HISTORY_ROWS_SQL).all();
+          return rows.length > 0 ? normalizeHistoryRows(rows) : null;
+        } finally {
+          db.close();
+        }
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (attempt === 0) {
+          historyReadDiagnostic?.(`[go-usage] node:sqlite read failed (attempt 1): ${message}. Retrying…`);
+        } else {
+          historyReadDiagnostic?.(`[go-usage] node:sqlite read failed: ${message}`);
+        }
+      }
+    }
     return null;
+  } catch (error) {
+    historyReadDiagnostic?.(`[go-usage] node:sqlite unavailable (${getErrorMessage(error)}); falling back to the sqlite3 binary.`);
+    return undefined;
   }
+}
+
+/**
+ * Candidate `sqlite3` binaries: the PATH-resolved name first, then absolute
+ * paths from common installs (system, Homebrew, Android SDK) — the Android
+ * SDK binary is what most dev machines actually have, and it is frequently
+ * missing from the extension host's PATH.
+ */
+function sqliteCliCandidates(): string[] {
+  const home = os.homedir();
+  return [
+    "sqlite3",
+    "/usr/bin/sqlite3",
+    "/usr/local/bin/sqlite3",
+    "/opt/homebrew/bin/sqlite3",
+    path.join(home, "Android", "Sdk", "platform-tools", "sqlite3"),
+    path.join(home, "Library", "Android", "sdk", "platform-tools", "sqlite3"),
+  ];
+}
+
+function readHistoryViaSqliteCli(): HistoryRow[] | null {
+  for (const binary of sqliteCliCandidates()) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = execFileSync(binary, ["-readonly", "-cmd", ".timeout 5000", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
+          timeout: 10_000,
+          maxBuffer: 64 * 1024 * 1024,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const rows: unknown = JSON.parse(result);
+        return Array.isArray(rows) ? normalizeHistoryRows(rows) : null;
+      } catch (error) {
+        const message = getErrorMessage(error);
+        // ENOENT just means this candidate isn't present — try the next one.
+        if (attempt === 0 && message.includes("ENOENT")) {
+          break;
+        }
+        if (attempt === 0) {
+          historyReadDiagnostic?.(`[go-usage] sqlite3 read failed (attempt 1): ${message}. Retrying…`);
+        } else {
+          historyReadDiagnostic?.(`[go-usage] sqlite3 read failed (${binary}): ${message}`);
+        }
+      }
+    }
+  }
+  historyReadDiagnostic?.(
+    "[go-usage] CLI history unavailable: no SQLite reader found (node:sqlite missing and no sqlite3 binary on PATH).",
+  );
+  return null;
 }
 
 // ─── Exported tracker class ──────────────────────────────────────────────────
@@ -310,8 +668,8 @@ export class GoUsageTracker {
   private serverUsageFetchedAt = 0;
   /** In-flight sync promise per key — prevents duplicate concurrent fetches. */
   private syncInFlight: { apiKey: string; promise: Promise<boolean> } | undefined;
-  private static readonly SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
-  private static readonly MAX_SESSIONS = 50;
+  private static readonly SESSION_IDLE_MS = GO_SESSION_IDLE_MS;
+  private static readonly MAX_SESSIONS = GO_MAX_SESSIONS;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -323,10 +681,18 @@ export class GoUsageTracker {
      * (single account, shared key).
      */
     private readonly storageKeySuffix = "",
+    private readonly options: GoUsageTrackerOptions = {},
   ) {
     this.log = log;
     this.costResolver = costResolver;
+    if (log) {
+      setHistoryReadDiagnostic(log);
+    }
     this.restore();
+    // Fast startup: show the last successful server snapshot immediately
+    // instead of 0s until the TTL-guarded refetch lands. `serverUsageFetchedAt`
+    // stays 0, so the background sync still refreshes right away.
+    this.serverUsage = this.context.globalState.get<GoUsageApiResponse>(this.storageKey(GO_SERVER_USAGE_KEY));
   }
 
   private storageKey(base: string): string {
@@ -448,26 +814,87 @@ export class GoUsageTracker {
     const nowMs = Date.now();
     const clamp = (v: number, limit: number) => Math.round(Math.min(100, (v / limit) * 100) * 10) / 10;
 
-    // When namespaced (per-profile), skip the shared SQLite — it has no
-    // key column, so reading it would mix quota from all accounts.
+    // The CLI database is DEVICE-level usage (it has no per-key column), so
+    // it is safe for the device rows (Today / Yesterday / Codebase). The
+    // subscription METERS must stay account-scoped: the legacy (un-namespaced)
+    // tracker derives them from the CLI rows, while per-profile trackers
+    // derive them from their own tracked entries (the server-accurate meters
+    // from syncServerUsage overlay them either way).
     const isPerProfile = this.storageKeySuffix.length > 0;
-    let summary: UsageSummary;
-    if (!isPerProfile) {
-      const sqliteRows = readOpenCodeHistory();
-      if (sqliteRows) {
-        summary = this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
-      } else {
-        // Fall back to extension-tracked data (works without CLI).
-        summary = this.buildSummaryFromTracked(nowMs, clamp);
-      }
-    } else {
-      summary = this.buildSummaryFromTracked(nowMs, clamp);
+    const sqliteRows = readOpenCodeHistory();
+    if (!isPerProfile && sqliteRows) {
+      return this.serverUsage
+        ? mergeServerUsage(this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp), this.serverUsage, GO_LIMITS)
+        : this.buildSqliteEnrichedSummary(nowMs, sqliteRows, clamp);
     }
 
-    // Overlay the server-accurate meters when a recent snapshot exists
-    // (fetched via syncServerUsage). Today / Yesterday / per-session spend
-    // remain local.
-    return this.serverUsage ? mergeServerUsage(summary, this.serverUsage, GO_LIMITS) : summary;
+    // Per-profile, or no CLI history available: meters from tracked entries,
+    // device rows enriched with the CLI history when it exists.
+    const base = this.buildSummaryFromTracked(nowMs, clamp);
+    if (!sqliteRows) {
+      return this.serverUsage ? mergeServerUsage(base, this.serverUsage, GO_LIMITS) : base;
+    }
+    const dayMs = this.dayStartMs(nowMs);
+    const enriched: UsageSummary = {
+      ...base,
+      today: this.dailyUsage(sqliteRows, dayMs),
+      yesterday: this.dailyUsage(sqliteRows, dayMs - 24 * 60 * 60 * 1000),
+      codebase: this.codebaseUsage(sqliteRows),
+      hasData: base.hasData || sqliteRows.length > 0,
+      sqliteAvailable: true,
+    };
+    return this.serverUsage ? mergeServerUsage(enriched, this.serverUsage, GO_LIMITS) : enriched;
+  }
+
+  private dayStartMs(nowMs: number): number {
+    return this.options.resolveDayBoundary?.() === "local" ? startOfLocalDay(nowMs) : startOfUtcDay(nowMs);
+  }
+
+  private todayYesterdaySource(): UsageTodayYesterdaySource {
+    return this.options.resolveTodayYesterdaySource?.() ?? "auto";
+  }
+
+  /**
+   * Merge the OpenCode CLI history rows and the extension-tracked entries for
+   * one day window into a single total. The CLI DB records terminal usage and
+   * the extension records VS Code usage — the two never overlap, so summing
+   * them gives the user's real combined daily usage.
+   */
+  private dailyUsage(rows: HistoryRow[], dayStartMs: number): UsageDaily {
+    return sumDailyUsage(rows, this.entries, dayStartMs, this.todayYesterdaySource());
+  }
+
+  /**
+   * Time-series data for the usage panel: per-day totals and per-model
+   * per-day rows over the last `days` days.
+   */
+  getUsageSeries(days: number): UsageSeries {
+    const nowMs = Date.now();
+    const rows = readOpenCodeHistory() ?? [];
+    return buildUsageSeries(rows, this.entries, days, this.dayStartMs(nowMs), this.todayYesterdaySource());
+  }
+
+  /**
+   * All-time usage in the CURRENT workspace, derived from the OpenCode CLI
+   * history (`path.cwd` of each session's messages). "Forever" by default —
+   * the window is controlled by `resolveCodebaseWindowDays` (0 = all history).
+   */
+  private codebaseUsage(rows: HistoryRow[]): UsageDaily {
+    const folders = this.options.resolveWorkspaceFolders?.() ?? [];
+    const windowDays = Math.max(0, this.options.resolveCodebaseWindowDays?.() ?? 0);
+    const cutoffMs = windowDays > 0 ? Date.now() - windowDays * 24 * 60 * 60 * 1000 : 0;
+
+    let cost = 0;
+    let requests = 0;
+    let tokens = 0;
+    for (const row of rows) {
+      if (cutoffMs > 0 && row.createdMs < cutoffMs) continue;
+      if (!isCwdInWorkspace(row.cwd, folders)) continue;
+      cost += row.cost;
+      requests += 1;
+      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
+    }
+    return { cost, requests, tokens };
   }
 
   /**
@@ -510,28 +937,23 @@ export class GoUsageTracker {
       return false;
     }
     this.serverUsage = result.data;
+    // Persist so the next window start can render the meters instantly.
+    void this.context.globalState.update(this.storageKey(GO_SERVER_USAGE_KEY), result.data);
     this.log?.("[go-usage] Server usage synced from /zen/go/v1/usage.");
     return true;
   }
 
-  /** Build summary from SQLite, enriched with token/request counts from tracked entries. */
+  /** Build summary from SQLite, enriched with merged today/yesterday + codebase totals. */
   private buildSqliteEnrichedSummary(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
-    const base = this.buildSummaryFromRows(nowMs, rows, clamp, true);
+    const base = this.buildSummaryFromRows(nowMs, rows, clamp);
 
-    // Enrich today/yesterday tokens+requests from tracked entries (SQLite doesn't store tokens).
-    const dayMs = startOfUtcDay(nowMs);
+    // Today/Yesterday merge the CLI history (cost + tokens + requests) with
+    // the extension's own tracked requests — the two never overlap, so the
+    // sum is the user's real combined usage for the day.
+    const dayMs = this.dayStartMs(nowMs);
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
-    const todayReq = base.today.requests;
-    let todayTokens = 0;
-    const yestReq = base.yesterday.requests;
-    let yestTokens = 0;
-    for (const e of this.entries) {
-      if (e.timestamp >= dayMs) {
-        todayTokens += e.promptTokens + e.completionTokens;
-      } else if (e.timestamp >= yesterdayMs) {
-        yestTokens += e.promptTokens + e.completionTokens;
-      }
-    }
+    const today = this.dailyUsage(rows, dayMs);
+    const yesterday = this.dailyUsage(rows, yesterdayMs);
 
     // Apply baselines on top of SQLite costs.
     const activeBaselineSession = this.getActiveBaselineAmount("session", nowMs);
@@ -554,20 +976,16 @@ export class GoUsageTracker {
         spent: Math.round((base.monthly.spent + activeBaselineMonthly) * 10000) / 10000,
         percent: clamp(base.monthly.spent + activeBaselineMonthly, GO_LIMITS.monthly),
       },
-      today: { ...base.today, requests: todayReq, tokens: todayTokens },
-      yesterday: { ...base.yesterday, requests: yestReq, tokens: yestTokens },
+      today,
+      yesterday,
+      codebase: this.codebaseUsage(rows),
       hasData: true,
       sqliteAvailable: true,
     };
   }
 
   /** Build summary from opencode.db rows (enrichment data from CLI history) */
-  private buildSummaryFromRows(
-    nowMs: number,
-    rows: HistoryRow[],
-    clamp: (v: number, limit: number) => number,
-    hasData: boolean,
-  ): UsageSummary {
+  private buildSummaryFromRows(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
     const dayMs = startOfUtcDay(nowMs);
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
     const weekMs = startOfUtcWeek(nowMs);
@@ -637,8 +1055,9 @@ export class GoUsageTracker {
         requests: yestReq,
         tokens: 0,
       },
-      hasData,
-      sqliteAvailable: false,
+      hasData: true,
+      sqliteAvailable: true,
+      codebase: { cost: 0, requests: 0, tokens: 0 },
     };
   }
 
@@ -650,7 +1069,7 @@ export class GoUsageTracker {
 
   /** Build summary from extension-tracked entries (fallback when opencode.db unavailable) */
   private buildSummaryFromTracked(nowMs: number, clamp: (v: number, limit: number) => number): UsageSummary {
-    const dayMs = startOfUtcDay(nowMs);
+    const dayMs = this.dayStartMs(nowMs);
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
     const weekMs = startOfUtcWeek(nowMs);
     const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, this.baseline);
@@ -723,6 +1142,14 @@ export class GoUsageTracker {
         cost: Math.round(yestCost * 10000) / 10000,
         requests: yestReq,
         tokens: yestTokens,
+      },
+      // Without the CLI history there is no per-directory attribution, so the
+      // codebase total falls back to everything this extension has tracked
+      // (it only ever runs inside the current workspace).
+      codebase: {
+        cost: Math.round(this.entries.reduce((total, e) => total + e.cost, 0) * 10000) / 10000,
+        requests: this.entries.length,
+        tokens: this.entries.reduce((total, e) => total + e.promptTokens + e.completionTokens, 0),
       },
       hasData: this.entries.length > 0 || this.everTracked,
       sqliteAvailable: false,
@@ -860,8 +1287,10 @@ export class GoUsageTracker {
   }
 
   private prune(): void {
-    const cutoff = Date.now() - 31 * 24 * 60 * 60 * 1000; // 31 days
-    this.entries = this.entries.filter((e) => e.timestamp > cutoff).slice(-MAX_LOG_ENTRIES);
+    // Tracked usage is permanent — users rely on the history for today/
+    // yesterday/codebase totals, so no time-based cutoff. Only the hard
+    // entry cap applies.
+    this.entries = this.entries.slice(-MAX_LOG_ENTRIES);
   }
 
   /** Remove idle sessions and cap total count. */
@@ -947,30 +1376,9 @@ export class GoUsageTracker {
 
 // ─── Formatting helpers ──────────────────────────────────────────────────────
 
-function fmtUsd(v: number): string {
-  return `$${v.toFixed(2)}`;
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${String(Math.round(n / 1_000))}k`;
-  return String(n);
-}
-
 function progressBar(percent: number, width = 10): string {
   const filled = Math.round((percent / 100) * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
-function fmtRelativeTime(target: Date, from: Date = new Date()): string {
-  const diffMs = target.getTime() - from.getTime();
-  if (diffMs <= 0) return "now";
-  const totalMinutes = Math.ceil(diffMs / 60_000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${String(minutes)}m`;
-  if (minutes === 0) return `${String(hours)}h`;
-  return `${String(hours)}h ${String(minutes)}m`;
 }
 
 function fmtDate(d: Date): string {
@@ -1001,84 +1409,16 @@ export function formatGoUsageStatusBarText(summary: UsageSummary): string {
   return `Go: ${String(s)}%·${String(w)}%·${String(m)}%${warn}`;
 }
 
-/** Multiline tooltip (VS Code renders newlines in tooltips as-is) */
-export function formatGoUsageTooltip(summary: UsageSummary): vscode.MarkdownString {
-  const md = new vscode.MarkdownString(undefined, true);
-  md.supportThemeIcons = true;
-  md.isTrusted = true;
-
-  md.appendMarkdown("**OpenCode Go — Usage Limits**\n\n");
-
-  for (const [label, period] of [
-    ["Session (5h rolling)", summary.session],
-    ["Weekly (Mon–Mon UTC)", summary.weekly],
-    ["Monthly", summary.monthly],
-  ] as [string, PeriodUsage][]) {
-    const bar = progressBar(period.percent);
-    const icon = percentColor(period.percent);
-    const resets = fmtRelativeTime(period.resetsAt);
-    md.appendMarkdown(
-      `${icon} **${label}**\n\n` +
-        `\`${bar}\` ${String(period.percent)}% · ${fmtUsd(period.spent)} / ${fmtUsd(period.limit)} · resets in ${resets}\n\n`,
-    );
-  }
-
-  md.appendMarkdown("---\n\n");
-  md.appendMarkdown(
-    `$(history) **Today:** ${fmtUsd(summary.today.cost)} · ${fmtTokens(summary.today.tokens)} tokens · ${String(summary.today.requests)} req\n\n`,
-  );
-
-  if (summary.yesterday.requests > 0) {
-    md.appendMarkdown(
-      `$(history) **Yesterday:** ${fmtUsd(summary.yesterday.cost)} · ${fmtTokens(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} req\n\n`,
-    );
-  }
-
-  md.appendMarkdown("\n$(info) Click for details");
-  return md;
-}
-
-/** Compact plain-text summary used by Language Status popup. */
-export function formatGoUsageLanguageStatusDetail(summary: UsageSummary): string {
-  const now = new Date();
-
-  const sessionLine = [
-    `Session ${String(summary.session.percent)}%`,
-    `${fmtUsd(summary.session.spent)} / ${fmtUsd(summary.session.limit)}`,
-    `resets in ${fmtRelativeTime(summary.session.resetsAt, now)}`,
-  ].join(" · ");
-
-  const weeklyLine = [
-    `Weekly ${String(summary.weekly.percent)}%`,
-    `${fmtUsd(summary.weekly.spent)} / ${fmtUsd(summary.weekly.limit)}`,
-    `resets in ${fmtRelativeTime(summary.weekly.resetsAt, now)}`,
-  ].join(" · ");
-
-  const monthlyLine = [
-    `Monthly ${String(summary.monthly.percent)}%`,
-    `${fmtUsd(summary.monthly.spent)} / ${fmtUsd(summary.monthly.limit)}`,
-    `resets in ${fmtRelativeTime(summary.monthly.resetsAt, now)}`,
-  ].join(" · ");
-
-  const todayLine = [
-    `Today ${fmtUsd(summary.today.cost)}`,
-    `${fmtTokens(summary.today.tokens)} tokens`,
-    `${String(summary.today.requests)} req`,
-  ].join(" · ");
-
-  return [sessionLine, weeklyLine, monthlyLine, todayLine].join("\n");
-}
-
 /** Build Quick Pick items for the usage panel */
-export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false): vscode.QuickPickItem[] {
+export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false, showRollingMeter = true): vscode.QuickPickItem[] {
   const now = new Date();
   const isEmpty = !summary.hasData;
 
   function periodItem(icon: string, label: string, period: PeriodUsage, resetLabel: string): vscode.QuickPickItem {
     const bar = progressBar(period.percent);
-    const spent = fmtUsd(period.spent);
-    const limit = fmtUsd(period.limit);
-    const resets = fmtRelativeTime(period.resetsAt, now);
+    const spent = formatUsd(period.spent);
+    const limit = formatUsd(period.limit);
+    const resets = formatRelativeTime(period.resetsAt, now);
     return {
       label: `${icon} ${label}`,
       description: `${bar} ${String(period.percent)}%`,
@@ -1108,14 +1448,16 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
   // ── Period bars ──────────────────────────────────────────────────────────
   items.push({ label: "Subscription Limits", kind: vscode.QuickPickItemKind.Separator });
 
-  items.push(
-    periodItem(
-      percentColor(summary.session.percent) + " $(clock)",
-      "Session (5h rolling)",
-      summary.session,
-      fmtDate(summary.session.resetsAt),
-    ),
-  );
+  if (showRollingMeter) {
+    items.push(
+      periodItem(
+        percentColor(summary.session.percent) + " $(clock)",
+        "Session (5h rolling)",
+        summary.session,
+        fmtDate(summary.session.resetsAt),
+      ),
+    );
+  }
 
   items.push(periodItem(percentColor(summary.weekly.percent) + " $(calendar)", "Weekly", summary.weekly, fmtDate(summary.weekly.resetsAt)));
 
@@ -1128,16 +1470,16 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
 
   items.push({
     label: `$(history) Today`,
-    description: fmtUsd(summary.today.cost),
-    detail: `${fmtTokens(summary.today.tokens)} tokens · ${String(summary.today.requests)} requests`,
+    description: formatUsd(summary.today.cost),
+    detail: `${formatTokenCount(summary.today.tokens)} tokens · ${formatCount(summary.today.requests)} requests`,
     alwaysShow: true,
   });
 
   if (summary.yesterday.requests > 0 || isEmpty) {
     items.push({
       label: `$(history) Yesterday`,
-      description: fmtUsd(summary.yesterday.cost),
-      detail: `${fmtTokens(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} requests`,
+      description: formatUsd(summary.yesterday.cost),
+      detail: `${formatTokenCount(summary.yesterday.tokens)} tokens · ${formatCount(summary.yesterday.requests)} requests`,
       alwaysShow: true,
     });
   }
@@ -1150,13 +1492,6 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
     description: "View usage at opencode.ai",
     alwaysShow: true,
     _action: "openConsole",
-  } as vscode.QuickPickItem & { _action: string });
-
-  items.push({
-    label: "$(trash) Reset tracked usage data",
-    description: "Clears all locally tracked data",
-    alwaysShow: true,
-    _action: "resetTracked",
   } as vscode.QuickPickItem & { _action: string });
 
   return items;

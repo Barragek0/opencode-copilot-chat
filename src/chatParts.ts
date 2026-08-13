@@ -5,10 +5,6 @@ export const OPENCODE_USAGE_DATA_MIME = "application/vnd.opencode.usage+json";
 export const COPILOT_USAGE_DATA_MIME = "usage";
 export const OPENCODE_REASONING_DATA_MIME = "application/vnd.opencode.reasoning+json";
 
-export function createUsageDataPart(usage: UsageSnapshot): vscode.LanguageModelDataPart | undefined {
-  return createUsageDataParts(usage)[0];
-}
-
 export function createUsageDataParts(usage: UsageSnapshot): vscode.LanguageModelDataPart[] {
   if (!hasUsageSnapshot(usage)) {
     return [];
