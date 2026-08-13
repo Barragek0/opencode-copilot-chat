@@ -180,9 +180,9 @@
         "opencodego.usageChartDays": {
           "type": "number",
           "default": 14,
-          "minimum": 7,
-          "maximum": 90,
-          "description": "How many days the usage panel charts cover (daily spend / requests / tokens and the per-model breakdown)."
+          "minimum": 0,
+          "maximum": 370,
+          "description": "How many days the usage panel charts cover (daily spend / requests / tokens, per-model and chat-completion breakdowns). 0 = lifetime. The panel's Window button toggles this live (Week / 14 days / Month / Lifetime)."
         },
         "opencodego.usageDayBoundary": {
           "type": "string",

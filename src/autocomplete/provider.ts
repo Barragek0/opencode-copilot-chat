@@ -15,6 +15,8 @@ export interface InlineCompletionProviderOptions {
   engine: CompletionEngine;
   /** Resolve the API key (async; the caller owns caching/fallbacks). */
   resolveApiKey: () => Promise<string | undefined>;
+  /** Called once when a ghost-text suggestion is actually returned to VS Code. */
+  onSuggestion?: () => void;
   /** Whether suggestions are currently enabled (config-driven). */
   isEnabled: () => boolean;
   /** The model to use for suggestions (config-driven). */
@@ -104,6 +106,7 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
           return;
         }
         finish([new vscode.InlineCompletionItem(result.text, new vscode.Range(position, position))]);
+        this.options.onSuggestion?.();
       });
     });
   }

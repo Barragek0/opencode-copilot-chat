@@ -824,4 +824,14 @@ describe("buildUsageSeries", () => {
     const series = buildUsageSeries(rows, entries, 14, dayMs, "cli");
     assert.ok(!series.byModel.some((p) => p.model === "glm-5"));
   });
+
+  it("lifetime windows (days=0) span from the earliest usage day", () => {
+    const series = buildUsageSeries(rows, entries, 0, dayMs, "auto");
+    // earliest row = dayMs - DAY → 2 buckets: yesterday + today
+    assert.equal(series.days.length, 2);
+    assert.equal(series.days[0].dayStart, dayMs - DAY);
+    assert.equal(series.days[1].dayStart, dayMs);
+    assert.equal(series.days[0].requests, 2);
+    assert.equal(series.days[1].requests, 2);
+  });
 });

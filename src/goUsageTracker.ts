@@ -421,9 +421,23 @@ export function buildUsageSeries(
   dayStartMs: number,
   source: UsageTodayYesterdaySource = "auto",
 ): UsageSeries {
-  const dayCount = Math.max(1, Math.floor(days));
-  const firstDay = dayStartMs - (dayCount - 1) * DAY_MS;
-  const buckets: UsageDayPoint[] = Array.from({ length: dayCount }, (_, i) => ({
+  // days > 0: the last `days` days ending at dayStartMs; days <= 0: lifetime
+  // from the earliest recorded usage to today (aligned to the day grid).
+  let firstDay: number;
+  if (days > 0) {
+    firstDay = dayStartMs - (Math.max(1, Math.floor(days)) - 1) * DAY_MS;
+  } else {
+    let earliest = dayStartMs;
+    if (source !== "extension") {
+      for (const row of rows) if (row.createdMs < earliest) earliest = row.createdMs;
+    }
+    if (source !== "cli") {
+      for (const entry of entries) if (entry.timestamp < earliest) earliest = entry.timestamp;
+    }
+    firstDay = dayStartMs - Math.ceil((dayStartMs - earliest) / DAY_MS) * DAY_MS;
+  }
+  const bucketCount = Math.round((dayStartMs - firstDay) / DAY_MS) + 1;
+  const buckets: UsageDayPoint[] = Array.from({ length: bucketCount }, (_, i) => ({
     dayStart: firstDay + i * DAY_MS,
     cost: 0,
     tokens: 0,
@@ -432,8 +446,8 @@ export function buildUsageSeries(
   const byModel = new Map<string, Map<number, ModelDayUsage>>();
 
   const add = (model: string | undefined, timestamp: number, cost: number, tokens: number): void => {
-    const index = Math.floor((timestamp - firstDay) / DAY_MS);
-    if (index < 0 || index >= dayCount) return;
+    const index = Math.round((timestamp - firstDay) / DAY_MS);
+    if (index < 0 || index >= bucketCount) return;
     const day = buckets[index];
     day.cost += cost;
     day.tokens += tokens;

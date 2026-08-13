@@ -12,6 +12,8 @@ import { ChatCompletionEngine } from "./engine";
 import { OpenCodeInlineCompletionProvider } from "./provider";
 import type { CompletionContext, CompletionEngine, CompletionResult } from "./types";
 import {
+  COMPLETION_USAGE_KEY,
+  COMPLETION_USAGE_MAX_DAYS,
   CONFIG_SECTION,
   DEFAULT_INLINE_DEBOUNCE_MS,
   DEFAULT_INLINE_MAX_TOKENS,
@@ -28,6 +30,7 @@ import {
   INLINE_TIMEOUT_MS_SETTING,
 } from "../config";
 import { toFiniteNumber } from "../utils";
+import { bumpCompletionUsage, utcDayStart, type CompletionUsageDay } from "./usage";
 
 export {
   INLINE_SUGGESTIONS_SETTING,
@@ -50,6 +53,8 @@ export interface InlineCompletionsDeps {
   chatCompletionsUrl: string;
   /** Resolve the API key to use (extension secret / BYOK group key). */
   resolveApiKey: () => Promise<string | undefined>;
+  /** Day boundary for the completion counters (defaults to UTC). */
+  resolveCompletionDayStart?: () => number;
   log?: (msg: string) => void;
 }
 
@@ -68,6 +73,32 @@ export function registerInlineCompletions(context: vscode.ExtensionContext, deps
   const log = (msg: string): void => {
     output.appendLine(msg);
   };
+
+  // Per-day suggestion/acceptance counters for the usage panel charts.
+  let completionUsage = context.globalState.get<CompletionUsageDay[]>(COMPLETION_USAGE_KEY, []);
+  const dayStart = (): number => deps.resolveCompletionDayStart?.() ?? utcDayStart(Date.now());
+  const recordCompletion = (kind: "suggested" | "approved"): void => {
+    completionUsage = bumpCompletionUsage(completionUsage, dayStart(), kind, COMPLETION_USAGE_MAX_DAYS);
+    void context.globalState.update(COMPLETION_USAGE_KEY, completionUsage);
+  };
+
+  // Acceptance tracking: `onDidChangeInlineCompletionItems` is not in the
+  // stable API types, so it is guarded at runtime — on hosts that have it,
+  // `didAccept` reports when the user accepted a ghost-text suggestion.
+  const onDidChangeInlineCompletionItems = (
+    vscode.languages as unknown as {
+      onDidChangeInlineCompletionItems?: (listener: (event: { didAccept?: boolean }) => unknown) => vscode.Disposable;
+    }
+  ).onDidChangeInlineCompletionItems;
+  if (typeof onDidChangeInlineCompletionItems === "function") {
+    context.subscriptions.push(
+      onDidChangeInlineCompletionItems((event) => {
+        if (event.didAccept) {
+          recordCompletion("approved");
+        }
+      }),
+    );
+  }
 
   const engine: CompletionEngine = {
     id: "chat-completions",
@@ -93,6 +124,9 @@ export function registerInlineCompletions(context: vscode.ExtensionContext, deps
   const provider = new OpenCodeInlineCompletionProvider({
     engine,
     resolveApiKey: deps.resolveApiKey,
+    onSuggestion: () => {
+      recordCompletion("suggested");
+    },
     isEnabled: () => readSetting(INLINE_SUGGESTIONS_SETTING, false),
     resolveModelId: () => readSetting(INLINE_SUGGESTIONS_MODEL_SETTING, DEFAULT_INLINE_MODEL),
     resolveDebounceMs: () => readNumberSetting(INLINE_DEBOUNCE_MS_SETTING, DEFAULT_INLINE_DEBOUNCE_MS, 50, 2_000),

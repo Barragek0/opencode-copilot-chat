@@ -184,9 +184,13 @@ export const DEFAULT_USAGE_DAY_BOUNDARY = "utc";
 /** How often the usage status bar / panel refresh in the background (seconds). */
 export const SETTING_USAGE_REFRESH_INTERVAL_SECONDS = "usageRefreshIntervalSeconds";
 export const DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS = 60;
-/** How many days the usage panel charts cover. */
+/** How many days the usage panel charts cover (0 = lifetime). */
 export const SETTING_USAGE_CHART_DAYS = "usageChartDays";
 export const DEFAULT_USAGE_CHART_DAYS = 14;
+/** globalState key for the per-day chat-completion usage counters. */
+export const COMPLETION_USAGE_KEY = "opencodego.completionUsage.v1";
+/** How many days of completion history are retained. */
+export const COMPLETION_USAGE_MAX_DAYS = 370;
 
 // ─── Usage profiles (issue #63) ──────────────────────────────────────────────
 

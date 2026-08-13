@@ -48,6 +48,7 @@ import {
 import { providerEnabledSetting } from "./providerEnablement";
 import { isInternalDataPart, isReasoningMarkerPart, readReasoningMarker } from "./chatParts";
 import { registerInlineCompletions } from "./autocomplete";
+import { completionUsageToSeries, type CompletionUsageDay } from "./autocomplete/usage";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
 import { providerModelDisplayName } from "./modelNames";
@@ -61,6 +62,7 @@ import {
   AGENT_HOST_BYOK_ENABLED_SETTING,
   AGENT_HOST_BYOK_MINOR_VERSION,
   CAPACITY_LIMITED_MODEL_NOTES,
+  COMPLETION_USAGE_KEY,
   CONFIG_SECTION,
   DEFAULT_REQUEST_TIMEOUT_SECONDS,
   DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
@@ -1065,6 +1067,11 @@ export function activate(context: vscode.ExtensionContext) {
       // Any usage-display setting change repaints the status bar / panel
       // immediately (no waiting for the next request or refresh tick).
       if (USAGE_DISPLAY_SETTING_KEYS.some((key) => event.affectsConfiguration(`${CONFIG_SECTION}.${key}`))) {
+        if (event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_USAGE_CHART_DAYS}`)) {
+          usageChartWindowDays = vscode.workspace
+            .getConfiguration(CONFIG_SECTION)
+            .get<number>(SETTING_USAGE_CHART_DAYS, DEFAULT_USAGE_CHART_DAYS);
+        }
         refreshGoUsageStatusBar();
         updateWebviewContent();
       }
@@ -1431,6 +1438,14 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
         case "renameProfile":
           void vscode.commands.executeCommand("opencodego.renameActiveProfile");
           break;
+        case "window": {
+          const days = Number((message as { days?: unknown }).days);
+          if (Number.isFinite(days) && days >= 0 && days <= 370) {
+            usageChartWindowDays = days;
+            updateWebviewContent();
+          }
+          break;
+        }
       }
     },
     null,
@@ -1448,6 +1463,10 @@ function jsonForWebview(value: unknown): string {
 
 /** Whether the usage webview has received its initial HTML (data flows via postMessage after that). */
 let usageWebviewRendered = false;
+/** Selected chart window in days (0 = lifetime); the webview toggles it via message. */
+let usageChartWindowDays: number = vscode.workspace
+  .getConfiguration(CONFIG_SECTION)
+  .get<number>(SETTING_USAGE_CHART_DAYS, DEFAULT_USAGE_CHART_DAYS);
 
 /** Build the chart/stat payload shown by the usage webview. */
 function usageWebviewData(): Record<string, unknown> | undefined {
@@ -1455,8 +1474,10 @@ function usageWebviewData(): Record<string, unknown> | undefined {
   const tracker = activeGoUsageTracker();
   if (!tracker) return undefined;
   const s = tracker.getSummary();
-  const chartDays = vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>(SETTING_USAGE_CHART_DAYS, DEFAULT_USAGE_CHART_DAYS);
-  const series = tracker.getUsageSeries(chartDays);
+  const windowDays = usageChartWindowDays;
+  const series = tracker.getUsageSeries(windowDays);
+  const completionDays = contextCompletionUsage();
+  const completions = completionUsageToSeries(completionDays, trackerDayStart(tracker), windowDays);
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const showRolling = usageRollingMeterVisible();
 
@@ -1494,6 +1515,8 @@ function usageWebviewData(): Record<string, unknown> | undefined {
   return {
     profile: activeProfile?.label ?? "OpenCode Go",
     showRename: nonLegacyCount(profilesCache) > 0,
+    windowDays,
+    completions,
     rings,
     stats: {
       total: { label: "Total spend", cost: s.codebase.cost, tokens: s.codebase.tokens, requests: s.codebase.requests },
@@ -1502,8 +1525,21 @@ function usageWebviewData(): Record<string, unknown> | undefined {
     },
     days: series.days,
     byModel: series.byModel,
-    windowDays: chartDays,
   };
+}
+
+/** Read the persisted per-day completion counters. */
+function contextCompletionUsage(): CompletionUsageDay[] {
+  const stored = _extensionContext?.globalState.get<CompletionUsageDay[]>(COMPLETION_USAGE_KEY, []);
+  return Array.isArray(stored) ? stored : [];
+}
+
+/** Day-start used by the current tracker (matches the chart boundary). */
+function trackerDayStart(_tracker: GoUsageTracker): number {
+  const now = new Date();
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get<"utc" | "local">(SETTING_USAGE_DAY_BOUNDARY, "utc") === "local"
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    : Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }
 
 function updateWebviewContent(): void {
@@ -1566,7 +1602,7 @@ function usageWebviewHtml(profileLabel: string): string {
         border-radius: 7px; background:linear-gradient(135deg, var(--amber), var(--coral));
         display:flex; align-items:center; justify-content:center;
         font-family:var(--mono); font-weight:700; font-size: clamp(9px, 1.2vh, 12px);
-        color:#141205; flex:none;
+        line-height:1; color:#141205; flex:none;
       }
       .brand .name{ font-weight:700; font-size: clamp(12px, 1.6vh, 15px); letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       .brand .sub{ color:var(--text-lo); font-size: clamp(9px, 1.1vh, 11px); font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -1640,7 +1676,7 @@ function usageWebviewHtml(profileLabel: string): string {
 
       .legend{ display:flex; gap: clamp(10px, 1.4vh, 16px); flex-wrap:wrap; flex:none; align-items:center; padding: 2px 0 0 2px; }
       .legend .l-item{ display:flex; align-items:center; gap:7px; font-size: clamp(10px, 1.2vh, 12px); line-height:1; color:var(--text-mid); white-space:nowrap; }
-      .legend .l-swatch{ width: clamp(10px, 1.2vh, 12px); height: clamp(10px, 1.2vh, 12px); border-radius:3px; flex:none; }
+      .legend .l-swatch{ width: clamp(10px, 1.2vh, 12px); height: clamp(10px, 1.2vh, 12px); border-radius:3px; flex:none; display:inline-block; }
       .legend .l-more{ color:var(--text-lo); font-size: clamp(9px, 1.05vh, 11px); }
 
       @media (max-width: 620px){
@@ -1656,9 +1692,10 @@ function usageWebviewHtml(profileLabel: string): string {
       <div class="topbar">
         <div class="brand">
           <div class="mark">OC</div>
-          <div class="name" id="brandName">${escapeHtml(profileLabel)} — Usage</div>
+          <div class="name" id="brandName">${escapeHtml(profileLabel)}</div>
         </div>
         <div class="actions">
+          <button class="btn" id="btnWindow" title="Switch the chart window: week / 14 days / month / lifetime">14 days</button>
           <button class="btn" id="btnTargets" title="Set manual spent targets for Session / Weekly / Monthly">Set targets</button>
           <button class="btn" id="btnRename" title="Rename the active profile" style="display:none">Rename</button>
           <button class="btn primary" id="btnRefresh" title="Refresh usage data now">Refresh</button>
@@ -1674,6 +1711,8 @@ function usageWebviewHtml(profileLabel: string): string {
             <button class="tab-btn" data-metric="requests"><span class="sw" style="background:var(--blue)"></span>Requests</button>
             <button class="tab-btn" data-metric="tokens"><span class="sw" style="background:var(--teal)"></span>Tokens</button>
             <button class="tab-btn" data-metric="models"><span class="sw" style="background:var(--coral)"></span>By model</button>
+            <button class="tab-btn" data-metric="suggested"><span class="sw" style="background:var(--violet)"></span>Suggested</button>
+            <button class="tab-btn" data-metric="approved"><span class="sw" style="background:#7fd1a8"></span>Approved</button>
           </div>
           <div class="stat-chips" id="statChips"></div>
         </div>
@@ -1745,12 +1784,24 @@ function usageWebviewHtml(profileLabel: string): string {
           return '$' + String(Math.round(v * 100) / 100);
         }
         function metricValues(m) {
-          return DATA.days.map(function (d) { return m === 'spend' ? d.cost : m === 'requests' ? d.requests : d.tokens; });
+          if (m === 'spend') return DATA.days.map(function (d) { return d.cost; });
+          if (m === 'requests') return DATA.days.map(function (d) { return d.requests; });
+          if (m === 'tokens') return DATA.days.map(function (d) { return d.tokens; });
+          return DATA.completions.map(function (d) { return m === 'suggested' ? d.suggested : d.approved; });
         }
         function metricFmt(m) {
-          return m === 'spend' ? fmtUsd : m === 'requests' ? fmtCount : fmtTokens;
+          if (m === 'spend') return fmtUsd;
+          return fmtCount;
         }
-        function metricUnit(m) { return m === 'spend' ? '' : m === 'requests' ? ' requests' : ' tokens'; }
+        function metricUnit(m) {
+          if (m === 'spend') return '';
+          if (m === 'requests') return ' requests';
+          if (m === 'tokens') return ' tokens';
+          return m === 'suggested' ? ' suggestions' : ' approvals';
+        }
+        function metricColor(m) {
+          return m === 'spend' ? '#e3b341' : m === 'requests' ? '#5aa9ff' : m === 'tokens' ? '#3fdbb0' : m === 'suggested' ? '#a98ef9' : '#7fd1a8';
+        }
         function metricTotal(m) {
           var vals = metricValues(m);
           return vals.reduce(function (a, b) { return a + b; }, 0);
@@ -1778,7 +1829,7 @@ function usageWebviewHtml(profileLabel: string): string {
           var maxVal = niceMax(Math.max.apply(null, vals) * 1.15);
           var axis = axisTicks(maxVal, 4);
           maxVal = axis.top;
-          var color = m === 'spend' ? '#e3b341' : m === 'requests' ? '#5aa9ff' : '#3fdbb0';
+          var color = metricColor(m);
           var fmt = metricFmt(m), unit = metricUnit(m);
           var fmtAxis = m === 'spend' ? fmtAxisUsd : fmt;
           var n = DATA.days.length;
@@ -1814,22 +1865,24 @@ function usageWebviewHtml(profileLabel: string): string {
           svg.appendChild(el('path', { d: areaD, fill: 'url(#grad)', stroke: 'none' }));
           svg.appendChild(el('path', { d: pathD, fill: 'none', stroke: color, 'stroke-width': '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
 
-          // cursor-follow nearest-day tooltip + visible dots
-          var hits = points.map(function (p, i) {
-            var c = el('circle', { cx: p.x, cy: p.y, r: '10', fill: 'transparent', stroke: 'none' });
-            c.addEventListener('mousemove', function (ev) { showDay(ev, p, i); });
-            c.addEventListener('mouseleave', hideTooltip);
-            svg.appendChild(c);
-            return c;
-          });
-          function showDay(ev, p, i) {
-            svg.querySelectorAll('.dot').forEach(function (d) { d.remove(); });
-            svg.appendChild(el('circle', { 'class': 'dot', cx: p.x, cy: p.y, r: '3.5', fill: color, stroke: '#161a20', 'stroke-width': '2' }));
+          // whole-chart hover: nearest day gets a guide line, dot and tooltip
+          var guide = el('line', { y1: padT, y2: padT + plotH, stroke: 'rgba(255,255,255,0.18)', 'stroke-width': '1', 'stroke-dasharray': '3 3' });
+          var dot = el('circle', { r: '3.5', fill: color, stroke: '#161a20', 'stroke-width': '2' });
+          var overlay = el('rect', { x: padL, y: padT, width: plotW, height: plotH, fill: 'transparent' });
+          overlay.addEventListener('mousemove', function (ev) {
+            var r = svg.getBoundingClientRect();
+            var px = ev.clientX - r.left;
+            var best = points[0], bd = Infinity;
+            points.forEach(function (p) { var d = Math.abs(p.x - px); if (d < bd) { bd = d; best = p; } });
+            guide.setAttribute('x1', String(best.x)); guide.setAttribute('x2', String(best.x));
+            dot.setAttribute('cx', String(best.x)); dot.setAttribute('cy', String(best.y));
+            svg.appendChild(guide); svg.appendChild(dot);
             showTooltip(ev.clientX, ev.clientY,
-              '<span class="t-line">' + dayLabel(p.day.dayStart) + '</span><b>' + fmt(p.v) + '</b>' + unit +
-              '<div class="t-sub">' + fmtCount(p.day.tokens) + ' tokens · ' + fmtCount(p.day.requests) + ' requests</div>');
-          }
-          void hits;
+              '<span class="t-line">' + dayLabel(best.day.dayStart) + '</span><b>' + fmt(best.v) + '</b>' + unit +
+              '<div class="t-sub">' + fmtCount(best.day.tokens) + ' tokens · ' + fmtCount(best.day.requests) + ' requests</div>');
+          });
+          overlay.addEventListener('mouseleave', function () { guide.remove(); dot.remove(); hideTooltip(); });
+          svg.appendChild(overlay);
           svg.appendChild(el('line', { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: '#242a33', 'stroke-width': '1' }));
         }
 
@@ -1848,7 +1901,7 @@ function usageWebviewHtml(profileLabel: string): string {
           });
           var models = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; });
           if (models.length === 0) {
-            svg.appendChild(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '11' }, 'No usage in the last ' + DATA.windowDays + ' days'));
+            svg.appendChild(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '11' }, 'No model usage in the selected window'));
             return;
           }
 
@@ -1906,6 +1959,50 @@ function usageWebviewHtml(profileLabel: string): string {
 
           svg.appendChild(el('line', { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: '#242a33', 'stroke-width': '1' }));
 
+          // whole-chart hover: nearest day highlights every model's point and
+          // lists each model's spend for that day
+          var guide2 = el('line', { y1: padT, y2: padT + plotH, stroke: 'rgba(255,255,255,0.18)', 'stroke-width': '1', 'stroke-dasharray': '3 3' });
+          var dots2 = [];
+          var overlay2 = el('rect', { x: padL, y: padT, width: plotW, height: plotH, fill: 'transparent' });
+          var modelPts = [];
+          series.forEach(function (s, si) {
+            var color2 = MODEL_COLORS[si % MODEL_COLORS.length];
+            s.values.forEach(function (p, i) {
+              modelPts.push({
+                x: padL + step * i,
+                y: padT + plotH - (p.cost / maxVal) * plotH,
+                model: s.model,
+                color: color2,
+                p: p,
+                i: i
+              });
+            });
+          });
+          overlay2.addEventListener('mousemove', function (ev) {
+            var r = svg.getBoundingClientRect();
+            var px = ev.clientX - r.left;
+            var best = null, bd = Infinity;
+            modelPts.forEach(function (pt) { var d = Math.abs(pt.x - px); if (d < bd) { bd = d; best = pt; } });
+            if (!best) return;
+            guide2.setAttribute('x1', String(best.x)); guide2.setAttribute('x2', String(best.x));
+            svg.appendChild(guide2);
+            dots2.forEach(function (d2) { d2.remove(); });
+            dots2.length = 0;
+            var lines2 = [];
+            modelPts.forEach(function (pt) {
+              if (pt.i !== best.i) return;
+              var dd = el('circle', { cx: pt.x, cy: pt.y, r: '3.5', fill: pt.color, stroke: '#161a20', 'stroke-width': '2' });
+              svg.appendChild(dd);
+              dots2.push(dd);
+              if (pt.p.cost > 0) lines2.push('<div class="t-sub"><span class="l-swatch" style="background:' + pt.color + ';display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px"></span>' + pt.model + ': <b>' + fmtUsd(pt.p.cost) + '</b></div>');
+            });
+            showTooltip(ev.clientX, ev.clientY,
+              '<span class="t-line">' + dayLabel(best.p.dayStart) + '</span>' +
+              (lines2.length ? lines2.join('') : '<span class="t-sub">No model spend this day</span>'));
+          });
+          overlay2.addEventListener('mouseleave', function () { guide2.remove(); dots2.forEach(function (d2) { d2.remove(); }); dots2.length = 0; hideTooltip(); });
+          svg.appendChild(overlay2);
+
           // legend (up to 8 models, ranked by total spend)
           var legend = document.getElementById('legend');
           legend.innerHTML = series.slice(0, 8).map(function (s, i) {
@@ -1919,12 +2016,24 @@ function usageWebviewHtml(profileLabel: string): string {
           var fmt = metricFmt(key), unit = metricUnit(key);
           if (key === 'models') {
             chips.innerHTML =
-              '<div class="stat-chip"><div class="k">Total spend</div><div class="v">' + fmtUsd(metricTotal('spend')) + '</div></div>' +
-              '<div class="stat-chip"><div class="k">Window</div><div class="v">' + DATA.windowDays + ' days</div></div>';
+              '<div class="stat-chip"><div class="k">Total spend</div><div class="v">' + fmtUsd(metricTotal('spend')) + '</div></div>';
             drawModelLines();
             return;
           }
           document.getElementById('legend').innerHTML = '';
+          if (key === 'suggested' || key === 'approved') {
+            var comp = DATA.completions;
+            var last = comp.length ? comp[comp.length - 1] : { suggested: 0, approved: 0 };
+            var prev = comp.length > 1 ? comp[comp.length - 2] : { suggested: 0, approved: 0 };
+            var total = 0;
+            comp.forEach(function (d) { total += key === 'suggested' ? d.suggested : d.approved; });
+            chips.innerHTML =
+              '<div class="stat-chip"><div class="k">Today</div><div class="v">' + fmtCount(key === 'suggested' ? last.suggested : last.approved) + '</div></div>' +
+              '<div class="stat-chip"><div class="k">Yesterday</div><div class="v">' + fmtCount(key === 'suggested' ? prev.suggested : prev.approved) + '</div></div>' +
+              '<div class="stat-chip"><div class="k">Total ' + key + '</div><div class="v">' + fmtCount(total) + '</div></div>';
+            drawLine(key);
+            return;
+          }
           var st = DATA.stats;
           var totalKey = key === 'spend' ? 'total' : key;
           chips.innerHTML =
@@ -1988,11 +2097,35 @@ function usageWebviewHtml(profileLabel: string): string {
           var msg = ev.data;
           if (!msg || msg.type !== 'usage') return;
           DATA = msg.data;
-          document.getElementById('brandName').textContent = DATA.profile + ' \u2014 Usage';
+          document.getElementById('brandName').textContent = DATA.profile;
           document.getElementById('btnRename').style.display = DATA.showRename ? '' : 'none';
+          windowBtn.textContent = windowLabel(DATA.windowDays);
           refreshBtn.textContent = 'Refresh';
           renderRings();
           render(current);
+        });
+
+        document.getElementById('brandName').textContent = DATA.profile;
+
+        // window toggle: week -> 14 days -> month -> lifetime
+        var WINDOWS = [
+          { days: 7, label: 'Week' },
+          { days: 14, label: '14 days' },
+          { days: 30, label: 'Month' },
+          { days: 0, label: 'Lifetime' }
+        ];
+        function windowLabel(days) {
+          for (var i = 0; i < WINDOWS.length; i++) if (WINDOWS[i].days === days) return WINDOWS[i].label;
+          return days + ' days';
+        }
+        var windowBtn = document.getElementById('btnWindow');
+        windowBtn.textContent = windowLabel(DATA.windowDays);
+        windowBtn.addEventListener('click', function () {
+          var idx = 0;
+          for (var i = 0; i < WINDOWS.length; i++) if (WINDOWS[i].days === DATA.windowDays) idx = i;
+          var next = WINDOWS[(idx + 1) % WINDOWS.length];
+          windowBtn.textContent = next.label;
+          vscode.postMessage({ type: 'window', days: next.days });
         });
 
         renderRings();
