@@ -2,7 +2,7 @@
 
 # 🚀 OpenCode for GitHub Copilot Chat
 
-**Use 30+ frontier AI models** (DeepSeek V4, Kimi K2.6, GLM-5.1, GPT-5.5, Claude Opus 4.7, Gemini 3.5, Grok…) in GitHub Copilot Chat — **BYOK**
+**Use 30+ frontier AI models** (DeepSeek V4, Kimi K3, GLM-5.2, GPT-5.6, Claude Opus 5, Gemini 3.6, Grok 4.5…) in GitHub Copilot Chat — **BYOK**
 
 **Bring Your Own Key (BYOK)** · OpenCode Zen (free + paid models) or Go ($10/mo subscription) · Works with native Copilot Agent Mode
 
@@ -23,25 +23,26 @@
 > **💡 The elevator pitch**
 >
 > **Copilot Chat is great — but its premium models cost $39/mo (Pro+), and the free tier is rate-limited.**
-> This extension plugs **OpenCode's model gateway** into Copilot Chat's model picker. **OpenCode Zen** gives you 2-5 rotating free models (Big Pickle is always free; DeepSeek V4 Flash, MiMo-V2.5, and others rotate) plus paid models like Claude Opus, GPT-5.5, and Gemini at pay-as-you-go rates. **OpenCode Go** ($10/mo, $5 first month promo) gives you a curated set of open models (DeepSeek V4 Pro, Kimi K2.6, GLM-5.1, Qwen3.7 Max, MiMo V2.5 Pro) with generous usage limits. You keep the native Copilot UI, tool-calling, and Agent Mode — you just get **way more models**, often **cheaper than Copilot Pro+**.
+> This extension plugs **OpenCode's model gateway** into Copilot Chat's model picker. **OpenCode Zen** gives you rotating free models (Big Pickle is currently free; DeepSeek V4 Flash, MiMo-V2.5, and others rotate) plus paid models like Claude Opus, GPT-5.5, and Gemini at pay-as-you-go rates. **OpenCode Go** ($10/mo, $5 first month promo) gives you a curated set of open models (DeepSeek V4 Pro, Kimi K3, GLM-5.2, Qwen3.8 Max, MiMo V2.5 Pro) with generous usage limits. You keep the native Copilot UI, tool-calling, and Agent Mode — you just get **way more models**, often **cheaper than Copilot Pro+**.
 
 ---
 
 ## 🔥 Why you'll love it
 
-|                                  | What you get                                                                                                                                                                                                                                                            |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 💸 **Cheaper than Copilot Pro+** | VS Code + OpenCode **Zen free** models = **$0** for 2-5 rotating models (Big Pickle always free; DeepSeek V4 Flash, MiMo-V2.5, and others rotate). Paid Zen models (Claude Opus, GPT-5.5) available at pay-as-you-go rates. Go subscription **$10/mo** ($5 first month) |
-| 🌍 **30+ frontier models**       | DeepSeek V4, Kimi K2.6, GLM-5.1, Qwen3.7 Max, MiMo V2.5, MiniMax M2.7, Big Pickle, Nemotron — **all in one picker**                                                                                                                                                     |
-| 🤖 **Full Agent Mode**           | Tool-calling (read files, edit, run terminal) works natively — not just chat. Models also appear in the **Agents window** (Copilot CLI session)                                                                                                                         |
-| 🧠 **Thinking controls**         | Per-model reasoning effort (DeepSeek `max`, Qwen `thinking_budget`, MiniMax `on/off`, Mimo `low/med/high`)                                                                                                                                                              |
-| 🖼️ **Vision proxy**              | Text-only models can "see" images via a configured vision model. Run **OpenCode Go: Configure Vision Proxy** from the Command Palette to set it up.                                                                                                                     |
-| 📊 **Live usage tracking**       | Status bar shows Go subscription burn-rate across 5h / weekly / monthly tiers                                                                                                                                                                                           |
-| 🔌 **Dual providers**            | OpenCode **Go** ($10/mo subscription) + OpenCode **Zen** (free + paid models) — run both at once, switch instantly                                                                                                                                                      |
-| 🎯 **Smart routing**             | Each model family auto-routes to its native transport (`/responses`, `/messages`, `streamGenerateContent`, `/chat/completions`)                                                                                                                                         |
-| 🖼️ **Vision + PDF + Audio**      | Multimodal models pass through image, PDF, audio, and video inputs. Oversized images auto-resize to 2000×2000 / 5MB to match the gateway contract.                                                                                                                      |
-| 📐 **Context-size picker**       | Kimi K3 and other tiered-context models expose `256K` vs full-window selection in the per-model configuration, with the cheaper tier selected by default.                                                                                                               |
-| 🔒 **Your key, your control**    | API key stored in VS Code SecretStorage — never leaves your machine                                                                                                                                                                                                     |
+|                                  | What you get                                                                                                                                                                                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 💸 **Cheaper than Copilot Pro+** | VS Code + OpenCode **Zen free** models = **$0** for rotating free models (Big Pickle, DeepSeek V4 Flash, MiMo-V2.5, and others). Paid Zen models (Claude Opus, GPT-5.6) available at pay-as-you-go rates. Go subscription **$10/mo** ($5 first month) |
+| 🌍 **30+ frontier models**       | DeepSeek V4, Kimi K3, GLM-5.2, Qwen3.8 Max, MiMo V2.5, MiniMax M3, Grok 4.5, Big Pickle — **all in one picker**                                                                                                                                       |
+| 🤖 **Full Agent Mode**           | Tool-calling (read files, edit, run terminal) works natively — not just chat. Models also appear in the **Agents window** (Copilot CLI session)                                                                                                       |
+| 🧠 **Thinking controls**         | Per-model reasoning effort (DeepSeek `max`, Qwen `thinking_budget`, MiniMax `on/off`, Mimo `low/med/high`)                                                                                                                                            |
+| 🖼️ **Vision proxy**              | Text-only models can "see" images via a configured vision model — per-image descriptions are cached & reused across turns to save quota. Run **OpenCode Go: Configure Vision Proxy** to set it up.                                                    |
+| 📊 **Live usage tracking**       | Status bar shows Go subscription burn-rate across 5h / weekly / monthly tiers                                                                                                                                                                         |
+| 🔌 **Dual providers**            | OpenCode **Go** ($10/mo subscription) + OpenCode **Zen** (free + paid models) — run both at once, switch instantly                                                                                                                                    |
+| 🪫 **Provider on/off**           | Remove or re-add **OpenCode Go** / **OpenCode Zen** from Language Models & every picker anytime — your API keys and BYOK groups are kept, so re-enabling restores everything                                                                          |
+| 🎯 **Smart routing**             | Each model family auto-routes to its native transport (`/responses`, `/messages`, `streamGenerateContent`, `/chat/completions`)                                                                                                                       |
+| 🖼️ **Vision + PDF + Audio**      | Multimodal models pass through image, PDF, audio, and video inputs. Oversized images auto-resize to 2000×2000 / 5MB to match the gateway contract.                                                                                                    |
+| 📐 **Context-size picker**       | Kimi K3 and other tiered-context models expose `256K` vs full-window selection in the per-model configuration, with the cheaper tier selected by default.                                                                                             |
+| 🔒 **Your key, your control**    | API key stored in VS Code SecretStorage — never leaves your machine                                                                                                                                                                                   |
 
 ---
 
@@ -61,9 +62,9 @@
 1. **Install or update [VS Code](https://code.visualstudio.com/)** to version 1.125 or newer. OpenCode BYOK chat works without a GitHub sign-in or Copilot plan.
 2. **Install this extension** from the VS Code Marketplace (or press `F5` in this repo for dev mode).
 3. **Get an API key:**
-   - **Free models:** Sign up at [opencode.ai](https://opencode.ai) → grab an **OpenCode Zen** key. 2-5 models are truly free (Big Pickle is always free; DeepSeek V4 Flash Free, MiMo-V2.5 Free, and others rotate).
+   - **Free models:** Sign up at [opencode.ai](https://opencode.ai) → grab an **OpenCode Zen** key. Several models are truly free (Big Pickle, DeepSeek V4 Flash Free, MiMo-V2.5 Free, and others rotate).
    - **Paid Zen models (optional):** Add a payment method to your Zen account to unlock Claude Opus, GPT-5.5, Gemini, and other paid models at pay-as-you-go rates. Adding $20+ balance also improves rate limits on free models.
-   - **OpenCode Go (optional):** Subscribe to **OpenCode Go** ($10/mo, $5 first month promo) for curated open models like DeepSeek V4 Pro, Kimi K2.6, GLM-5.1, Qwen3.7 Max, MiMo V2.5 Pro.
+   - **OpenCode Go (optional):** Subscribe to **OpenCode Go** ($10/mo, $5 first month promo) for curated open models like DeepSeek V4 Pro, Kimi K3, GLM-5.2, Qwen3.8 Max, MiMo V2.5 Pro.
 4. **Open Copilot Chat** (Cmd/Ctrl+Shift+I, or click the Copilot icon).
 5. **Click the model picker** (current model name) → **Add Models…**
 6. **Select** **OpenCode Go** or **OpenCode Zen**.
@@ -99,58 +100,76 @@ The extension fetches **live model lists** on every startup from:
 | Provider         | Endpoint                               | Cost                                                                          |
 | ---------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
 | **OpenCode Go**  | `https://opencode.ai/zen/go/v1/models` | $10/mo ($5 first month promo) — usage limits: 5h/$12, weekly/$30, monthly/$60 |
-| **OpenCode Zen** | `https://opencode.ai/zen/v1/models`    | 2-5 rotating free models + pay-as-you-go for premium models                   |
+| **OpenCode Zen** | `https://opencode.ai/zen/v1/models`    | rotating free models + pay-as-you-go for premium models                       |
 
 ### ⭐ OpenCode Go (subscription — $10/mo, $5 first month promo)
 
-| Model                                   |       Context | Max Output | Highlights                  |
-| --------------------------------------- | ------------: | ---------: | --------------------------- |
-| `deepseek-v4-pro` / `deepseek-v4-flash` | **1,000,000** |    384,000 | 🧠 Reasoning `off`→`max`    |
-| `qwen3.7-max`                           | **1,000,000** |     65,536 | 🧠 `thinking_budget` 4K–82K |
-| `mimo-v2.5-pro` / `mimo-v2-pro`         | **1,048,576** |    128,000 | 🧠 Effort `low`→`high`      |
-| `mimo-v2.5`                             | **1,000,000** |    128,000 | Fast & cheap                |
-| `kimi-k2.6` / `kimi-k2.5`               |       262,144 |     65,536 | 🧠 `on`/`off`               |
-| `minimax-m3`                            |       512,000 |    131,072 | 🧠 `on`/`off`               |
-| `minimax-m2.7` / `minimax-m2.5`         |       204,800 |    131,072 | 🧠 `on`/`off`               |
-| `minimax-m2.1` / `minimax-m2`           |       204,800 |    131,072 | 🧠 `on`/`off`               |
-| `glm-5.1` / `glm-5`                     |       202,752 |     32,768 | 🧠 `on`/`off`               |
-| `hy3-preview`                           |       256,000 |     64,000 | Preview                     |
-| `ring-2.6-1t`                           |       262,000 |     66,000 | Large context               |
+Curated open coding models, refreshed live from the endpoint. Deprecated/legacy models (e.g. `glm-5`, `kimi-k2.5`, `minimax-m2.5`, `mimo-v2-pro`, `mimo-v2-omni`, `qwen3.5-plus`) are filtered before registration.
+
+| Model                                   |       Context | Max Output | Highlights               |
+| --------------------------------------- | ------------: | ---------: | ------------------------ |
+| `deepseek-v4-pro` / `deepseek-v4-flash` | **1,000,000** |    384,000 | 🧠 Reasoning `off`→`max` |
+| `gpt-5.6-luna`                          | **1,050,000** |    128,000 | 🛣️ `/responses` API      |
+| `grok-4.5`                              |       500,000 |    500,000 | 🧠 + 🖼️ Vision           |
+| `glm-5.2`                               | **1,000,000** |    131,072 | 🧠 `off`/`high`/`max`    |
+| `glm-5.1`                               |       202,752 |     32,768 | 🧠 `off`/`high`/`max`    |
+| `kimi-k3`                               | **1,048,576** |    131,072 | 🧠 + 🖼️ Vision           |
+| `kimi-k2.7-code`                        |       262,144 |    262,144 | 🧠 Always-on thinking    |
+| `kimi-k2.6`                             |       262,144 |     65,536 | 🧠 + 🖼️ Vision           |
+| `mimo-v2.5-pro` / `mimo-v2.5`           | **1,048,576** |    128,000 | 🧠 Effort `low`→`high`   |
+| `minimax-m3`                            | **1,000,000** |    131,072 | 🧠 + 🖼️ Vision           |
+| `minimax-m2.7`                          |       204,800 |    131,072 | 🧠 `on`/`off`            |
+| `qwen3.8-max`                           | **1,000,000** |    131,072 | 🧠 `thinking_budget`     |
+| `qwen3.7-max`                           | **1,000,000** |     65,536 | 🧠 `thinking_budget`     |
+| `qwen3.7-plus` / `qwen3.6-plus`         | **1,000,000** |     65,536 | 🧠 + 🖼️ Vision           |
+| `hy3` / `hy3-preview`                   |       256,000 |     64,000 | 🧠 Preview               |
+
+> **Usage:** most Go models include ~$60/mo of usage; `grok-4.5`, `gpt-5.6-luna`, `kimi-k3`, `qwen3.8-max`, `deepseek-v4-pro` and `mimo-v2.5-pro` include ~$15/mo. If you hit a limit, keep using the free Zen models (or enable the "Use balance" option in the Zen console).
 
 ### 🆓 OpenCode Zen — Free models (no payment needed)
 
-OpenCode Zen offers **2-5 rotating free models** — no balance required. **Big Pickle is always free**; other models rotate (DeepSeek V4 Flash Free, MiMo-V2.5 Free, Nemotron, etc.). Without a balance, rate limits are low. Adding $20+ to your Zen balance significantly improves rate limits on free models.
+OpenCode Zen offers **rotating free models** — no balance required. Currently free: **Big Pickle** (stealth model), DeepSeek V4 Flash Free, MiMo-V2.5 Free, Hy3 Free, Laguna S 2.1 Free, Ling-3.0-tiny Free, Nemotron 3 Ultra Free, and Nemotron 3.5 Lightning Free. Without a balance, rate limits are low. Adding $20+ to your Zen balance significantly improves rate limits on free models.
 
-> **Note:** Free models rotate periodically. The table below shows current offerings, but availability may change. Big Pickle is the only model guaranteed to always be free.
+> **Note:** Per the OpenCode docs, free models are all offered **for a limited time** and rotate periodically. The table shows current offerings — availability may change.
 
-| Model                    | Context | Max Output | Vendor                       |
-| ------------------------ | ------: | ---------: | ---------------------------- |
-| `big-pickle`             | 200,000 |    128,000 | 🥒 Mystery box (always free) |
-| `deepseek-v4-flash-free` | 200,000 |    128,000 | DeepSeek                     |
-| `mimo-v2.5-free`         | 200,000 |    128,000 | Xiaomi                       |
-| `nemotron-3-super-free`  | 204,800 |    128,000 | NVIDIA                       |
-| `north-mini-code-free`   | 131,072 |    131,072 | Cohere                       |
+| Model                         |   Context | Max Output | Vendor     |
+| ----------------------------- | --------: | ---------: | ---------- |
+| `big-pickle`                  |   200,000 |     32,000 | 🥒 Stealth |
+| `deepseek-v4-flash-free`      |   200,000 |    128,000 | DeepSeek   |
+| `mimo-v2.5-free`              |   200,000 |     32,000 | Xiaomi     |
+| `hy3-free`                    |   190,000 |     64,000 | —          |
+| `laguna-s-2.1-free`           |   256,000 |     32,000 | —          |
+| `ling-3.0-tiny-free`          |   262,144 |     32,768 | —          |
+| `nemotron-3-ultra-free`       | 1,000,000 |    128,000 | NVIDIA     |
+| `nemotron-3.5-lightning-free` |   262,144 |    262,144 | NVIDIA     |
 
 ### 💰 OpenCode Zen — Paid models (requires balance)
 
-Add a payment method to your Zen account to unlock these models at pay-as-you-go rates.
+Add a payment method to your Zen account to unlock these models at pay-as-you-go rates. OpenCode passes provider price drops through at cost. Prices per 1M tokens.
 
-| Model                                                    |           Context | Max Output | Input / Output per 1M tokens |
-| -------------------------------------------------------- | ----------------: | ---------: | ---------------------------- |
-| `claude-opus-4-7` / `claude-opus-4-6`                    |     **1,000,000** |    128,000 | $5 / $25                     |
-| `claude-sonnet-4-6` / `claude-sonnet-4-5`                |     **1,000,000** |     64,000 | $3 / $15                     |
-| `claude-haiku-4-5`                                       |           200,000 |     64,000 | $1 / $5                      |
-| `gpt-5.5` / `gpt-5.5-pro`                                |     **1,050,000** |    128,000 | $5 / $30                     |
-| `gpt-5.4` / `gpt-5.4-pro` / `gpt-5.4-mini`               | 400,000–1,050,000 |    128,000 | $0.75–$30 / $4.50–$180       |
-| `gpt-5.3-codex` / `gpt-5.2`                              |           400,000 |    128,000 | $1.75 / $14                  |
-| `gpt-5.1` / `gpt-5` / `gpt-5-nano`                       |           400,000 |    128,000 | $0.05–$1.07 / $0.40–$8.50    |
-| `gemini-3.5-flash` / `gemini-3.1-pro` / `gemini-3-flash` |     **1,048,576** |     65,536 | $0.50–$4 / $3–$18            |
-| `grok-build-0.1`                                         |           256,000 |    256,000 | $1 / $2                      |
-| `qwen3.7-max` / `qwen3.6-plus` / `qwen3.5-plus`          | 262,144–1,000,000 |     65,536 | $0.20–$7.50                  |
-| `deepseek-v4-pro` / `deepseek-v4-flash`                  |     **1,000,000** |    384,000 | $0.14–$3.48                  |
-| `kimi-k2.6` / `kimi-k2.5`                                |           262,144 |     65,536 | $0.60–$4.00                  |
-| `glm-5.1` / `glm-5`                                      |           202,752 |     32,768 | $1.00–$4.40                  |
-| `minimax-m2.7` / `minimax-m2.5`                          |           204,800 |    131,072 | $0.30 / $1.20                |
+| Model                                                                                                   |           Context | Max Output | Input / Output per 1M tokens |
+| ------------------------------------------------------------------------------------------------------- | ----------------: | ---------: | ---------------------------- |
+| `claude-fable-5`                                                                                        |     **1,000,000** |    128,000 | $10 / $50                    |
+| `claude-opus-5` / `claude-opus-4-8` / `claude-opus-4-7` / `claude-opus-4-6`                             |     **1,000,000** |    128,000 | $5 / $25                     |
+| `claude-sonnet-5`                                                                                       |     **1,000,000** |    128,000 | $2 / $10                     |
+| `claude-sonnet-4-6` / `claude-sonnet-4-5`                                                               |     **1,000,000** |     64,000 | $3 / $15                     |
+| `claude-haiku-4-5`                                                                                      |           200,000 |     64,000 | $1 / $5                      |
+| `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna`                                                        |     **1,050,000** |    128,000 | $0.20–$5 / $1.20–$30         |
+| `gpt-5.5` / `gpt-5.4`                                                                                   |     **1,050,000** |    128,000 | $2.50–$5 / $15–$30           |
+| `gpt-5.5-pro` / `gpt-5.4-pro`                                                                           |     **1,050,000** |    128,000 | $30 / $180                   |
+| `gpt-5.4-mini` / `gpt-5.4-nano` / `gpt-5.3-codex` / `gpt-5.2` / `gpt-5.1` / `gpt-5` / `gpt-5-nano`      |           400,000 |    128,000 | $0.05–$1.75 / $0.40–$14      |
+| `gemini-3.6-flash` / `gemini-3.5-flash` / `gemini-3.5-flash-lite` / `gemini-3.1-pro` / `gemini-3-flash` |     **1,048,576** |     65,536 | $0.30–$2 / $2.50–$12         |
+| `grok-4.5`                                                                                              |           500,000 |    500,000 | $2 / $6                      |
+| `grok-build-0.1`                                                                                        |           256,000 |    256,000 | $1 / $2                      |
+| `deepseek-v4-pro` / `deepseek-v4-flash`                                                                 |     **1,000,000** |    384,000 | $0.14–$1.74 / $0.28–$3.48    |
+| `qwen3.7-max` / `qwen3.7-plus` / `qwen3.6-plus` / `qwen3.5-plus`                                        | 262,144–1,000,000 |     65,536 | $0.20–$2.50 / $1.20–$7.50    |
+| `kimi-k3`                                                                                               |     **1,048,576** |    131,072 | $3 / $15                     |
+| `kimi-k2.7-code`                                                                                        |           262,144 |    262,144 | $0.95 / $4                   |
+| `kimi-k2.6`                                                                                             |           262,144 |     65,536 | $0.95 / $4                   |
+| `glm-5.2`                                                                                               |     **1,000,000** |    131,072 | $1.40 / $4.40                |
+| `glm-5.1`                                                                                               |           204,800 |    131,072 | $1.40 / $4.40                |
+| `minimax-m3`                                                                                            |           512,000 |    128,000 | $0.30 / $1.20                |
+| `minimax-m2.7`                                                                                          |           204,800 |    131,072 | $0.30 / $1.20                |
 
 > Set `opencodego.freeOnly: false` to show paid Zen models in the picker (default shows only free models).
 
@@ -187,17 +206,17 @@ All Qwen models use `/chat/completions` because they use OpenAI-native tool-call
 
 GitHub Copilot has four tiers now — **Free**, **Pro ($10/mo)**, **Pro+ ($39/mo)**, and **Max ($100/mo)**. Here's how BYOK via OpenCode compares:
 
-|                                  | **Copilot Free**                          | **Copilot Pro $10/mo**                 | **Copilot Pro+ $39/mo**    | **OpenCode for Copilot Chat**                                                                                 |
-| -------------------------------- | ----------------------------------------- | -------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| 💰 **Cost**                      | $0                                        | $10/mo                                 | $39/mo                     | **$0** with free Zen models · Go is **$10/mo** subscription                                                   |
-| 🤖 **Models**                    | GPT-5 mini, Haiku 4.5 (2,000 completions) | Pro catalog + Claude Code/Codex agents | Premium (Opus)             | **30+ models**: DeepSeek V4, Kimi K2.6, GLM-5.1, Qwen3.7, MiMo V2.5, MiniMax M2.7, + 2-5 rotating free models |
-| 🧠 **Reasoning controls**        | —                                         | Per-model (GitHub decides)             | Per-model (GitHub decides) | **Per-family thinking effort** you control (DeepSeek `max`, Qwen `thinking_budget`, etc.)                     |
-| 🖼️ **Multimodal**                | Limited                                   | Yes (limited)                          | Yes (limited)              | **Vision + PDF + Audio + Video** (per-model)                                                                  |
-| 🔧 **Agent Mode / tool-calling** | —                                         | ✅                                     | ✅                         | ✅ **Full** (read, edit, terminal)                                                                            |
-| 📊 **Usage transparency**        | Opaque                                    | Opaque                                 | Audit logs                 | **Status bar burn-rate** + diagnostics report                                                                 |
-| 🔌 **Provider**                  | GitHub only                               | GitHub only                            | GitHub only                | **Bring any OpenCode key** — Go ($10/mo subscription) or Zen (free + paid), run both at once                  |
-| 🎁 **Free frontier models?**     | ❌                                        | ❌                                     | ❌ (paid tier only)        | ✅ **2-5 rotating free models** via Zen (Big Pickle always free)                                              |
-| 🚫 **Rate limit**                | 2,000 completions/mo                      | Unlimited (rate-limited)               | 4× Pro credits             | Per OpenCode tier (Zen free has low limits without balance; Go has generous limits)                           |
+|                                  | **Copilot Free**                          | **Copilot Pro $10/mo**                 | **Copilot Pro+ $39/mo**    | **OpenCode for Copilot Chat**                                                                         |
+| -------------------------------- | ----------------------------------------- | -------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 💰 **Cost**                      | $0                                        | $10/mo                                 | $39/mo                     | **$0** with free Zen models · Go is **$10/mo** subscription                                           |
+| 🤖 **Models**                    | GPT-5 mini, Haiku 4.5 (2,000 completions) | Pro catalog + Claude Code/Codex agents | Premium (Opus)             | **30+ models**: DeepSeek V4, Kimi K3, GLM-5.2, Qwen3.8, MiMo V2.5, MiniMax M3, + rotating free models |
+| 🧠 **Reasoning controls**        | —                                         | Per-model (GitHub decides)             | Per-model (GitHub decides) | **Per-family thinking effort** you control (DeepSeek `max`, Qwen `thinking_budget`, etc.)             |
+| 🖼️ **Multimodal**                | Limited                                   | Yes (limited)                          | Yes (limited)              | **Vision + PDF + Audio + Video** (per-model)                                                          |
+| 🔧 **Agent Mode / tool-calling** | —                                         | ✅                                     | ✅                         | ✅ **Full** (read, edit, terminal)                                                                    |
+| 📊 **Usage transparency**        | Opaque                                    | Opaque                                 | Audit logs                 | **Status bar burn-rate** + diagnostics report                                                         |
+| 🔌 **Provider**                  | GitHub only                               | GitHub only                            | GitHub only                | **Bring any OpenCode key** — Go ($10/mo subscription) or Zen (free + paid), run both at once          |
+| 🎁 **Free frontier models?**     | ❌                                        | ❌                                     | ❌ (paid tier only)        | ✅ **Rotating free models** via Zen (Big Pickle + 7 currently)                                        |
+| 🚫 **Rate limit**                | 2,000 completions/mo                      | Unlimited (rate-limited)               | 4× Pro credits             | Per OpenCode tier (Zen free has low limits without balance; Go has generous limits)                   |
 
 > **Model bridge, not completions replacement** — OpenCode BYOK models work in VS Code Chat without a Copilot plan or GitHub sign-in. Standard inline suggestions, next-edit suggestions, semantic search, and embedding-backed features still require GitHub/Copilot support. OpenCode requests bypass Copilot billing entirely — you pay OpenCode directly (or nothing, on Zen free).
 
@@ -218,7 +237,7 @@ Per-model reasoning configuration, dynamically enhanced with `reasoning_options`
 | Family                         | Options                                                | Setting                                    |
 | ------------------------------ | ------------------------------------------------------ | ------------------------------------------ |
 | **DeepSeek**                   | `off` / `low` / `medium` / `high` / `max`              | `opencodego.thinking.deepseek`             |
-| **GLM**                        | `on` / `off`                                           | `opencodego.thinking.glm`                  |
+| **GLM**                        | `off` / `high` / `max`                                 | `opencodego.thinking.glm`                  |
 | **Kimi**                       | `on` / `off`                                           | `opencodego.thinking.kimi`                 |
 | **MiniMax**                    | `off` / `on`                                           | `opencodego.thinking.minimax`              |
 | **Mimo (Xiaomi)**              | `off` / `low` / `medium` / `high`                      | `opencodego.thinking.mimo`                 |
@@ -236,7 +255,14 @@ Per-model reasoning configuration, dynamically enhanced with `reasoning_options`
 
 - **Go Usage Tracker** — real-time burn-rate of OpenCode Go subscription:
   - Tracks **5-hour rolling** ($12), **weekly** ($30), **monthly** ($60) tiers.
-  - Client-side cost calc: token usage × per-model pricing (input/output/cache_read).
+  - **Server-synced meters** — on startup and after each request the tracker
+    pulls the official `/zen/go/v1/usage` endpoint with your Go key, so the
+    Session/Weekly/Monthly percentages and "resets in" timers are
+    account-wide and server-accurate (includes CLI, other devices, anything
+    before the extension was installed). Falls back to local estimates when
+    the endpoint is unreachable or the key/subscription is invalid.
+  - Today / Yesterday and per-session spend stay **device-local** (the API
+    does not return them).
   - Status bar: `Go: 27%·62%·75%` — ⚠ warning when any tier exceeds 80%.
   - Persisted in VS Code `globalState` — survives restarts.
 - **Response usage bar** — latest prompt/output/total/cache summary after each response.
@@ -255,7 +281,7 @@ on the first request made with each key.
 - **QuickPick** — click the status bar to see which profile is active and
   switch to another profile.
 - **Commands** — `OpenCode Go: Rename Active Profile` and `OpenCode Go:
-Delete Active Profile` help you manage your profiles. The label you give
+Delete Profile` help you manage your profiles. The label you give
   a profile appears in the status bar and SVG title.
 - **Storage isolation** — each profile has its own `globalState` storage
   namespace (`opencodego.usageLog.v1.<fingerprint>`) so data never mixes.
@@ -337,6 +363,7 @@ Ghost-text completions while typing, powered by the OpenCode gateway with **thin
 - **Tool-calling** forwarded in correct format per endpoint (OpenAI `tool_calls` vs Anthropic `tool_use`)
 - **Sticky gateway headers** (`x-opencode-session`, `x-opencode-request`, `x-opencode-client`) for affinity
 - **Request & stream timeouts** — defaults 600s total / 120s idle; configurable
+- **Transient 5xx retry** — momentary gateway `502`/`503`/`504` and `Router.Unavailable` errors are retried up to 2× with exponential backoff + jitter
 - **`ground` tag filtering** — `opencodego.stripThinkTags` (`auto` strips MiniMax only, `always`, `never`)
 
 ### 🔍 Diagnostics
@@ -365,11 +392,13 @@ Provider diagnostics also include the VS Code/extension versions, extension host
 | `opencodego.showProviderPrefix`           | `true`   | Include `OpenCode Go` / `OpenCode Zen` in model names                                                                  |
 | `opencodego.visionProxyWholeConversation` | `false`  | Vision proxy: describe the whole conversation instead of only the message with a new image (more context, more tokens) |
 | `opencodego.freeOnly`                     | `true`   | Zen: free models only. `false` = include paid                                                                          |
+| `opencodego.enabled`                      | `true`   | Register the OpenCode Go provider. `false` removes it from Language Models & every picker (keys kept)                  |
+| `opencodezen.enabled`                     | `true`   | Register the OpenCode Zen provider. `false` removes it from Language Models & every picker (keys kept)                 |
 | `opencodego.agentsWindow`                 | `true`   | Expose agent-host model variants (`targetChatSessionType`) for the Agents window                                       |
 | `opencodego.showAgentModelsInManagePanel` | `false`  | Show agent vendors in Manage Language Models panel                                                                     |
 | `opencodego.stripThinkTags`               | `"auto"` | Strip `<think>` tags (`never`/`auto`/`always`)                                                                         |
 | `opencodego.thinking.deepseek`            | `"off"`  | `off`/`low`/`medium`/`high`/`max`                                                                                      |
-| `opencodego.thinking.glm`                 | `"off"`  | `on`/`off`                                                                                                             |
+| `opencodego.thinking.glm`                 | `"off"`  | `off`/`high`/`max`                                                                                                     |
 | `opencodego.thinking.kimi`                | `"off"`  | `on`/`off`                                                                                                             |
 | `opencodego.thinking.minimax`             | `"off"`  | `off`/`on`                                                                                                             |
 | `opencodego.thinking.mimo`                | `"off"`  | `off`/`low`/`medium`/`high`                                                                                            |
@@ -389,19 +418,26 @@ All settings live under the **OpenCode** namespace in VS Code Settings. Run **Pr
 
 The easiest way to manage your key is **Settings → Language Models** (gear ⚙). For advanced use, open the Command Palette (`Cmd/Ctrl+Shift+P`):
 
-| Command                              | Description                                                   |
-| ------------------------------------ | ------------------------------------------------------------- |
-| `OpenCode Go: Manage Provider`       | Manage legacy API key, refresh models, test connection        |
-| `OpenCode Go: Set API Key`           | Store/update legacy OpenCode Go API key                       |
-| `OpenCode Go: Refresh Models`        | Force a fresh model-list fetch (bypasses the Manage menu)     |
-| `OpenCode Go: Diagnostics`           | Report of Go models + request history                         |
-| `OpenCode Zen: Manage Provider`      | Manage Zen API key, refresh models, test connection           |
-| `OpenCode Zen: Refresh Models`       | Force a fresh Zen model-list fetch (bypasses the Manage menu) |
-| `OpenCode Zen: Diagnostics`          | Report of Zen models + request history                        |
-| `OpenCode: Model Picker Diagnostics` | All registered models (Go + Zen + Copilot) side-by-side       |
-| `OpenCode: Configure Utility Models` | Open the VS Code settings for background utility tasks        |
-| `OpenCode: Set Thinking Effort…`     | Per-family thinking mode picker                               |
-| `OpenCode Go: Show Usage Details`    | Detailed Go subscription usage breakdown                      |
+| Command                                                   | Description                                                     |
+| --------------------------------------------------------- | --------------------------------------------------------------- |
+| `OpenCode Go: Manage Provider`                            | Manage legacy API key, refresh models, test connection          |
+| `OpenCode Go: Set API Key`                                | Store/update legacy OpenCode Go API key                         |
+| `OpenCode Go: Refresh Models`                             | Force a fresh model-list fetch (bypasses the Manage menu)       |
+| `OpenCode Go: Diagnostics`                                | Report of Go models + request history                           |
+| `OpenCode Zen: Manage Provider`                           | Manage Zen API key, refresh models, test connection             |
+| `OpenCode Zen: Refresh Models`                            | Force a fresh Zen model-list fetch (bypasses the Manage menu)   |
+| `OpenCode Zen: Diagnostics`                               | Report of Zen models + request history                          |
+| `OpenCode: Model Picker Diagnostics`                      | All registered models (Go + Zen + Copilot) side-by-side         |
+| `OpenCode: Configure Utility Models`                      | Open the VS Code settings for background utility tasks          |
+| `OpenCode: Set Thinking Effort…`                          | Per-family thinking mode picker                                 |
+| `OpenCode Go: Show Usage Details`                         | Detailed Go subscription usage breakdown                        |
+| `OpenCode Go: Remove/Re-add Provider in Language Models`  | Remove or restore OpenCode Go in Language Models & all pickers  |
+| `OpenCode Zen: Remove/Re-add Provider in Language Models` | Remove or restore OpenCode Zen in Language Models & all pickers |
+| `OpenCode Go: Configure Vision Proxy`                     | Pick a vision model so text-only models can "see" images        |
+| `OpenCode Go: Set Usage Targets…`                         | Edit 5h / weekly / monthly spent targets + monthly reset anchor |
+| `OpenCode Go: Show Usage Quick Pick`                      | Open the usage progress-bar QuickPick                           |
+| `OpenCode Go: Rename Active Profile`                      | Rename the active Go usage profile                              |
+| `OpenCode Go: Delete Profile`                             | Delete the active Go usage profile (with confirmation)          |
 
 ---
 
@@ -419,9 +455,9 @@ Inline suggestions, next-edit suggestions, semantic search, and embedding-backed
 <details>
 <summary><b>Is it really free? What's the catch?</b></summary>
 
-**OpenCode Zen** offers **2-5 rotating free models** — no balance required. **Big Pickle is always free**; other models rotate (DeepSeek V4 Flash Free, MiMo-V2.5 Free, Nemotron, etc.). Without a balance, rate limits are low. Adding $20+ to your Zen balance significantly improves rate limits on free models. Paid Zen models (Claude Opus, GPT-5.5, Gemini, etc.) require adding a payment method — they're pay-as-you-go.
+**OpenCode Zen** offers **rotating free models** — no balance required. Currently free: Big Pickle, DeepSeek V4 Flash Free, MiMo-V2.5 Free, Hy3 Free, Laguna S 2.1 Free, Ling-3.0-tiny Free, Nemotron 3 Ultra Free, Nemotron 3.5 Lightning Free (all limited-time, per the OpenCode docs). Without a balance, rate limits are low. Adding $20+ to your Zen balance significantly improves rate limits on free models. Paid Zen models (Claude Opus, GPT-5.6, Gemini, etc.) require adding a payment method — they're pay-as-you-go.
 
-**OpenCode Go** is a **subscription** — **$10/mo** ($5 first month promo) — with generous usage limits (5h/$12, weekly/$30, monthly/$60). It unlocks curated open models like DeepSeek V4 Pro, Kimi K2.6, GLM-5.1, Qwen3.7 Max, MiMo V2.5 Pro. When you hit the limit, you can continue using the free Zen models.
+**OpenCode Go** is a **subscription** — **$10/mo** ($5 first month promo) — with generous usage limits (5h/$12, weekly/$30, monthly/$60). It unlocks curated open models like DeepSeek V4 Pro, Kimi K3, GLM-5.2, Qwen3.8 Max, MiMo V2.5 Pro. When you hit the limit, you can continue using the free Zen models.
 
 **This extension is free and open source** — you never pay us. You pay OpenCode directly (or nothing, on Zen free).
 
@@ -481,15 +517,9 @@ Known issue with `qwen3.6-plus-free` on broad agent tasks (see [issue #1](./docs
 <details>
 <summary><b>How do I use OpenCode models in the Agents window (Copilot CLI)?</b></summary>
 
-Agent models are enabled by default (`opencodego.agentsWindow: true`). Just add this to your VS Code `settings.json`:
+Agent models are enabled by default (`opencodego.agentsWindow: true`), and the extension auto-enables the two VS Code core settings they need (`chat.agentHost.byokModels.enabled` and `extensions.supportAgentsWindow`) on first activation — then offers a **Reload Now** button.
 
-```json
-"extensions.supportAgentsWindow": {
-  "ltmoerdani.opencode-copilot-chat": true
-}
-```
-
-Then reload the window, open the **Agents window**, start a Copilot CLI session, and pick any OpenCode model from the picker. See the [Agents Window section](#-agents-window-copilot-cli-support) above for details.
+After reloading, open the **Agents window**, start a Copilot CLI session, and pick any OpenCode model from the picker. Only if you set `opencodego.autoEnableAgentsWindow: false` do you need to configure those settings manually. See the [Agents Window section](#-agents-window-copilot-cli-support) above for details.
 
 </details>
 
@@ -553,13 +583,13 @@ Press `F5` in VS Code to launch an **Extension Development Host**.
 
 ## 📈 Roadmap
 
-- [ ] 🎥 Demo GIF + screenshots
+- [x] 🎥 Demo GIF + screenshots
+- [x] 📦 Publish to VS Code Marketplace
+- [x] 📊 Usage panel (status bar + webview)
 - [ ] 🌐 GitHub Pages landing page
-- [ ] 📦 Publish to VS Code Marketplace
 - [ ] 🏷️ Verified publisher badge
 - [ ] 🔔 Webhook for new OpenCode models
 - [ ] 🎨 Custom model aliases / favorites
-- [ ] 📊 Usage charts webview panel
 - [ ] 🌍 i18n (id, zh, ja)
 
 > Have an idea? [Start a discussion](https://github.com/ltmoerdani/opencode-copilot-chat/discussions/new) or [open a feature request](https://github.com/ltmoerdani/opencode-copilot-chat/issues/new?labels=enhancement&template=feature_request.md).
@@ -582,6 +612,8 @@ Press `F5` in VS Code to launch an **Extension Development Host**.
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ltmoerdani/opencode-copilot-chat&type=Date" />
  </picture>
 </a>
+
+> **ℹ️ Note:** GitHub [restricts the stargazers API](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/) (since June 30, 2026) to a repository's own **admins and collaborators**. The chart above only renders after you add a GitHub Access Token on [star-history.com](https://www.star-history.com/blog/how-to-use-github-star-history#how-to-add-your-github-access-token) — use a [fine-grained token](https://github.com/settings/personal-access-tokens/new) with **Metadata → Read-only** + **Contents → Read and write**, or a [classic token](https://github.com/settings/tokens/new?scopes=public_repo&description=star-history) with the `public_repo` scope.
 
 ---
 

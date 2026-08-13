@@ -403,9 +403,9 @@
     "prepare": "husky"
   },
   "lint-staged": {
-    "*": "prettier --write --ignore-unknown",
-    "*.{js,cjs,ts}": "eslint --fix --max-warnings 0",
-    "*.md": "markdownlint-cli2 --config .markdownlint-cli2.json --fix",
+    "*": "prettier --check --ignore-unknown",
+    "*.{js,cjs,ts}": "eslint --max-warnings 0",
+    "*.md": "markdownlint-cli2 --config .markdownlint-cli2.json",
     ".husky/*": "shellcheck"
   },
   "devDependencies": {

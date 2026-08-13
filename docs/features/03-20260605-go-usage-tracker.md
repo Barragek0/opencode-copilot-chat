@@ -1,17 +1,19 @@
-**Status:** ✅ Solved
+**Status:** ✅ Solved (server-accurate since PR #132)
 
 # Go Usage Tracker — Feature Implementation
 
 **Topic:** usage / features / status-bar / provider / tracking
-**Updated:** 2026-07-02
-**Tags:** #usage #features #status-bar #go-usage #pricing #byok #sqlite
+**Updated:** 2026-08-13
+**Tags:** #usage #features #status-bar #go-usage #pricing #byok #sqlite #server-sync
 **Supersedes:** —
 
 ---
 
 ## Overview
 
-Implemented a real-time Go subscription usage tracker that displays 5-hour rolling, weekly, and monthly limit percentages in the VS Code status bar. The feature was triggered by a GitHub user request to display daily, weekly, and monthly limits as percentages. Research confirmed no OpenCode REST API exists for billing/usage, so the implementation uses client-side cost estimation from token counts × model pricing.
+Implemented a real-time Go subscription usage tracker that displays 5-hour rolling, weekly, and monthly limit percentages in the VS Code status bar. The feature was triggered by a GitHub user request to display daily, weekly, and monthly limits as percentages.
+
+> **Evolution (2026-08-13):** Originally this tracker estimated cost client-side from token counts × model pricing because (at the time) no OpenCode REST API existed for billing/usage. That conclusion is **superseded**: upstream shipped an official `GET /zen/go/v1/usage` endpoint (2026-08-11) and the tracker now syncs server-accurate, account-wide meters from it (PR #132). This doc keeps the original local-tracker design history, then adds the SQLite (PR #60) and server-sync (PR #132) evolution sections below.
 
 ---
 
@@ -205,3 +207,56 @@ Tracked entries (globalState)
 
 - Issue doc: `docs/issues/30-20260630-pr60-sqlite-cost-deepseek-overflow.md`
 - Original research: `docs/features/03-20260605-go-usage-tracker.md` §Research Findings
+
+---
+
+## Server-Accurate Go Usage via `/zen/go/v1/usage` (PR #132, merged 2026-08-12)
+
+**Status:** ✅ Solved | **Issue:** [#130](https://github.com/ltmoerdani/opencode-copilot-chat/issues/130) | **PR:** [#132](https://github.com/ltmoerdani/opencode-copilot-chat/pull/132) by [@Fahad090NP](https://github.com/Fahad090NP) | **Upstream:** [anomalyco/opencode#16513](https://github.com/anomalyco/opencode/pull/16513)
+
+### Problem
+
+SQLite (#60) is still **per-machine** — it reads the local `opencode.db`, so CLI usage on other devices, other VS Code windows, and pre-install usage stay invisible. The meters still drifted from opencode.ai (the original issue #23 report).
+
+### The unlock
+
+Upstream merged an **official `GET /zen/go/v1/usage`** endpoint (live 2026-08-11) that returns server-accurate, account-wide rolling/weekly/monthly usage computed from the real subscription — authenticated with the same `opencode-go` key the extension already stores. This is the "Option D" (server sync) that June's research deemed impossible.
+
+### Solution
+
+New pure module `src/goUsageSync.ts` (+ unit tests):
+
+| Function               | Role                                                                                                                                                                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetchGoUsage(apiKey)` | `GET /zen/go/v1/usage` with the stored Go key as a Bearer token. Failures classified (`no-key` / `unauthorized` / `no-subscription` / `not-found` / `network` / `invalid`) so callers can fall back. Key never logged or persisted. |
+| `mergeServerUsage()`   | Overlays server rolling/weekly/monthly percent + `resetsAt` onto the local summary; `spent` derived from the authoritative percent. Today/Yesterday/per-session stay device-local.                                                  |
+
+Tracker wiring (`src/goUsageTracker.ts`):
+
+- `syncServerUsage(apiKey)` with a **60s TTL** (failures paced too, so a bad key can't hammer the API).
+- `getSummary()` stays synchronous and overlays the cached server snapshot on top of the local summary.
+
+Extension wiring (`src/extension.ts`): startup sync with the stored key; per-request re-sync using the exact key the request ran under (covers native BYOK group keys); background sync on status-bar refresh with repaint.
+
+Bonus dialog fixes: wired the dead "Reset tracked usage data" action, stopped reset from collapsing the card to the first-run state (`everTracked` flag), wired the dead "Open OpenCode console" quick-pick, stabilized panel/hover card geometry.
+
+### Current data flow (fallback chain)
+
+```text
+/zen/go/v1/usage (official, server-accurate, account-wide)
+  → fetchGoUsage(apiKey) + mergeServerUsage()   [primary]
+  → SQLite opencode.db (actual local billed amounts)   [fallback]
+  → tracked estimates (token × pricing)   [last resort]
+```
+
+### Verification
+
+- Endpoint verified live in production (401 shape matches upstream route source).
+- `npm run lint` (strict, 7 steps incl. tsc) green; `npm test` 189/189 (incl. the fresh-install `hasData` regression test).
+- Merge commit `4a14b1e` (2026-08-12T22:51:06Z); issue #130 closed 2026-08-12T22:51:07Z.
+
+### Related
+
+- Consolidated issue #23 timeline: `docs/issues/65-20260813-issue23-go-usage-status-sync.md`
+- PR #132 doc: `docs/issues/62-20260812-pr132-go-usage-server-sync.md`
+- Upstream endpoint: `anomalyco/opencode#16513`
