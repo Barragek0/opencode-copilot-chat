@@ -2,6 +2,14 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **`[Providers]` Configurable API base URL.** The extension no longer hardcodes the `opencode.ai` endpoints — it can now point at any compatible gateway via `opencodego.apiBaseUrl` (default `https://opencode.ai/zen/go/v1`) and `opencodezen.apiBaseUrl` (default `https://opencode.ai/zen/v1`). The extension derives the `/chat/completions`, `/messages`, `/responses`, `/models`, and (Go only) `/usage` routes from the configured base and applies them to every provider (normal chat, Agents window variants, inline completions, usage sync). Custom URLs are normalized and validated — non-`http(s)`, embedded credentials, query strings, and hashes are rejected and fall back to the default. Reload the window after changing the setting. Unit tests added for URL normalization and route construction.
+
+---
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
