@@ -504,6 +504,7 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
       "minimax-m2.7",
       "minimax-m2.5",
       "qwen3.7-max",
+      "qwen3.7-plus",
       "qwen3.6-plus",
       "qwen3.5-plus",
       "gpt-5.6-luna",

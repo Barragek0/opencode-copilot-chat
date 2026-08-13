@@ -179,6 +179,7 @@ const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelL
     "minimax-m2.1": { contextWindow: 204800, maxOutputTokens: 131072 },
     "minimax-m2": { contextWindow: 204800, maxOutputTokens: 131072 },
     "qwen3.7-max": { contextWindow: 1000000, maxOutputTokens: 65536 },
+    "qwen3.7-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "qwen3.6-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "qwen3.5-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "gpt-5.6-luna": { contextWindow: 1050000, maxOutputTokens: 128000 },
