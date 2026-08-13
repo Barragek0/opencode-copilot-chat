@@ -117,11 +117,13 @@ import {
   DEFAULT_USAGE_CODEBASE_ROW,
   DEFAULT_USAGE_CODEBASE_WINDOW_DAYS,
   DEFAULT_USAGE_DAY_BOUNDARY,
+  DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS,
   DEFAULT_USAGE_ROLLING_SESSION_METER,
   DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE,
   SETTING_USAGE_CODEBASE_ROW,
   SETTING_USAGE_CODEBASE_WINDOW_DAYS,
   SETTING_USAGE_DAY_BOUNDARY,
+  SETTING_USAGE_REFRESH_INTERVAL_SECONDS,
   SETTING_USAGE_ROLLING_SESSION_METER,
   SETTING_USAGE_TODAY_YESTERDAY_SOURCE,
   type UsageTodayYesterdaySource,
@@ -219,6 +221,47 @@ function usageRollingMeterVisible(): boolean {
 /** Whether the detailed usage views show the all-time codebase row. */
 function usageCodebaseRowVisible(): boolean {
   return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_USAGE_CODEBASE_ROW, DEFAULT_USAGE_CODEBASE_ROW);
+}
+
+/** Every usage-view setting — a change to any of these repaints immediately. */
+const USAGE_DISPLAY_SETTING_KEYS = [
+  SETTING_USAGE_TODAY_YESTERDAY_SOURCE,
+  SETTING_USAGE_CODEBASE_ROW,
+  SETTING_USAGE_CODEBASE_WINDOW_DAYS,
+  SETTING_USAGE_DAY_BOUNDARY,
+  SETTING_USAGE_ROLLING_SESSION_METER,
+  SETTING_USAGE_REFRESH_INTERVAL_SECONDS,
+];
+
+/**
+ * Realtime usage updates: re-render the status bar (and webview) on a
+ * configurable cadence so terminal-side OpenCode CLI usage, server meters and
+ * day rollovers show up without waiting for the next chat request. The
+ * interval re-reads the setting on every tick, so changes apply live.
+ */
+function startUsageRefreshLoop(context: vscode.ExtensionContext): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (): void => {
+    timer = setTimeout(() => {
+      refreshGoUsageStatusBar();
+      schedule();
+    }, usageRefreshIntervalSeconds() * 1000);
+  };
+  schedule();
+  context.subscriptions.push({
+    dispose: () => {
+      if (timer) clearTimeout(timer);
+    },
+  });
+}
+
+function usageRefreshIntervalSeconds(): number {
+  return Math.max(
+    5,
+    vscode.workspace
+      .getConfiguration(CONFIG_SECTION)
+      .get<number>(SETTING_USAGE_REFRESH_INTERVAL_SECONDS, DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS),
+  );
 }
 
 /** Look up (or create) the GoUsageTracker for a given key fingerprint. */
@@ -1014,8 +1057,16 @@ export function activate(context: vscode.ExtensionContext) {
           void revertAgentsWindowSupport(context);
         }
       }
+      // Any usage-display setting change repaints the status bar / panel
+      // immediately (no waiting for the next request or refresh tick).
+      if (USAGE_DISPLAY_SETTING_KEYS.some((key) => event.affectsConfiguration(`${CONFIG_SECTION}.${key}`))) {
+        refreshGoUsageStatusBar();
+        updateWebviewContent();
+      }
     }),
   );
+
+  startUsageRefreshLoop(context);
 
   void warmModelPickerMetadata();
 

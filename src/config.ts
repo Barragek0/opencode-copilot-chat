@@ -181,6 +181,9 @@ export const DEFAULT_USAGE_ROLLING_SESSION_METER = true;
 /** Day boundary used for the Today/Yesterday rows. */
 export const SETTING_USAGE_DAY_BOUNDARY = "usageDayBoundary";
 export const DEFAULT_USAGE_DAY_BOUNDARY = "utc";
+/** How often the usage status bar / panel refresh in the background (seconds). */
+export const SETTING_USAGE_REFRESH_INTERVAL_SECONDS = "usageRefreshIntervalSeconds";
+export const DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS = 60;
 
 // ─── Usage profiles (issue #63) ──────────────────────────────────────────────
 
