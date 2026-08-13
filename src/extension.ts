@@ -1719,7 +1719,7 @@ function usageWebviewHtml(profileLabel: string): string {
             <button class="tab-btn" data-metric="requests"><span class="sw" style="background:var(--blue)"></span>Requests</button>
             <button class="tab-btn" data-metric="tokens"><span class="sw" style="background:var(--teal)"></span>Tokens</button>
             <button class="tab-btn" data-metric="models"><span class="sw" style="background:var(--coral)"></span>Models</button>
-            <button class="tab-btn" data-metric="suggested"><span class="sw" style="background:var(--violet)"></span>Suggestions</button>
+            <button class="tab-btn" data-metric="suggested"><span class="sw" style="background:var(--violet)"></span>Suggested</button>
             <button class="tab-btn" data-metric="approved"><span class="sw" style="background:#7fd1a8"></span>Approved</button>
           </div>
           <div class="stat-chips" id="statChips"></div>
