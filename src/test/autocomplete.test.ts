@@ -137,4 +137,16 @@ describe("autocomplete — Debouncer", () => {
     assert.equal(second.aborted, false);
     d.dispose();
   });
+
+  it("delayMs is mutable so config changes apply live", async () => {
+    const d = new Debouncer(120);
+    let runs = 0;
+    d.debounce(() => {
+      runs += 1;
+    });
+    d.delayMs = 20;
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(runs, 1, "run fires on the updated (shorter) window");
+    d.dispose();
+  });
 });

@@ -8,12 +8,32 @@
 export class Debouncer {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private controller: AbortController | undefined;
-
-  /** Current debounce window; may be updated at runtime (config-driven). */
-  delayMs: number;
+  private pendingRun: ((signal: AbortSignal) => void | Promise<void>) | undefined;
+  private _delayMs: number;
 
   constructor(delayMs: number) {
-    this.delayMs = delayMs;
+    this._delayMs = delayMs;
+  }
+
+  /**
+   * Current debounce window. Assigning a new value applies immediately:
+   * a pending (not yet fired) run is rescheduled with the new delay, so a
+   * config change is honored on the very next keystroke.
+   */
+  get delayMs(): number {
+    return this._delayMs;
+  }
+
+  set delayMs(value: number) {
+    if (value === this._delayMs) {
+      return;
+    }
+    this._delayMs = value;
+    if (this.timer !== undefined && this.pendingRun && this.controller) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+      this.schedule(this.pendingRun, this.controller);
+    }
   }
 
   /**
@@ -27,13 +47,19 @@ export class Debouncer {
     this.cancel();
     const controller = new AbortController();
     this.controller = controller;
+    this.pendingRun = run;
+    this.schedule(run, controller);
+    return controller.signal;
+  }
+
+  private schedule(run: (signal: AbortSignal) => void | Promise<void>, controller: AbortController): void {
     this.timer = setTimeout(() => {
       this.timer = undefined;
+      this.pendingRun = undefined;
       if (!controller.signal.aborted) {
         void run(controller.signal);
       }
-    }, this.delayMs);
-    return controller.signal;
+    }, this._delayMs);
   }
 
   /** Cancel any scheduled run and abort the active one. */
@@ -42,6 +68,7 @@ export class Debouncer {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
+    this.pendingRun = undefined;
     this.controller?.abort();
     this.controller = undefined;
   }

@@ -81,13 +81,13 @@ export function formatRelativeTime(target: Date, from: Date = new Date()): strin
   const totalMinutes = Math.ceil(diffMs / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  if (hours === 0) return `${String(minutes)}m`;
-  if (minutes === 0) return `${String(hours)}h`;
   if (hours >= 24) {
     const days = Math.floor(hours / 24);
     const remainingHours = hours % 24;
     return remainingHours === 0 ? `${String(days)}d` : `${String(days)}d ${String(remainingHours)}h`;
   }
+  if (hours === 0) return `${String(minutes)}m`;
+  if (minutes === 0) return `${String(hours)}h`;
   return `${String(hours)}h ${String(minutes)}m`;
 }
 
