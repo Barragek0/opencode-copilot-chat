@@ -1,14 +1,17 @@
-**Status:** ✅ Solved
+**Status:** ⚠️ Deprecated (superseded by `16-20260813-usage-dashboard-realtime.md`)
 
 # Usage Webview Panel — Persistent SVG Usage Dashboard
 
 **Topic:** usage / status-bar / webview / ux
-**Updated:** 2026-06-13
+**Updated:** 2026-08-13
 **Tags:** #usage #status-bar #webview #ux #vscode
+**Supersedes:** —
 
 ---
 
 ## Overview
+
+> **2026-08-13:** This early panel design has been **superseded** by the full-page usage dashboard (PR #138). See the living reference [`16-20260813-usage-dashboard-realtime.md`](16-20260813-usage-dashboard-realtime.md) for the current feature. This doc is kept as historical design context.
 
 Implemented a persistent Webview panel for OpenCode Go usage details that stays open in the editor area, similar to how GitHub Copilot Chat shows quota information. Previously, usage data was only visible via a transient hover tooltip on the status bar icon — the tooltip disappeared as soon as the mouse moved away.
 

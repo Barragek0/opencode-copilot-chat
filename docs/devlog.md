@@ -1,6 +1,38 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
 
-**Branch:** `main` | **Updated:** 2026-08-13 Asia/Jakarta | **Current Phase:** Post-0.5.2 docs sync — PR #129 (strict lint stack) + PR #132 (Go usage server sync) merged; issue #23 documented end-to-end; PR #133/#135/#136 open (DeepSeek 400 thinking-off, duplicate models, autocomplete). `main` HEAD `4a14b1e`.
+**Branch:** `main` | **Updated:** 2026-08-13 Asia/Jakarta | **Current Phase:** Autocomplete (#49) + central-config/usage refactor (#138) merged; PR #133/#135/#136/#138 all landed. `main` HEAD `616d6f6`.
+
+---
+
+## 📝 Docs — Usage Dashboard living reference + PR #138 documentation complete — 2026-08-13
+
+**Action:** Completed the post-merge documentation for PR #138 (merged `616d6f6`). Most was already in place from the author; filled the remaining gaps.
+
+**What:**
+
+- **New** `docs/features/16-20260813-usage-dashboard-realtime.md` — living reference for the usage dashboard feature as of #138: data sources & flow (CLI history via `node:sqlite`/`sqlite3`, server meters, extension entries), Today/Yesterday/Codebase rows, permanent tracking, realtime loop, compact K/M/B/T formatting, full-page webview panel (rings, Spend/Requests/Tokens/Models/Suggested/Approved tabs), all 7 usage settings, known limitation (completion cost attribution).
+- **Updated** `docs/features/05-20260613-usage-webview-panel.md` — marked ⚠️ Deprecated, superseded by doc 16 (kept as historical design context).
+- **Updated** `docs/features/03-20260605-go-usage-tracker.md` — added a PR #138 evolution note pointing to doc 16.
+- **Updated** CHANGELOG `[Unreleased]` — added `docs/issues/66-...` + `docs/features/16-...` references to the central-config and full-page panel entries (consistency with other PR entries).
+- Issue doc `66-...` and tracker `63-...` were already Solved by the author; the merge devlog entry was already present.
+
+**Verification:** `markdownlint-cli2 --config .markdownlint-cli2.json` = **0 issues** across all four created/edited files.
+
+---
+
+## ✅ PR #136 + PR #138 Merge — Inline Code Suggestions (#49) + Central Config / Utils / Usage Dashboard — 2026-08-13
+
+**Action:** Merged [@Fahad090NP](https://github.com/Fahad090NP)'s stacked PR pair: #136 (`feat/inline-completions`, merge commit `7df19f4`) then #138 (`refactor/central-config-utils`, merge commit `616d6f6`). Both merge commits — contributor history preserved.
+
+**What (#136, +957/−9, 19 files):** experimental **inline code suggestions** (ghost text) closing #49. OpenCode exposes no FIM endpoint, so completions emulate fill-in-the-middle with FIM tokens over `/chat/completions`. Engine chosen from live probe, not assumption: `qwen3.5-plus` with `enable_thinking=false` (~1.5s TTFB, zero hidden reasoning); `deepseek-v4-flash` rejected (burns 128 reasoning chars even "off"). New `src/autocomplete/` module (context, prompt, throttle, engine, provider, index, types) + `usage.ts`, 15 unit tests, `scripts/probe-completion-latency.ts`. Opt-in `opencodego.inlineSuggestions` (default `false`), model dropdown default `qwen3.5-plus`, five tuning knobs (debounce 300ms / timeout 3s / max tokens 128 / prefix 10 lines / suffix 300 chars), strict cancellation (latest keystroke aborts in-flight request). `.vscodeignore` fixed so `out/autocomplete/` ships in the VSIX.
+
+**Review cycle:** maintainer review (08:16) raised 5 points + small stuff; Fahad answered all in #138 (08:18 "let me do some more changes", then 11:37/11:51): key fallback (profile→secret), failure logging to the OpenCode Completions channel, live debounce resync, indentation preservation in `cleanCompletion`, `qwen3.7-plus` added to bundled fallback. Point 3 (cost attribution into `tracker.record()`) documented as a follow-up; Suggested/Approved per-day counters ship instead.
+
+**What (#138, +4335/−1051, 46 files, 44 commits):** three intentional halves stacked on #136: (1) central `src/config.ts` + shared `src/utils.ts` + `BaseResponseExtractor` (behavior-preserving); (2) ten verified production bugs fixed (#139–#148 — kimi-k2.7-code cold-start 400, audio/PDF vision false-positive, `freeOnly` bypass, Kimi/MiniMax CoT leak, baseline inflation, `node:sqlite` reads, string-setting 400s, 26h→1d 2h, DOMException guard, etc.); (3) full usage dashboard — Today/Yesterday/Codebase rows merging CLI history, permanent tracking, realtime loop, compact K/M/B/T formatting, panel with rings/charts/Models/Suggested/Approved tabs, 7 new settings. Review scope question answered: dashboard was intentional (depends on the refactor); `freeOnly` on metadata-success path + HTML-escaping of model names fixed.
+
+**Verification:** 207 tests at #136 merge base → **276 after #138**; strict lint + tsc + prettier + markdownlint green; VSIX packages and installs cleanly (author + maintainer independently).
+
+**Docs:** `docs/features/15-20260813-inline-code-suggestions.md` (new), `docs/issues/66-20260813-pr138-central-config-utils-usage-dashboard.md` (new), tracker `63-...` marked solved. CHANGELOG `[Unreleased]` already updated by the PR author (autocomplete + config/utils + usage dashboard + all bug fixes).
 
 ---
 
@@ -74,17 +106,16 @@
 
 ---
 
-## 🟢 Open PRs — #133 (DeepSeek 400 thinking-off), #135 (duplicate models), #136 (autocomplete) — 2026-08-13
+## ✅ PRs #133/#135/#136/#138 — All Merged (2026-08-13)
 
-**Status:** Three community PRs open as of 2026-08-13. Full tracker: `docs/issues/63-20260813-open-prs-133-135-136-tracker.md`.
+**Status:** The three PRs tracked below were all merged on 2026-08-13 (merge commits `4a78f6b`, `8eca1f2`, `7df19f4`, `616d6f6`), followed by the stacked #138. Full details: tracker `docs/issues/63-20260813-open-prs-133-135-136-tracker.md`, feature doc `docs/features/15-20260813-inline-code-suggestions.md`, issue doc `docs/issues/66-20260813-pr138-central-config-utils-usage-dashboard.md`.
 
-| PR                                                                   | Priority    | Mergeable | Summary                                                                                                                                                                                                          |
-| -------------------------------------------------------------------- | ----------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [#133](https://github.com/ltmoerdani/opencode-copilot-chat/pull/133) | **High**    | `CLEAN`   | DeepSeek 400 recurs when thinking is OFF (Go gateway wraps reasoning as visible text, no thinking part to echo). Fix: internal `application/vnd.opencode.reasoning+json` marker part in transcript. Closes #134. |
-| [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) | Medium      | `UNKNOWN` | Duplicate models after per-model config (#131). Settings-only group returns `[]` so groupless call serves models. +19/−1.                                                                                        |
-| [#136](https://github.com/ltmoerdani/opencode-copilot-chat/pull/136) | Low (draft) | `UNKNOWN` | Inline completions / autocomplete (#49). Ghost-text via `qwen3.5-plus` with `enable_thinking:false` (~1.5s TTFB). Experimental, opt-in.                                                                          |
-
-**Recommended merge order:** #133 first (user-facing regression, clean), then #135 (re-check mergeable), leave #136 open until smoke-tested.
+| PR                                                                   | Merged (commit) | Summary                                                                                                                                                                                                          |
+| -------------------------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [#133](https://github.com/ltmoerdani/opencode-copilot-chat/pull/133) | `4a78f6b`       | DeepSeek 400 recurs when thinking is OFF (Go gateway wraps reasoning as visible text, no thinking part to echo). Fix: internal `application/vnd.opencode.reasoning+json` marker part in transcript. Closes #134. |
+| [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) | `8eca1f2`       | Duplicate models after per-model config (#131). Settings-only group returns `[]` so groupless call serves models. +19/−1.                                                                                        |
+| [#136](https://github.com/ltmoerdani/opencode-copilot-chat/pull/136) | `7df19f4`       | Inline completions / autocomplete (#49). Ghost-text via `qwen3.5-plus` with `enable_thinking:false` (~1.5s TTFB). Experimental, opt-in.                                                                          |
+| [#138](https://github.com/ltmoerdani/opencode-copilot-chat/pull/138) | `616d6f6`       | Central config + shared utils + usage dashboard + bug fixes #139–#148. Stacked on #136; carries the #136 review fixes.                                                                                           |
 
 ---
 

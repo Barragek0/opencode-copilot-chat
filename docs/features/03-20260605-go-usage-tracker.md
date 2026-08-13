@@ -14,6 +14,8 @@
 Implemented a real-time Go subscription usage tracker that displays 5-hour rolling, weekly, and monthly limit percentages in the VS Code status bar. The feature was triggered by a GitHub user request to display daily, weekly, and monthly limits as percentages.
 
 > **Evolution (2026-08-13):** Originally this tracker estimated cost client-side from token counts × model pricing because (at the time) no OpenCode REST API existed for billing/usage. That conclusion is **superseded**: upstream shipped an official `GET /zen/go/v1/usage` endpoint (2026-08-11) and the tracker now syncs server-accurate, account-wide meters from it (PR #132). This doc keeps the original local-tracker design history, then adds the SQLite (PR #60) and server-sync (PR #132) evolution sections below.
+>
+> **Evolution (2026-08-13, PR #138):** the usage feature grew into a full realtime dashboard — Today/Yesterday/Codebase rows merging CLI history, permanent tracking, `node:sqlite` reads (no binary dependency), compact K/M/B/T formatting, and a full-page webview panel. See the living reference [`16-20260813-usage-dashboard-realtime.md`](16-20260813-usage-dashboard-realtime.md).
 
 ---
 
