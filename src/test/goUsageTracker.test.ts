@@ -16,6 +16,7 @@ import {
 } from "../config.js";
 import type { GoUsageApiResponse } from "../goUsageSync";
 import type { HistoryRow, UsageDaily, UsageLogEntry, UsageSummary } from "../goUsageTracker.js";
+import type { UsageSeries } from "../goUsageTracker.js";
 
 // ── Types (populated by dynamic import in before()) ────────────────────────
 
@@ -29,6 +30,13 @@ let estimateCost: (
 ) => number;
 
 let sumDailyUsage: (rows: HistoryRow[], entries: UsageLogEntry[], dayStartMs: number, source?: "auto" | "cli" | "extension") => UsageDaily;
+let buildUsageSeries: (
+  rows: HistoryRow[],
+  entries: UsageLogEntry[],
+  days: number,
+  dayStartMs: number,
+  source?: "auto" | "cli" | "extension",
+) => UsageSeries;
 let isCwdInWorkspace: (cwd: string | undefined, workspaceFolders: readonly string[]) => boolean;
 let normalizeCwd: (value: string) => string;
 let startOfLocalDay: (nowMs: number) => number;
@@ -148,6 +156,7 @@ describe("goUsageTracker", () => {
     estimateCost = mod.estimateCost;
     GoUsageTracker = mod.GoUsageTracker as GoUsageTrackerConstructor;
     sumDailyUsage = mod.sumDailyUsage;
+    buildUsageSeries = mod.buildUsageSeries;
     isCwdInWorkspace = mod.isCwdInWorkspace;
     normalizeCwd = mod.normalizeCwd;
     startOfLocalDay = mod.startOfLocalDay;
@@ -722,5 +731,97 @@ describe("server usage snapshot persistence", () => {
     // No snapshot stored for this profile yet → meters fall back to local estimates.
     assert.equal(tracker.hasServerUsage, false);
     assert.ok(summary.weekly.limit > 0);
+  });
+});
+
+describe("buildUsageSeries", () => {
+  const now = new Date();
+  const dayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const DAY = 24 * 60 * 60 * 1000;
+
+  const rows: HistoryRow[] = [
+    {
+      createdMs: dayMs - DAY,
+      cost: 0.1,
+      tokensInput: 100,
+      tokensOutput: 50,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "qwen3.6-plus",
+    },
+    {
+      createdMs: dayMs - DAY + 1000,
+      cost: 0.2,
+      tokensInput: 200,
+      tokensOutput: 100,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "deepseek-v4-flash",
+    },
+    {
+      createdMs: dayMs,
+      cost: 0.3,
+      tokensInput: 300,
+      tokensOutput: 150,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "qwen3.6-plus",
+    },
+    {
+      createdMs: dayMs + DAY * 5,
+      cost: 0.4,
+      tokensInput: 400,
+      tokensOutput: 200,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      modelId: "qwen3.6-plus",
+    },
+  ];
+  const entries: UsageLogEntry[] = [
+    { timestamp: dayMs, modelId: "glm-5", cost: 0.05, promptTokens: 30, completionTokens: 10, cachedTokens: 0, sessionId: "s1" },
+  ];
+
+  it("buckets rows and entries into per-day totals over the window", () => {
+    const series = buildUsageSeries(rows, entries, 14, dayMs, "auto");
+    assert.equal(series.days.length, 14);
+    const oldest = series.days[0]; // oldest bucket = dayMs - 13*DAY
+    assert.equal(oldest.dayStart, dayMs - 13 * DAY);
+    assert.equal(oldest.cost, 0, "day before any usage stays zero");
+
+    const yesterday = series.days[13 - 1];
+    assert.equal(yesterday.requests, 2);
+    assert.ok(Math.abs(yesterday.cost - 0.3) < 1e-9);
+    assert.equal(yesterday.tokens, 450);
+
+    const today = series.days[13];
+    assert.equal(today.requests, 2, "row + entry on the last day");
+    assert.equal(today.tokens, 450 + 40);
+  });
+
+  it("excludes rows outside the window", () => {
+    const series = buildUsageSeries(rows, [], 3, dayMs, "cli");
+    // A 3-day window ending at dayMs covers dayMs-2*DAY .. dayMs; the
+    // dayMs + DAY*5 row is outside and must be excluded.
+    const total = series.days.reduce((sum, d) => sum + d.requests, 0);
+    assert.equal(total, 3, "three rows are inside the 3-day window, the future one is not");
+  });
+
+  it("groups per-model per-day rows with correct totals", () => {
+    const series = buildUsageSeries(rows, entries, 14, dayMs, "auto");
+    const qwen = series.byModel.filter((p) => p.model === "qwen3.6-plus");
+    assert.equal(qwen.length, 2, "the dayMs + DAY*5 row is outside the 14-day window ending at dayMs");
+    const qwenToday = qwen.find((p) => p.dayStart === dayMs);
+    assert.equal(qwenToday?.cost, 0.3);
+    const glm = series.byModel.find((p) => p.model === "glm-5");
+    assert.equal(glm?.requests, 1);
+  });
+
+  it("cli source ignores extension entries", () => {
+    const series = buildUsageSeries(rows, entries, 14, dayMs, "cli");
+    assert.ok(!series.byModel.some((p) => p.model === "glm-5"));
   });
 });

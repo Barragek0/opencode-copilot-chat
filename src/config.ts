@@ -184,6 +184,9 @@ export const DEFAULT_USAGE_DAY_BOUNDARY = "utc";
 /** How often the usage status bar / panel refresh in the background (seconds). */
 export const SETTING_USAGE_REFRESH_INTERVAL_SECONDS = "usageRefreshIntervalSeconds";
 export const DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS = 60;
+/** How many days the usage panel charts cover. */
+export const SETTING_USAGE_CHART_DAYS = "usageChartDays";
+export const DEFAULT_USAGE_CHART_DAYS = 14;
 
 // ─── Usage profiles (issue #63) ──────────────────────────────────────────────
 

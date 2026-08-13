@@ -310,7 +310,8 @@ const HISTORY_ROWS_SQL = `
     CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS tokensOutput,
     CAST(json_extract(data, '$.tokens.reasoning') AS INTEGER) AS tokensReasoning,
     CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) AS tokensCacheRead,
-    json_extract(data, '$.path.cwd') AS cwd
+    json_extract(data, '$.path.cwd') AS cwd,
+    json_extract(data, '$.modelID') AS modelId
   FROM message
   WHERE json_valid(data)
     AND json_extract(data, '$.providerID') = 'opencode-go'
@@ -327,6 +328,8 @@ export interface HistoryRow {
   tokensCacheRead: number;
   /** Working directory of the session the message belongs to (OpenCode CLI data). */
   cwd?: string;
+  /** Model that produced the message (OpenCode CLI data). */
+  modelId?: string;
 }
 
 /** Non-negative finite integer (tokens can legitimately be 0). */
@@ -378,6 +381,96 @@ export interface UsageDaily {
   tokens: number;
 }
 
+/** One day bucket of the usage chart. */
+export interface UsageDayPoint {
+  /** Unix ms at the START of the day (UTC or local, per the day-boundary setting). */
+  dayStart: number;
+  cost: number;
+  tokens: number;
+  requests: number;
+}
+
+/** Per-model usage for a single day (model bar chart). */
+export interface ModelDayUsage {
+  model: string;
+  dayStart: number;
+  cost: number;
+  tokens: number;
+  requests: number;
+}
+
+/** Time-series data for the usage panel charts. */
+export interface UsageSeries {
+  /** Daily totals, oldest → newest. */
+  days: UsageDayPoint[];
+  /** Per-model-per-day rows (only days with usage are present). */
+  byModel: ModelDayUsage[];
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Bucket CLI rows + extension entries into per-day totals and per-model
+ * per-day rows over the last `days` days (the oldest bucket starts at
+ * `dayStartMs - (days - 1) * DAY_MS`). Pure so it can be unit-tested.
+ */
+export function buildUsageSeries(
+  rows: HistoryRow[],
+  entries: UsageLogEntry[],
+  days: number,
+  dayStartMs: number,
+  source: UsageTodayYesterdaySource = "auto",
+): UsageSeries {
+  const dayCount = Math.max(1, Math.floor(days));
+  const firstDay = dayStartMs - (dayCount - 1) * DAY_MS;
+  const buckets: UsageDayPoint[] = Array.from({ length: dayCount }, (_, i) => ({
+    dayStart: firstDay + i * DAY_MS,
+    cost: 0,
+    tokens: 0,
+    requests: 0,
+  }));
+  const byModel = new Map<string, Map<number, ModelDayUsage>>();
+
+  const add = (model: string | undefined, timestamp: number, cost: number, tokens: number): void => {
+    const index = Math.floor((timestamp - firstDay) / DAY_MS);
+    if (index < 0 || index >= dayCount) return;
+    const day = buckets[index];
+    day.cost += cost;
+    day.tokens += tokens;
+    day.requests += 1;
+
+    const modelName = model ?? "unknown";
+    let byDay = byModel.get(modelName);
+    if (!byDay) {
+      byDay = new Map();
+      byModel.set(modelName, byDay);
+    }
+    const point = byDay.get(index) ?? { model: modelName, dayStart: day.dayStart, cost: 0, tokens: 0, requests: 0 };
+    point.cost += cost;
+    point.tokens += tokens;
+    point.requests += 1;
+    byDay.set(index, point);
+  };
+
+  if (source !== "extension") {
+    for (const row of rows) {
+      add(row.modelId, row.createdMs, row.cost, row.tokensInput + row.tokensOutput + row.tokensReasoning);
+    }
+  }
+  if (source !== "cli") {
+    for (const entry of entries) {
+      add(entry.modelId, entry.timestamp, entry.cost, entry.promptTokens + entry.completionTokens);
+    }
+  }
+
+  return {
+    days: buckets,
+    byModel: [...byModel.entries()].flatMap(([, byDay]) =>
+      [...byDay.entries()].sort((left, right) => left[0] - right[0]).map(([, point]) => point),
+    ),
+  };
+}
+
 /**
  * The CLI database can be gigabytes large and spawning `sqlite3` is a
  * synchronous, blocking call — but the usage UI (status bar, tooltip, panel,
@@ -424,6 +517,7 @@ function readOpenCodeHistoryUncached(): HistoryRow[] | null {
         tokensReasoning: positiveNumberish(row.tokensReasoning),
         tokensCacheRead: positiveNumberish(row.tokensCacheRead),
         cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
+        modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
       }));
   } catch {
     return null;
@@ -642,6 +736,16 @@ export class GoUsageTracker {
    */
   private dailyUsage(rows: HistoryRow[], dayStartMs: number): UsageDaily {
     return sumDailyUsage(rows, this.entries, dayStartMs, this.todayYesterdaySource());
+  }
+
+  /**
+   * Time-series data for the usage panel: per-day totals and per-model
+   * per-day rows over the last `days` days.
+   */
+  getUsageSeries(days: number): UsageSeries {
+    const nowMs = Date.now();
+    const rows = readOpenCodeHistory() ?? [];
+    return buildUsageSeries(rows, this.entries, days, this.dayStartMs(nowMs), this.todayYesterdaySource());
   }
 
   /**

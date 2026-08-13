@@ -61,6 +61,14 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "keybindings": [
+      {
+        "command": "opencodego.showUsageDetails",
+        "key": "ctrl+shift+alt+u",
+        "mac": "cmd+shift+alt+u",
+        "when": "!inQuickOpen"
+      }
+    ],
     "commands": [
       {
         "command": "opencodego.manage",
@@ -176,6 +184,13 @@
           "minimum": 5,
           "maximum": 3600,
           "description": "How often the usage status bar and panel refresh in the background (seconds). Terminal-side (OpenCode CLI) usage and server meters are re-read on this cadence; values below the 60s server-sync TTL only refresh the local CLI history rows."
+        },
+        "opencodego.usageChartDays": {
+          "type": "number",
+          "default": 14,
+          "minimum": 7,
+          "maximum": 90,
+          "description": "How many days the usage panel charts cover (daily spend / requests / tokens and the per-model breakdown)."
         },
         "opencodego.usageDayBoundary": {
           "type": "string",

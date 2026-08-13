@@ -118,12 +118,14 @@ import {
   DEFAULT_USAGE_CODEBASE_WINDOW_DAYS,
   DEFAULT_USAGE_DAY_BOUNDARY,
   DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS,
+  DEFAULT_USAGE_CHART_DAYS,
   DEFAULT_USAGE_ROLLING_SESSION_METER,
   DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE,
   SETTING_USAGE_CODEBASE_ROW,
   SETTING_USAGE_CODEBASE_WINDOW_DAYS,
   SETTING_USAGE_DAY_BOUNDARY,
   SETTING_USAGE_REFRESH_INTERVAL_SECONDS,
+  SETTING_USAGE_CHART_DAYS,
   SETTING_USAGE_ROLLING_SESSION_METER,
   SETTING_USAGE_TODAY_YESTERDAY_SOURCE,
   type UsageTodayYesterdaySource,
@@ -879,7 +881,7 @@ export function activate(context: vscode.ExtensionContext) {
       // history) — replaces the old "Latest Session (est)" estimate row.
       if (usageCodebaseRowVisible()) {
         const codebaseItem: vscode.QuickPickItem = {
-          label: "$(repo) Codebase (all-time)",
+          label: "$(repo) Total spend",
           description: formatUsd(summary.codebase.cost),
           detail: `${formatTokenCount(summary.codebase.tokens)} tokens · ${formatCount(summary.codebase.requests)} requests`,
           alwaysShow: true,
@@ -1400,8 +1402,8 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
     return;
   }
 
-  usageWebviewPanel = vscode.window.createWebviewPanel("opencodego.usageWebview", "OpenCode Usage Summary", vscode.ViewColumn.Beside, {
-    enableScripts: false,
+  usageWebviewPanel = vscode.window.createWebviewPanel("opencodego.usageWebview", "OpenCode Usage", vscode.ViewColumn.Beside, {
+    enableScripts: true,
     retainContextWhenHidden: true,
   });
 
@@ -1416,6 +1418,11 @@ function showUsageWebview(context: vscode.ExtensionContext): void {
   updateWebviewContent();
 }
 
+/** Escape a JSON payload for embedding in an HTML <script> block. */
+function jsonForWebview(value: unknown): string {
+  return JSON.stringify(value).replace(/<\//g, "<\\/");
+}
+
 function updateWebviewContent(): void {
   if (!usageWebviewPanel || !goUsageTracker) return;
   const tracker = activeGoUsageTracker();
@@ -1424,148 +1431,453 @@ function updateWebviewContent(): void {
     return;
   }
   const s = tracker.getSummary();
+  const chartDays = vscode.workspace.getConfiguration(CONFIG_SECTION).get<number>(SETTING_USAGE_CHART_DAYS, DEFAULT_USAGE_CHART_DAYS);
+  const series = tracker.getUsageSeries(chartDays);
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const profileLabel = activeProfile?.label ?? "OpenCode Go";
+  const showRolling = usageRollingMeterVisible();
+
+  const rings = [
+    ...(showRolling
+      ? [
+          {
+            key: "session",
+            label: "Session (5h)",
+            percent: s.session.percent,
+            spent: s.session.spent,
+            limit: s.session.limit,
+            resetsIn: formatRelativeTime(s.session.resetsAt),
+          },
+        ]
+      : []),
+    {
+      key: "weekly",
+      label: "Weekly",
+      percent: s.weekly.percent,
+      spent: s.weekly.spent,
+      limit: s.weekly.limit,
+      resetsIn: formatRelativeTime(s.weekly.resetsAt),
+    },
+    {
+      key: "monthly",
+      label: "Monthly",
+      percent: s.monthly.percent,
+      spent: s.monthly.spent,
+      limit: s.monthly.limit,
+      resetsIn: formatRelativeTime(s.monthly.resetsAt),
+    },
+  ];
+
+  const data = {
+    profile: profileLabel,
+    rings,
+    stats: {
+      total: { label: "Total spend", cost: s.codebase.cost, tokens: s.codebase.tokens, requests: s.codebase.requests },
+      today: { label: "Today", cost: s.today.cost, tokens: s.today.tokens, requests: s.today.requests },
+      yesterday: { label: "Yesterday", cost: s.yesterday.cost, tokens: s.yesterday.tokens, requests: s.yesterday.requests },
+    },
+    days: series.days,
+    byModel: series.byModel,
+    windowDays: chartDays,
+  };
 
   usageWebviewPanel.webview.html = `
     <!DOCTYPE html>
     <html lang="en">
     <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>OpenCode Usage Summary — ${escapeHtml(profileLabel)}</title>
-      <style>
-        :root {
-          --bg: var(--vscode-editorWidget-background, #252526);
-          --border: var(--vscode-widget-border, #3c3c3c);
-          --text: var(--vscode-foreground, #cccccc);
-          --text-dim: var(--vscode-descriptionForeground, #9d9d9d);
-          --accent: var(--vscode-textLink-foreground, #3794ff);
-          --track: var(--vscode-widget-border, #3c3c3c);
-          --divider: var(--vscode-widget-border, #3c3c3c);
-        }
-        * { box-sizing: border-box; }
-        body {
-          margin: 0;
-          height: 100vh;
-          background: var(--vscode-editor-background, #1e1e1e);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 16px;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, sans-serif;
-        }
-        .card {
-          width: 320px;
-          background: var(--bg);
-          border: 1px solid var(--border);
-          border-radius: 6px;
-          color: var(--text);
-          font-size: 13px;
-          padding: 16px;
-        }
-        .title {
-          font-size: 13px;
-          font-weight: 600;
-          margin-bottom: 14px;
-        }
-        .row-label {
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          margin-bottom: 6px;
-        }
-        .row-label .name { font-weight: 600; font-size: 13px; }
-        .row-label .resets { font-size: 11px; color: var(--text-dim); }
-        .bar {
-          height: 4px;
-          width: 100%;
-          background: var(--track);
-          border-radius: 2px;
-          overflow: hidden;
-          margin-bottom: 6px;
-        }
-        .bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
-        .row-sub {
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          margin-bottom: 16px;
-          font-size: 12px;
-        }
-        .row-sub .used { color: var(--text-dim); }
-        .row-sub .pct { font-weight: 600; }
-        .section:last-of-type .row-sub { margin-bottom: 14px; }
-        .divider { border-top: 1px solid var(--divider); margin: 0 -16px 12px; }
-        .stats { display: flex; justify-content: space-between; margin-bottom: 10px; }
-        .stats:last-of-type { margin-bottom: 14px; }
-        .stat { flex: 1; }
-        .stat .label { color: var(--text-dim); font-size: 11px; margin-bottom: 2px; }
-        .stat .value { font-weight: 600; font-size: 13px; }
-        .footer {
-          display: flex;
-          gap: 16px;
-          padding-top: 12px;
-          border-top: 1px solid var(--divider);
-          margin: 0 -16px;
-          padding-left: 16px;
-        }
-        .footer a { color: var(--accent); font-size: 12px; text-decoration: none; }
-        .footer a:hover { text-decoration: underline; }
-      </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+    <title>OpenCode Usage</title>
+    <style>
+      :root{
+        --bg-0: #101216; --bg-1: #161a20; --bg-2: #1b2029; --bg-3: #222936;
+        --line: #242a33; --line-soft: #1b2028;
+        --text-hi: #eef1f5; --text-mid: #9aa4b2; --text-lo: #5b6472;
+        --amber: #e3b341; --teal: #3fdbb0; --coral: #ef7f6b; --blue: #5aa9ff; --violet: #a98ef9;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --s: clamp(10px, 1.6vh, 18px);
+        --radius: clamp(8px, 1vh, 14px);
+      }
+      *{box-sizing:border-box; margin:0; padding:0;}
+      html, body{ height:100%; width:100%; overflow:hidden; background:var(--bg-0); color:var(--text-hi); font-family:var(--sans); -webkit-font-smoothing:antialiased; }
+      body{
+        display:grid; grid-template-rows:auto auto 1fr; grid-template-areas:"topbar" "rings" "main";
+        row-gap: var(--s); height:100vh; padding: var(--s);
+        background:
+          radial-gradient(1100px 500px at 90% -20%, rgba(227,179,65,0.05), transparent 60%),
+          radial-gradient(900px 500px at -10% 0%, rgba(63,219,176,0.04), transparent 55%),
+          var(--bg-0);
+      }
+      ::selection{ background:#7a6427; color:var(--text-hi); }
+      *{ min-width:0; min-height:0; }
+
+      .topbar{ grid-area:topbar; display:flex; align-items:center; gap: var(--s); }
+      .brand{ display:flex; align-items:center; gap: clamp(6px,1vw,10px); min-width:0; }
+      .brand .mark{
+        width: clamp(20px, 2.4vh, 28px); height: clamp(20px, 2.4vh, 28px);
+        border-radius: 7px; background:linear-gradient(135deg, var(--amber), var(--coral));
+        display:flex; align-items:center; justify-content:center;
+        font-family:var(--mono); font-weight:700; font-size: clamp(9px, 1.2vh, 12px);
+        color:#141205; flex:none;
+      }
+      .brand .name{ font-weight:700; font-size: clamp(12px, 1.6vh, 15px); letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .brand .sub{ color:var(--text-lo); font-size: clamp(9px, 1.1vh, 11px); font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+      .rings-row{ grid-area:rings; display:flex; gap: var(--s); }
+      .ring-card{
+        flex:1 1 0; background:var(--bg-1); border:1px solid var(--line-soft); border-radius: var(--radius);
+        padding: var(--s); display:flex; align-items:center; gap: var(--s); overflow:hidden;
+      }
+      .ring-wrap{ position:relative; width: clamp(38px, 6vh, 58px); height: clamp(38px, 6vh, 58px); flex:none; }
+      .ring-wrap svg{ width:100%; height:100%; transform:rotate(-90deg); display:block; }
+      .ring-bg{ fill:none; stroke:var(--bg-3); stroke-width:8; }
+      .ring-fg{ fill:none; stroke-width:8; stroke-linecap:round; transition:stroke-dashoffset 1s cubic-bezier(.4,0,.2,1); }
+      .ring-card.session .ring-fg{ stroke:var(--blue); }
+      .ring-card.weekly .ring-fg{ stroke:var(--amber); }
+      .ring-card.monthly .ring-fg{ stroke:var(--teal); }
+      .ring-pct{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-weight:700; font-size: clamp(9px, 1.4vh, 13px); }
+      .ring-info{ min-width:0; overflow:hidden; }
+      .ring-info .label{ font-size: clamp(10px, 1.3vh, 12.5px); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ring-info .reset{ font-family:var(--mono); font-size: clamp(8.5px, 1vh, 10.5px); color:var(--text-lo); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ring-info .amounts{ font-family:var(--mono); font-size: clamp(9.5px, 1.2vh, 12px); color:var(--text-mid); margin-top: clamp(3px,0.5vh,6px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ring-info .amounts b{ color:var(--text-hi); font-weight:700; }
+
+      .main-panel{
+        grid-area:main; background:var(--bg-1); border:1px solid var(--line-soft); border-radius: var(--radius);
+        padding: var(--s); display:flex; flex-direction:column; gap: var(--s); overflow:hidden; position:relative;
+      }
+      .panel-top{ display:flex; align-items:center; justify-content:space-between; gap: var(--s); flex:none; flex-wrap:nowrap; }
+      .tabs{ display:flex; gap: calc(var(--s)/3); background:var(--bg-2); border:1px solid var(--line-soft); border-radius: calc(var(--radius) - 2px); padding: calc(var(--s)/5); flex:none; }
+      .tab-btn{
+        font-family:var(--sans); font-weight:600; font-size: clamp(9.5px, 1.1vh, 11.5px);
+        padding: calc(var(--s)/2.4) calc(var(--s)*0.85); border-radius: calc(var(--radius) - 4px);
+        border:none; background:transparent; color:var(--text-mid); cursor:pointer; white-space:nowrap;
+        transition: background .15s ease, color .15s ease;
+      }
+      .tab-btn:hover{ color:var(--text-hi); }
+      .tab-btn.active{ background:var(--bg-3); color:var(--text-hi); }
+      .tab-btn .sw{ display:inline-block; width:7px; height:7px; border-radius:2px; margin-right:6px; opacity:.55; }
+      .tab-btn.active .sw{ opacity:1; }
+
+      .stat-chips{ display:flex; gap: var(--s); flex:none; }
+      .stat-chip{ text-align:right; }
+      .stat-chip .k{ font-size: clamp(8.5px, 1vh, 10px); color:var(--text-lo); text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+      .stat-chip .v{ font-family:var(--mono); font-weight:700; font-size: clamp(12px, 1.5vh, 15px); color:var(--text-hi); white-space:nowrap; margin-top:2px; }
+
+      .chart-box{ position:relative; flex:1; min-height:0; }
+      .chart-box svg{ width:100%; height:100%; display:block; overflow:visible; }
+      .chart-box text{ font-family:var(--mono); }
+
+      /* cursor-follow tooltip */
+      .ttip{
+        position:absolute; pointer-events:none; z-index:5; display:none;
+        background:var(--bg-3); border:1px solid var(--line); border-radius:6px;
+        padding:6px 9px; font-family:var(--mono); font-size:11px; color:var(--text-hi);
+        white-space:nowrap; box-shadow:0 4px 14px rgba(0,0,0,.35);
+      }
+      .ttip .t-line{ color:var(--text-lo); margin-right:6px; }
+      .ttip b{ color:var(--text-hi); }
+      .ttip .t-sub{ color:var(--text-mid); font-size:10px; margin-top:2px; }
+
+      .foot{ display:flex; gap: var(--s); flex:none; align-items:center; }
+      .foot a{ color:var(--text-mid); font-size: clamp(9.5px, 1.1vh, 11px); text-decoration:none; cursor:pointer; }
+      .foot a:hover{ color:var(--text-hi); text-decoration:underline; }
+      .foot .spacer{ flex:1; }
+
+      @media (max-width: 620px){
+        .rings-row{ flex-wrap:wrap; }
+        .ring-card{ flex:1 1 100%; }
+        .panel-top{ flex-wrap:wrap; }
+        .stat-chips{ display:none; }
+        .brand .sub{ display:none; }
+      }
+      @media (prefers-reduced-motion: reduce){ *{ transition:none !important; animation:none !important; } }
+    </style>
     </head>
     <body>
-      <div class="card">
-        <div class="title">${escapeHtml(profileLabel)} - Usage</div>
-
-        ${usageRollingMeterVisible() ? usageCardSectionHtml("Session (5h rolling)", s.session) : ""}
-        ${usageCardSectionHtml("Weekly", s.weekly)}
-        ${usageCardSectionHtml("Monthly", s.monthly)}
-
-        <div class="divider"></div>
-
-        ${usageCodebaseRowVisible() ? usageCardStatsHtml("Codebase (all-time)", s.codebase) : ""}
-        ${usageCardStatsHtml("Today", s.today)}
-        ${usageCardStatsHtml("Yesterday", s.yesterday)}
-
-        <div class="footer">
-          <a href="command:opencodego.setUsageTargets">Set spent targets</a>
-          ${nonLegacyCount(profilesCache) > 0 ? '<a href="command:opencodego.renameActiveProfile">Rename</a>' : ""}
+      <div class="topbar">
+        <div class="brand">
+          <div class="mark">OC</div>
+          <div class="name">${escapeHtml(profileLabel)} — Usage</div>
+          <div class="sub">opencode-copilot-chat · last ${String(chartDays)} days</div>
         </div>
       </div>
+
+      <div class="rings-row" id="rings"></div>
+
+      <div class="main-panel">
+        <div class="panel-top">
+          <div class="tabs" id="tabs">
+            <button class="tab-btn active" data-metric="spend"><span class="sw" style="background:var(--amber)"></span>Spend</button>
+            <button class="tab-btn" data-metric="requests"><span class="sw" style="background:var(--blue)"></span>Requests</button>
+            <button class="tab-btn" data-metric="tokens"><span class="sw" style="background:var(--teal)"></span>Tokens</button>
+            <button class="tab-btn" data-metric="models"><span class="sw" style="background:var(--coral)"></span>By model</button>
+          </div>
+          <div class="stat-chips" id="statChips"></div>
+        </div>
+        <div class="chart-box" id="chartBox">
+          <svg id="chartSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="ttip" id="ttip"></div>
+        </div>
+        <div class="foot">
+          <a href="command:opencodego.setUsageTargets">Set spent targets</a>
+          ${nonLegacyCount(profilesCache) > 0 ? '<a href="command:opencodego.renameActiveProfile">Rename profile</a>' : ""}
+          <span class="spacer"></span>
+          <a href="command:opencodego.setUsageTargets">Auto-refreshes every ${String(usageRefreshIntervalSeconds())}s</a>
+        </div>
+      </div>
+
+      <script type="application/json" id="usage-data">${jsonForWebview(data)}</script>
+      <script>
+      (function () {
+        'use strict';
+        var DATA = JSON.parse(document.getElementById('usage-data').textContent);
+        var MODEL_COLORS = ['#e3b341','#5aa9ff','#3fdbb0','#ef7f6b','#a98ef9','#7fd1a8'];
+        var svgNS = 'http://www.w3.org/2000/svg';
+        var svg = document.getElementById('chartSvg');
+        var box = document.getElementById('chartBox');
+        var chips = document.getElementById('statChips');
+        var ttip = document.getElementById('ttip');
+        var current = 'spend';
+
+        function el(tag, attrs, text) {
+          var n = document.createElementNS(svgNS, tag);
+          for (var k in attrs) n.setAttribute(k, attrs[k]);
+          if (text !== undefined) n.textContent = text;
+          return n;
+        }
+        function clear() { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+        function fmtUsd(v) { return v >= 1000 ? '$' + (v/1000).toFixed(2) + 'K' : '$' + v.toFixed(2); }
+        function fmtCount(v) {
+          if (v >= 1e9) return (v/1e9).toFixed(1) + 'B';
+          if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+          if (v >= 1e3) return (v/1e3).toFixed(1) + 'k';
+          return String(v);
+        }
+        function fmtTokens(v) { return fmtCount(v); }
+        function dayLabel(ms) {
+          var d = new Date(ms);
+          return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        }
+        function niceMax(v) {
+          if (v <= 0) return 1;
+          var mag = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+          var norm = v / mag;
+          return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+        }
+        function metricValues(m) {
+          return DATA.days.map(function (d) { return m === 'spend' ? d.cost : m === 'requests' ? d.requests : d.tokens; });
+        }
+        function metricFmt(m) {
+          return m === 'spend' ? fmtUsd : m === 'requests' ? fmtCount : fmtTokens;
+        }
+        function metricUnit(m) { return m === 'spend' ? '' : m === 'requests' ? ' requests' : ' tokens'; }
+        function metricTotal(m) {
+          var vals = metricValues(m);
+          return vals.reduce(function (a, b) { return a + b; }, 0);
+        }
+        function showTooltip(x, y, html) {
+          ttip.innerHTML = html;
+          ttip.style.display = 'block';
+          var r = box.getBoundingClientRect();
+          var px = x - r.left + 16, py = y - r.top + 14;
+          if (px + 220 > r.width) px = x - r.left - 220;
+          if (py + 60 > r.height) py = y - r.top - 60;
+          ttip.style.left = px + 'px';
+          ttip.style.top = py + 'px';
+        }
+        function hideTooltip() { ttip.style.display = 'none'; }
+
+        function drawLine(m) {
+          var W = box.clientWidth, H = box.clientHeight;
+          if (!W || !H) return;
+          svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+          clear();
+          var padL = 44, padR = 10, padT = 12, padB = 24;
+          var plotW = Math.max(1, W - padL - padR), plotH = Math.max(1, H - padT - padB);
+          var vals = metricValues(m);
+          var maxVal = niceMax(Math.max.apply(null, vals) * 1.15);
+          var color = m === 'spend' ? '#e3b341' : m === 'requests' ? '#5aa9ff' : '#3fdbb0';
+          var fmt = metricFmt(m), unit = metricUnit(m);
+          var n = DATA.days.length;
+
+          var defs = el('defs', {});
+          var grad = el('linearGradient', { id: 'grad', x1: '0', y1: '0', x2: '0', y2: '1' });
+          grad.appendChild(el('stop', { offset: '0%', 'stop-color': color, 'stop-opacity': '0.30' }));
+          grad.appendChild(el('stop', { offset: '100%', 'stop-color': color, 'stop-opacity': '0' }));
+          defs.appendChild(grad);
+          svg.appendChild(defs);
+
+          var bands = 4;
+          for (var i = 0; i <= bands; i++) {
+            var gy = padT + (plotH * i / bands);
+            var v = maxVal * (1 - i / bands);
+            svg.appendChild(el('line', { x1: padL, y1: gy, x2: W - padR, y2: gy, stroke: 'rgba(255,255,255,0.06)', 'stroke-width': '1' }));
+            svg.appendChild(el('text', { x: padL - 8, y: gy + 3, 'text-anchor': 'end', fill: '#5b6472', 'font-size': '9' }, fmt(v)));
+          }
+
+          var step = n > 1 ? plotW / (n - 1) : plotW;
+          var points = DATA.days.map(function (d, i) {
+            var x = padL + step * i;
+            var y = padT + plotH - (vals[i] / maxVal) * plotH;
+            return { x: x, y: y, v: vals[i], day: d };
+          });
+
+          var labelEvery = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(plotW / 46))));
+          DATA.days.forEach(function (d, i) {
+            if (i % labelEvery !== 0 && i !== n - 1) return;
+            svg.appendChild(el('text', { x: padL + step * i, y: H - 6, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '9' }, dayLabel(d.dayStart)));
+          });
+
+          var pathD = points.map(function (p, i) { return (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+          var areaD = pathD + ' L' + points[points.length - 1].x.toFixed(1) + ',' + (padT + plotH) + ' L' + points[0].x.toFixed(1) + ',' + (padT + plotH) + ' Z';
+          svg.appendChild(el('path', { d: areaD, fill: 'url(#grad)', stroke: 'none' }));
+          svg.appendChild(el('path', { d: pathD, fill: 'none', stroke: color, 'stroke-width': '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+
+          // cursor-follow nearest-day tooltip + visible dots
+          var hits = points.map(function (p, i) {
+            var c = el('circle', { cx: p.x, cy: p.y, r: '10', fill: 'transparent', stroke: 'none' });
+            c.addEventListener('mousemove', function (ev) { showDay(ev, p, i); });
+            c.addEventListener('mouseleave', hideTooltip);
+            svg.appendChild(c);
+            return c;
+          });
+          function showDay(ev, p, i) {
+            svg.querySelectorAll('.dot').forEach(function (d) { d.remove(); });
+            svg.appendChild(el('circle', { 'class': 'dot', cx: p.x, cy: p.y, r: '3.5', fill: color, stroke: '#161a20', 'stroke-width': '2' }));
+            showTooltip(ev.clientX, ev.clientY,
+              '<span class="t-line">' + dayLabel(p.day.dayStart) + '</span><b>' + fmt(p.v) + '</b>' + unit +
+              '<div class="t-sub">' + fmtCount(p.day.tokens) + ' tokens · ' + fmtCount(p.day.requests) + ' requests</div>');
+          }
+          void hits;
+          svg.appendChild(el('line', { x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: '#242a33', 'stroke-width': '1' }));
+        }
+
+        function drawModels() {
+          var W = box.clientWidth, H = box.clientHeight;
+          if (!W || !H) return;
+          svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+          clear();
+
+          // per-model totals (spend) to rank bars; segments = days
+          var totals = {};
+          var perModel = {};
+          DATA.byModel.forEach(function (p) {
+            totals[p.model] = (totals[p.model] || 0) + p.cost;
+            (perModel[p.model] = perModel[p.model] || []).push(p);
+          });
+          var models = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; });
+          if (models.length === 0) {
+            svg.appendChild(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: '#5b6472', 'font-size': '11' }, 'No usage in the last ' + DATA.windowDays + ' days'));
+            return;
+          }
+          var dayIndex = {};
+          DATA.days.forEach(function (d, i) { dayIndex[d.dayStart] = i; });
+          var dayCount = DATA.days.length;
+          var maxTotal = niceMax(Math.max.apply(null, models.map(function (m) { return totals[m]; })) * 1.15);
+
+          var labelW = Math.min(W * 0.34, 160);
+          var valueW = 56;
+          var barX = labelW + 12;
+          var barW = Math.max(20, W - barX - valueW);
+          var rowH = H / models.length;
+
+          models.forEach(function (model, i) {
+            var cy = rowH * i + rowH / 2;
+            var barH = Math.min(rowH * 0.46, 18);
+            var color = MODEL_COLORS[i % MODEL_COLORS.length];
+
+            svg.appendChild(el('text', { x: labelW, y: cy + 3, 'text-anchor': 'end', fill: '#eef1f5', 'font-size': '10' }, model));
+            svg.appendChild(el('rect', { x: barX, y: cy - barH / 2, width: barW, height: barH, rx: 4, fill: 'rgba(255,255,255,0.05)' }));
+
+            // stacked segments, oldest day at the left
+            var days = perModel[model].slice().sort(function (a, b) { return a.dayStart - b.dayStart; });
+            var x = barX;
+            days.forEach(function (p) {
+              var segW = Math.max(1, (p.cost / maxTotal) * barW);
+              var seg = el('rect', { x: x, y: cy - barH / 2, width: segW, height: barH, rx: 2, fill: color, 'fill-opacity': String(0.35 + 0.6 * ((dayIndex[p.dayStart] + 1) / dayCount)) });
+              seg.addEventListener('mousemove', function (ev) {
+                showTooltip(ev.clientX, ev.clientY,
+                  '<span class="t-line">' + model + ' · ' + dayLabel(p.dayStart) + '</span><b>' + fmtUsd(p.cost) + '</b>' +
+                  '<div class="t-sub">' + fmtCount(p.tokens) + ' tokens · ' + fmtCount(p.requests) + ' requests</div>');
+              });
+              seg.addEventListener('mouseleave', hideTooltip);
+              svg.appendChild(seg);
+              x += segW;
+            });
+
+            var val = el('text', { x: barX + barW + 8, y: cy + 3, 'text-anchor': 'start', fill: '#9aa4b2', 'font-size': '10' });
+            val.textContent = fmtUsd(totals[model]);
+            svg.appendChild(val);
+          });
+          svg.appendChild(el('text', { x: barX, y: H - 6, 'text-anchor': 'start', fill: '#5b6472', 'font-size': '9' }, 'Segments = days (hover for model · day breakdown)'));
+        }
+
+        function render(key) {
+          current = key;
+          var fmt = metricFmt(key), unit = metricUnit(key);
+          if (key === 'models') {
+            chips.innerHTML =
+              '<div class="stat-chip"><div class="k">Total spend</div><div class="v">' + fmtUsd(metricTotal('spend')) + '</div></div>' +
+              '<div class="stat-chip"><div class="k">Window</div><div class="v">' + DATA.windowDays + ' days</div></div>';
+            drawModels();
+            return;
+          }
+          var st = DATA.stats;
+          var totalKey = key === 'spend' ? 'total' : key;
+          chips.innerHTML =
+            '<div class="stat-chip"><div class="k">' + st.today.label + '</div><div class="v">' + fmt(key === 'spend' ? st.today.cost : st.today[key]) + '</div></div>' +
+            '<div class="stat-chip"><div class="k">' + st.yesterday.label + '</div><div class="v">' + fmt(key === 'spend' ? st.yesterday.cost : st.yesterday[key]) + '</div></div>' +
+            '<div class="stat-chip"><div class="k">' + (key === 'spend' ? st.total.label : 'Total ' + key) + '</div><div class="v">' + fmt(key === 'spend' ? st.total.cost : st.total[key]) + '</div></div>';
+          void unit;
+          drawLine(key);
+        }
+
+        document.getElementById('tabs').addEventListener('click', function (e) {
+          var btn = e.target.closest('.tab-btn');
+          if (!btn) return;
+          document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          render(btn.dataset.metric);
+        });
+
+        // rings
+        var ringsBox = document.getElementById('rings');
+        ringsBox.innerHTML = DATA.rings.map(function (r) {
+          var c = 2 * Math.PI * 24;
+          return '<div class="ring-card ' + r.key + '">' +
+            '<div class="ring-wrap"><svg viewBox="0 0 58 58">' +
+            '<circle class="ring-bg" cx="29" cy="29" r="24"></circle>' +
+            '<circle class="ring-fg" cx="29" cy="29" r="24" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + c.toFixed(1) + '" data-pct="' + r.percent + '"></circle>' +
+            '</svg><div class="ring-pct">' + Math.round(r.percent) + '%</div></div>' +
+            '<div class="ring-info"><div class="label">' + r.label + '</div>' +
+            '<div class="reset">resets in ' + r.resetsIn + '</div>' +
+            '<div class="amounts"><b>' + fmtUsd(r.spent) + '</b> / ' + fmtUsd(r.limit) + '</div></div></div>';
+        }).join('');
+        document.querySelectorAll('.ring-fg').forEach(function (circle) {
+          var pct = Math.max(0, Math.min(100, parseFloat(circle.getAttribute('data-pct'))));
+          var c = 2 * Math.PI * 24;
+          requestAnimationFrame(function () {
+            setTimeout(function () { circle.style.strokeDashoffset = String(c - (pct / 100) * c); }, 120);
+          });
+        });
+
+        var resizeTimer = null;
+        function scheduleRedraw() {
+          if (resizeTimer) cancelAnimationFrame(resizeTimer);
+          resizeTimer = requestAnimationFrame(function () { render(current); });
+        }
+        if (window.ResizeObserver) new ResizeObserver(scheduleRedraw).observe(box);
+        else window.addEventListener('resize', scheduleRedraw);
+
+        render('spend');
+      })();
+      </script>
     </body>
     </html>
   `;
-}
-
-/** One meter section: label + resets, bar, used + percent. */
-function usageCardSectionHtml(label: string, p: _UsageSummary["session"]): string {
-  const pct = p.percent.toFixed(1);
-  const width = Math.min(Math.max(p.percent, 0), 100);
-  return [
-    '<div class="section">',
-    '<div class="row-label">',
-    `<span class="name">${escapeHtml(label)}</span>`,
-    `<span class="resets">Resets in ${escapeHtml(formatRelativeTime(p.resetsAt))}</span>`,
-    "</div>",
-    `<div class="bar"><div class="bar-fill" style="width:${width}%"></div></div>`,
-    '<div class="row-sub">',
-    `<span class="used">${escapeHtml(`${formatUsd(p.spent)} / ${formatUsd(p.limit)} used`)}</span>`,
-    `<span class="pct">${pct}%</span>`,
-    "</div>",
-    "</div>",
-  ].join("");
-}
-
-/** One stats row: three label-over-value columns. */
-function usageCardStatsHtml(label: string, day: _UsageSummary["today"]): string {
-  return [
-    '<div class="stats">',
-    `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(formatUsd(day.cost))}</div></div>`,
-    `<div class="stat"><div class="label">Requests</div><div class="value">${formatCount(day.requests)}</div></div>`,
-    `<div class="stat"><div class="label">Tokens</div><div class="value">${escapeHtml(formatTokenCount(day.tokens))}</div></div>`,
-    "</div>",
-  ].join("");
 }
 
 function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>): vscode.MarkdownString {
@@ -1766,7 +2078,7 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   // stable regardless of whether a session is currently active.
   const deviceRows: Array<[string, number, number, number, number]> = [];
   if (usageCodebaseRowVisible()) {
-    deviceRows.push(["Codebase:", s.codebase.cost, s.codebase.requests, s.codebase.tokens, firstRowY]);
+    deviceRows.push(["Total spend:", s.codebase.cost, s.codebase.requests, s.codebase.tokens, firstRowY]);
   }
   const codebaseOffset = usageCodebaseRowVisible() ? 1 : 0;
   deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + codebaseOffset * rowGap]);
