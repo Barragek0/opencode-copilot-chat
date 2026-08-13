@@ -2772,11 +2772,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   private errMsg(error: unknown): string {
-    if (error instanceof Error) {
-      const cause = (error as { cause?: { code?: string; name?: string; message?: string } }).cause;
-      return cause?.code ? `${error.message} [${cause.code}]` : error.message;
-    }
-    return String(error);
+    const message = getErrorMessage(error);
+    const cause = (error as { cause?: { code?: string; name?: string; message?: string } } | null | undefined)?.cause;
+    return cause?.code ? `${message} [${cause.code}]` : message;
   }
 
   /**

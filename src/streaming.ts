@@ -29,7 +29,7 @@ import {
 } from "./contextWindowHookBridge";
 import { formatUsageLogLine } from "./usage";
 import { parseToolInput, ToolCallAccumulator, type PendingToolCall } from "./toolCallAccumulator";
-import { isRecord, sleepWithCancellation } from "./utils";
+import { getErrorMessage, isRecord, sleepWithCancellation } from "./utils";
 
 export interface StreamRequestOptions {
   url: string;
@@ -641,7 +641,7 @@ async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): P
       throw requestError;
     }
     emitSummary(0, 0, {
-      errorMessage: error instanceof Error ? error.message : String(error),
+      errorMessage: getErrorMessage(error),
     });
     throw error;
   } finally {

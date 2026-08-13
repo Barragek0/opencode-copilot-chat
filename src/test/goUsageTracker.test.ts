@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import type { ModelCost } from "../metadata.js";
 import type { TransportRequestSummary } from "../streaming.js";
+import { GO_USAGE_LOG_KEY, GO_USAGE_BASELINE_KEY, GO_SESSION_COSTS_KEY, GO_SESSION_IDLE_MS, GO_MAX_SESSIONS } from "../config.js";
 
 // ── Types (populated by dynamic import in before()) ────────────────────────
 
@@ -312,10 +313,10 @@ describe("goUsageTracker", () => {
 
         tracker.record(makeSummary({ sessionId: "s1", promptTokens: 100, completionTokens: 50 }));
 
-        const storedEntries = context.globalState.get("opencodego.usageLog.v1", []);
+        const storedEntries = context.globalState.get(GO_USAGE_LOG_KEY, []);
         assert.equal(storedEntries.length, 1);
 
-        const storedSessions = context.globalState.get<SessionSummary[]>("opencodego.sessionCosts.v1", []);
+        const storedSessions = context.globalState.get<SessionSummary[]>(GO_SESSION_COSTS_KEY, []);
         assert.equal(storedSessions.length, 1);
         assert.equal(storedSessions[0].sessionId, "s1");
       });
@@ -402,7 +403,7 @@ describe("goUsageTracker", () => {
       it("restores entries and session costs from stored state", () => {
         const now = Date.now();
         const initial: Record<string, unknown> = {
-          "opencodego.usageLog.v1": [
+          [GO_USAGE_LOG_KEY]: [
             {
               timestamp: now,
               modelId: "qwen3.6-plus",
@@ -413,7 +414,7 @@ describe("goUsageTracker", () => {
               sessionId: "restored-session",
             },
           ],
-          "opencodego.sessionCosts.v1": [
+          [GO_SESSION_COSTS_KEY]: [
             {
               sessionId: "restored-session",
               cost: 0.5,
@@ -423,7 +424,7 @@ describe("goUsageTracker", () => {
               lastActivity: now,
             },
           ],
-          "opencodego.usageBaseline.v1": {},
+          [GO_USAGE_BASELINE_KEY]: {},
         };
 
         const tracker = new GoUsageTracker(createMockContext(initial));
@@ -438,16 +439,16 @@ describe("goUsageTracker", () => {
 
       it("filters invalid entries during restore", () => {
         const initial: Record<string, unknown> = {
-          "opencodego.usageLog.v1": [
+          [GO_USAGE_LOG_KEY]: [
             { timestamp: Date.now(), modelId: "valid", cost: 0.1, promptTokens: 10, completionTokens: 5, cachedTokens: 0, sessionId: "s1" },
             { modelId: "no-timestamp", cost: 0.1, promptTokens: 10, completionTokens: 5, cachedTokens: 0 }, // missing timestamp
             { timestamp: "string-not-number", modelId: "bad-type", cost: 0.1, promptTokens: 10, completionTokens: 5, cachedTokens: 0 }, // timestamp wrong type
           ],
-          "opencodego.sessionCosts.v1": [
+          [GO_SESSION_COSTS_KEY]: [
             { sessionId: "s1", cost: 0.1, requests: 1, promptTokens: 10, completionTokens: 5, lastActivity: Date.now() },
             { cost: 0.2, requests: 1, promptTokens: 20, completionTokens: 10 }, // missing sessionId
           ],
-          "opencodego.usageBaseline.v1": {},
+          [GO_USAGE_BASELINE_KEY]: {},
         };
 
         const tracker = new GoUsageTracker(createMockContext(initial));
@@ -482,7 +483,7 @@ describe("goUsageTracker", () => {
         tracker.record(makeSummary({ sessionId: "old", promptTokens: 1, completionTokens: 0 }));
 
         // Advance past the 2-hour idle threshold
-        mock.timers.tick(2 * 60 * 60 * 1000 + 1000);
+        mock.timers.tick(GO_SESSION_IDLE_MS + 1000);
 
         tracker.record(makeSummary({ sessionId: "new", promptTokens: 1, completionTokens: 0 }));
 
@@ -502,7 +503,7 @@ describe("goUsageTracker", () => {
         tracker.record(makeSummary({ sessionId: "s2", promptTokens: 1, completionTokens: 0 }));
 
         // Advance past idle threshold
-        mock.timers.tick(2 * 60 * 60 * 1000 + 1000);
+        mock.timers.tick(GO_SESSION_IDLE_MS + 1000);
 
         tracker.record(makeSummary({ sessionId: "s3", promptTokens: 1, completionTokens: 0 }));
 
@@ -518,7 +519,7 @@ describe("goUsageTracker", () => {
         }
 
         const sessions = tracker.getRecentSessionCosts(100);
-        assert.equal(sessions.length, 50, "should be capped at MAX_SESSIONS");
+        assert.equal(sessions.length, GO_MAX_SESSIONS, "should be capped at MAX_SESSIONS");
         // The oldest session (s0) should have been removed
         assert.equal(
           sessions.find((s) => s.sessionId === "s0"),

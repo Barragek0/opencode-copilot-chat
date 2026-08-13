@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as vscode from "vscode";
 import type { UsageSnapshot } from "./usage";
+import { getErrorMessage, isRecord } from "./utils";
 
 type HandleProgressChunkFn = (requestId: string, chunks: unknown[]) => Promise<void>;
 
@@ -182,8 +183,7 @@ async function captureProxy(logDiagnostic?: (message: string) => void): Promise<
     participant = vscode.chat.createChatParticipant(probeId, () => undefined);
     await new Promise((resolve) => setTimeout(resolve, 150));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logDiagnostic?.(`contextWindowHook: probe participant creation failed — ${message}`);
+    logDiagnostic?.(`contextWindowHook: probe participant creation failed — ${getErrorMessage(error)}`);
   } finally {
     participant?.dispose();
     Map.prototype.set = originalMapSet;
@@ -481,8 +481,4 @@ export async function initializeContextWindowHook(logDiagnostic?: (message: stri
   patchProxy(captured);
   logDiagnostic?.("contextWindowHook: proxy captured and patched successfully");
   return true;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
