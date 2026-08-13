@@ -56,4 +56,17 @@ describe("autocomplete usage — completionUsageToSeries", () => {
     assert.equal(series[0].dayStart, dayMs);
     assert.equal(series[0].suggested, 0);
   });
+
+  it("honors an explicit first day so both charts share buckets", () => {
+    const days: CompletionUsageDay[] = [{ dayStart: dayMs, suggested: 2, approved: 1 }];
+    // The usage series may start earlier (e.g. 5 days back on lifetime);
+    // the completion series must span the same range with zero-fills.
+    const first = dayMs - 5 * DAY;
+    const series = completionUsageToSeries(days, dayMs, 0, first);
+    assert.equal(series.length, 6);
+    assert.equal(series[0].dayStart, first);
+    assert.equal(series[5].dayStart, dayMs);
+    assert.equal(series[5].suggested, 2);
+    assert.equal(series[0].suggested, 0);
+  });
 });

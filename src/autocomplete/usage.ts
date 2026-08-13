@@ -48,10 +48,15 @@ export function completionUsageToSeries(
   days: CompletionUsageDay[],
   dayStartMs: number,
   windowDays: number,
+  firstDayOverride?: number,
 ): { dayStart: number; suggested: number; approved: number }[] {
   const byDay = new Map(days.map((d) => [d.dayStart, d]));
   let firstDay: number;
-  if (windowDays > 0) {
+  if (firstDayOverride !== undefined) {
+    // Align with the usage chart's own day range (both series must share the
+    // exact same buckets, otherwise hover values go undefined).
+    firstDay = firstDayOverride;
+  } else if (windowDays > 0) {
     firstDay = dayStartMs - (Math.max(1, Math.floor(windowDays)) - 1) * DAY_MS;
   } else if (days.length > 0) {
     const earliest = Math.min(...days.map((d) => d.dayStart));

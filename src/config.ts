@@ -186,7 +186,7 @@ export const SETTING_USAGE_REFRESH_INTERVAL_SECONDS = "usageRefreshIntervalSecon
 export const DEFAULT_USAGE_REFRESH_INTERVAL_SECONDS = 60;
 /** How many days the usage panel charts cover (0 = lifetime). */
 export const SETTING_USAGE_CHART_DAYS = "usageChartDays";
-export const DEFAULT_USAGE_CHART_DAYS = 14;
+export const DEFAULT_USAGE_CHART_DAYS = 0;
 /** globalState key for the per-day chat-completion usage counters. */
 export const COMPLETION_USAGE_KEY = "opencodego.completionUsage.v1";
 /** How many days of completion history are retained. */

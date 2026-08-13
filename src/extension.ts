@@ -1477,7 +1477,15 @@ function usageWebviewData(): Record<string, unknown> | undefined {
   const windowDays = usageChartWindowDays;
   const series = tracker.getUsageSeries(windowDays);
   const completionDays = contextCompletionUsage();
-  const completions = completionUsageToSeries(completionDays, trackerDayStart(tracker), windowDays);
+  // The completion series must share the EXACT day buckets of the usage
+  // series (they can differ in length on lifetime windows), otherwise the
+  // charts misalign and hovers resolve to undefined values.
+  const completions = completionUsageToSeries(
+    completionDays,
+    trackerDayStart(tracker),
+    windowDays,
+    series.days.length > 0 ? series.days[0].dayStart : undefined,
+  );
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const showRolling = usageRollingMeterVisible();
 
@@ -1710,8 +1718,8 @@ function usageWebviewHtml(profileLabel: string): string {
             <button class="tab-btn active" data-metric="spend"><span class="sw" style="background:var(--amber)"></span>Spend</button>
             <button class="tab-btn" data-metric="requests"><span class="sw" style="background:var(--blue)"></span>Requests</button>
             <button class="tab-btn" data-metric="tokens"><span class="sw" style="background:var(--teal)"></span>Tokens</button>
-            <button class="tab-btn" data-metric="models"><span class="sw" style="background:var(--coral)"></span>By model</button>
-            <button class="tab-btn" data-metric="suggested"><span class="sw" style="background:var(--violet)"></span>Suggested</button>
+            <button class="tab-btn" data-metric="models"><span class="sw" style="background:var(--coral)"></span>Models</button>
+            <button class="tab-btn" data-metric="suggested"><span class="sw" style="background:var(--violet)"></span>Suggestions</button>
             <button class="tab-btn" data-metric="approved"><span class="sw" style="background:#7fd1a8"></span>Approved</button>
           </div>
           <div class="stat-chips" id="statChips"></div>
@@ -1772,8 +1780,10 @@ function usageWebviewHtml(profileLabel: string): string {
           return cand * mag;
         }
         // Round the max up to a multiple of a round step, then emit 0..top ticks.
-        function axisTicks(maxVal, bands) {
+        // forceInt keeps counts whole (suggestions/approvals never show 2.5).
+        function axisTicks(maxVal, bands, forceInt) {
           var step = niceStep(maxVal / Math.max(1, bands));
+          if (forceInt) step = Math.max(1, Math.round(step));
           var top = Math.ceil(maxVal / step) * step;
           var ticks = [];
           for (var v = top; v > -1e-9; v -= step) ticks.push(Math.round(v * 10000) / 10000);
@@ -1787,7 +1797,10 @@ function usageWebviewHtml(profileLabel: string): string {
           if (m === 'spend') return DATA.days.map(function (d) { return d.cost; });
           if (m === 'requests') return DATA.days.map(function (d) { return d.requests; });
           if (m === 'tokens') return DATA.days.map(function (d) { return d.tokens; });
-          return DATA.completions.map(function (d) { return m === 'suggested' ? d.suggested : d.approved; });
+          var vals = (DATA.completions || []).map(function (d) { return m === 'suggested' ? d.suggested : d.approved; });
+          // zero-fill so every day bucket has a value (lifetime ranges differ)
+          while (vals.length < DATA.days.length) vals.push(0);
+          return vals;
         }
         function metricFmt(m) {
           if (m === 'spend') return fmtUsd;
@@ -1827,11 +1840,20 @@ function usageWebviewHtml(profileLabel: string): string {
           var plotW = Math.max(1, W - padL - padR), plotH = Math.max(1, H - padT - padB);
           var vals = metricValues(m);
           var maxVal = niceMax(Math.max.apply(null, vals) * 1.15);
-          var axis = axisTicks(maxVal, 4);
+          var isCount = m === 'suggested' || m === 'approved';
+          var axis = axisTicks(maxVal, 4, isCount);
           maxVal = axis.top;
           var color = metricColor(m);
           var fmt = metricFmt(m), unit = metricUnit(m);
           var fmtAxis = m === 'spend' ? fmtAxisUsd : fmt;
+          function daySub(day) {
+            if (isCount) {
+              var c = { suggested: 0, approved: 0 };
+              (DATA.completions || []).forEach(function (d) { if (d.dayStart === day.dayStart) c = d; });
+              return fmtCount(c.suggested) + ' suggestions · ' + fmtCount(c.approved) + ' approved';
+            }
+            return fmtCount(day.tokens) + ' tokens · ' + fmtCount(day.requests) + ' requests';
+          }
           var n = DATA.days.length;
 
           var defs = el('defs', {});
@@ -1879,7 +1901,7 @@ function usageWebviewHtml(profileLabel: string): string {
             svg.appendChild(guide); svg.appendChild(dot);
             showTooltip(ev.clientX, ev.clientY,
               '<span class="t-line">' + dayLabel(best.day.dayStart) + '</span><b>' + fmt(best.v) + '</b>' + unit +
-              '<div class="t-sub">' + fmtCount(best.day.tokens) + ' tokens · ' + fmtCount(best.day.requests) + ' requests</div>');
+              '<div class="t-sub">' + daySub(best.day) + '</div>');
           });
           overlay.addEventListener('mouseleave', function () { guide.remove(); dot.remove(); hideTooltip(); });
           svg.appendChild(overlay);
@@ -2022,15 +2044,7 @@ function usageWebviewHtml(profileLabel: string): string {
           }
           document.getElementById('legend').innerHTML = '';
           if (key === 'suggested' || key === 'approved') {
-            var comp = DATA.completions;
-            var last = comp.length ? comp[comp.length - 1] : { suggested: 0, approved: 0 };
-            var prev = comp.length > 1 ? comp[comp.length - 2] : { suggested: 0, approved: 0 };
-            var total = 0;
-            comp.forEach(function (d) { total += key === 'suggested' ? d.suggested : d.approved; });
-            chips.innerHTML =
-              '<div class="stat-chip"><div class="k">Today</div><div class="v">' + fmtCount(key === 'suggested' ? last.suggested : last.approved) + '</div></div>' +
-              '<div class="stat-chip"><div class="k">Yesterday</div><div class="v">' + fmtCount(key === 'suggested' ? prev.suggested : prev.approved) + '</div></div>' +
-              '<div class="stat-chip"><div class="k">Total ' + key + '</div><div class="v">' + fmtCount(total) + '</div></div>';
+            chips.innerHTML = '';
             drawLine(key);
             return;
           }
