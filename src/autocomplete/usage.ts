@@ -33,6 +33,21 @@ export function bumpCompletionUsage(
   return days;
 }
 
+/**
+ * Whether a document change counts as accepting a ghost-text suggestion.
+ * VS Code's stable API exposes no acceptance event, so we detect the insert
+ * that happens when a suggestion is committed: it starts exactly at the
+ * suggested position and the inserted text matches the suggestion.
+ *
+ * False positives are bounded by requiring a multi-character insert that
+ * matches the suggestion prefix/suffix — a single keystroke that happens to
+ * coincide is not counted.
+ */
+export function matchesAcceptance(changeText: string, pendingText: string): boolean {
+  if (changeText.length < 2 || !pendingText) return false;
+  return changeText.startsWith(pendingText) || pendingText.startsWith(changeText);
+}
+
 /** Start of the UTC day (the default chart boundary). */
 export function utcDayStart(nowMs: number): number {
   const d = new Date(nowMs);

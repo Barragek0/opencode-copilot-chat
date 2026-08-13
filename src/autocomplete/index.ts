@@ -30,7 +30,7 @@ import {
   INLINE_TIMEOUT_MS_SETTING,
 } from "../config";
 import { toFiniteNumber } from "../utils";
-import { bumpCompletionUsage, utcDayStart, type CompletionUsageDay } from "./usage";
+import { bumpCompletionUsage, matchesAcceptance, utcDayStart, type CompletionUsageDay } from "./usage";
 
 export {
   INLINE_SUGGESTIONS_SETTING,
@@ -82,23 +82,30 @@ export function registerInlineCompletions(context: vscode.ExtensionContext, deps
     void context.globalState.update(COMPLETION_USAGE_KEY, completionUsage);
   };
 
-  // Acceptance tracking: `onDidChangeInlineCompletionItems` is not in the
-  // stable API types, so it is guarded at runtime — on hosts that have it,
-  // `didAccept` reports when the user accepted a ghost-text suggestion.
-  const onDidChangeInlineCompletionItems = (
-    vscode.languages as unknown as {
-      onDidChangeInlineCompletionItems?: (listener: (event: { didAccept?: boolean }) => unknown) => vscode.Disposable;
-    }
-  ).onDidChangeInlineCompletionItems;
-  if (typeof onDidChangeInlineCompletionItems === "function") {
-    context.subscriptions.push(
-      onDidChangeInlineCompletionItems((event) => {
-        if (event.didAccept) {
+  // Acceptance tracking: VS Code's stable API exposes NO acceptance event
+  // for inline completions, so we detect the insert that committing a ghost
+  // text produces: it starts exactly at the suggested position and matches
+  // the suggested text. The pending suggestion expires after 30s and is
+  // cleared on the first match, bounding false positives.
+  const ACCEPTANCE_WINDOW_MS = 30_000;
+  let pendingSuggestion: { documentUri: string; position: vscode.Position; text: string; expiresAt: number } | undefined;
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (!pendingSuggestion) return;
+      if (Date.now() > pendingSuggestion.expiresAt) {
+        pendingSuggestion = undefined;
+        return;
+      }
+      if (event.document.uri.toString() !== pendingSuggestion.documentUri) return;
+      for (const change of event.contentChanges) {
+        if (change.range.start.isEqual(pendingSuggestion.position) && matchesAcceptance(change.text, pendingSuggestion.text)) {
           recordCompletion("approved");
+          pendingSuggestion = undefined;
+          return;
         }
-      }),
-    );
-  }
+      }
+    }),
+  );
 
   const engine: CompletionEngine = {
     id: "chat-completions",
@@ -124,8 +131,14 @@ export function registerInlineCompletions(context: vscode.ExtensionContext, deps
   const provider = new OpenCodeInlineCompletionProvider({
     engine,
     resolveApiKey: deps.resolveApiKey,
-    onSuggestion: () => {
+    onSuggestion: (text, position, document) => {
       recordCompletion("suggested");
+      pendingSuggestion = {
+        documentUri: document.uri.toString(),
+        position,
+        text,
+        expiresAt: Date.now() + ACCEPTANCE_WINDOW_MS,
+      };
     },
     isEnabled: () => readSetting(INLINE_SUGGESTIONS_SETTING, false),
     resolveModelId: () => readSetting(INLINE_SUGGESTIONS_MODEL_SETTING, DEFAULT_INLINE_MODEL),

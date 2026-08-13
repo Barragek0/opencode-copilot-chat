@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { bumpCompletionUsage, completionUsageToSeries, utcDayStart, type CompletionUsageDay } from "../autocomplete/usage.js";
+import {
+  bumpCompletionUsage,
+  completionUsageToSeries,
+  matchesAcceptance,
+  utcDayStart,
+  type CompletionUsageDay,
+} from "../autocomplete/usage.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -68,5 +74,23 @@ describe("autocomplete usage — completionUsageToSeries", () => {
     assert.equal(series[5].dayStart, dayMs);
     assert.equal(series[5].suggested, 2);
     assert.equal(series[0].suggested, 0);
+  });
+});
+
+describe("autocomplete usage — matchesAcceptance", () => {
+  it("matches full and partial commits of the suggestion", () => {
+    assert.ok(matchesAcceptance("return true;", "return true;"));
+    assert.ok(matchesAcceptance("return tr", "return true;"), "partial typed commit");
+    assert.ok(matchesAcceptance("return true;\n}", "return true;"), "commit plus trailing text");
+  });
+
+  it("rejects single-keystroke edits (manual typing)", () => {
+    assert.ok(!matchesAcceptance("r", "return true;"));
+    assert.ok(!matchesAcceptance("", "return true;"));
+  });
+
+  it("rejects unrelated edits", () => {
+    assert.ok(!matchesAcceptance("something else", "return true;"));
+    assert.ok(!matchesAcceptance("RETURN TRUE;", "return true;"), "case differs");
   });
 });
