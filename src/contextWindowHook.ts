@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as vscode from "vscode";
 import type { UsageSnapshot } from "./usage";
+import { CONTEXT_HOOK_PROBE_DELAY_MS } from "./config";
 import { getErrorMessage, isRecord } from "./utils";
 
 type HandleProgressChunkFn = (requestId: string, chunks: unknown[]) => Promise<void>;
@@ -181,7 +182,7 @@ async function captureProxy(logDiagnostic?: (message: string) => void): Promise<
   let participant: vscode.ChatParticipant | undefined;
   try {
     participant = vscode.chat.createChatParticipant(probeId, () => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, CONTEXT_HOOK_PROBE_DELAY_MS));
   } catch (error) {
     logDiagnostic?.(`contextWindowHook: probe participant creation failed — ${getErrorMessage(error)}`);
   } finally {

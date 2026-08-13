@@ -165,6 +165,9 @@ export const LEGACY_FINGERPRINT = "legacy";
 
 // ─── Diagnostics / caches ────────────────────────────────────────────────────
 
+/** How long the context-window hook waits after creating the probe participant. */
+export const CONTEXT_HOOK_PROBE_DELAY_MS = 150;
+
 export const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
 export const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
 /** Cap on the per-tool-call reasoning content cache. */
