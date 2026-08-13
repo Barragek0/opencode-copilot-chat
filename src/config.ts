@@ -155,6 +155,31 @@ export const GO_MAX_LOG_ENTRIES = 2000;
 export const GO_SESSION_IDLE_MS = 2 * 60 * 60 * 1000;
 export const GO_MAX_SESSIONS = 50;
 
+// ─── Usage display options ────────────────────────────────────────────────────
+
+/**
+ * Source of the Today/Yesterday device-local rows:
+ * - "auto"      — merge the OpenCode CLI history (cost + tokens + requests)
+ *                 with the extension's own tracked requests (best accuracy).
+ * - "cli"       — OpenCode CLI history only (extension-tracked requests omitted).
+ * - "extension" — the extension's tracked requests only (CLI history ignored).
+ */
+export type UsageTodayYesterdaySource = "auto" | "cli" | "extension";
+export const SETTING_USAGE_TODAY_YESTERDAY_SOURCE = "usageTodayYesterdaySource";
+export const DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE: UsageTodayYesterdaySource = "auto";
+/** Show the all-time usage row for the current workspace (from OpenCode CLI history). */
+export const SETTING_USAGE_CODEBASE_ROW = "usageCodebaseRow";
+export const DEFAULT_USAGE_CODEBASE_ROW = true;
+/** Codebase window in days; 0 = forever (all history). */
+export const SETTING_USAGE_CODEBASE_WINDOW_DAYS = "usageCodebaseWindowDays";
+export const DEFAULT_USAGE_CODEBASE_WINDOW_DAYS = 0;
+/** Show the server-accurate 5-hour rolling session meter in detailed views. */
+export const SETTING_USAGE_ROLLING_SESSION_METER = "usageRollingSessionMeter";
+export const DEFAULT_USAGE_ROLLING_SESSION_METER = true;
+/** Day boundary used for the Today/Yesterday rows. */
+export const SETTING_USAGE_DAY_BOUNDARY = "usageDayBoundary";
+export const DEFAULT_USAGE_DAY_BOUNDARY = "utc";
+
 // ─── Usage profiles (issue #63) ──────────────────────────────────────────────
 
 export const PROFILES_REGISTRY_KEY = "opencodego.profiles.v1";

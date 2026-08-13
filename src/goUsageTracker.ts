@@ -18,6 +18,7 @@ import {
   GO_MAX_LOG_ENTRIES,
   GO_SESSION_IDLE_MS,
   GO_MAX_SESSIONS,
+  type UsageTodayYesterdaySource,
 } from "./config";
 import { formatTokenCount, formatUsd, formatRelativeTime } from "./utils";
 
@@ -97,20 +98,29 @@ export interface UsageSummary {
   session: PeriodUsage;
   weekly: PeriodUsage;
   monthly: PeriodUsage;
-  today: {
-    cost: number;
-    requests: number;
-    tokens: number;
-  };
-  yesterday: {
-    cost: number;
-    requests: number;
-    tokens: number;
-  };
+  today: UsageDaily;
+  yesterday: UsageDaily;
+  /** All-time usage in the CURRENT workspace (from OpenCode CLI history). */
+  codebase: UsageDaily;
   hasData: boolean;
   /** When true, cost data comes from the OpenCode CLI SQLite database
       (actual billed amounts). When false, costs are estimated locally. */
   sqliteAvailable: boolean;
+}
+
+/**
+ * Per-view knobs resolved live so the user can pick how usage is presented.
+ * All resolvers are optional — the tracker falls back to sensible defaults.
+ */
+export interface GoUsageTrackerOptions {
+  /** Absolute paths of the current VS Code workspace folders. */
+  resolveWorkspaceFolders?: () => readonly string[];
+  /** Source of the Today/Yesterday rows (default "auto"). */
+  resolveTodayYesterdaySource?: () => UsageTodayYesterdaySource;
+  /** Codebase window in days; 0 = forever (default). */
+  resolveCodebaseWindowDays?: () => number;
+  /** Day boundary for Today/Yesterday ("utc" default | "local"). */
+  resolveDayBoundary?: () => "utc" | "local";
 }
 
 interface UsageBaselinePeriod {
@@ -144,6 +154,42 @@ export interface UsageBaselineTargets {
 function startOfUtcDay(nowMs: number): number {
   const d = new Date(nowMs);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Start of the LOCAL day — used when `usageDayBoundary` is set to "local". */
+export function startOfLocalDay(nowMs: number): number {
+  const d = new Date(nowMs);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Normalize a directory path for matching (trailing separators, Windows case). */
+export function normalizeCwd(value: string): string {
+  let normalized = value.replace(/[\/]+$/, "");
+  if (process.platform === "win32") {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
+
+/**
+ * Whether a CLI row's working directory belongs to the current workspace.
+ * Matches when the folder equals the cwd, is a parent of it (the user opened
+ * the repo root but the CLI ran in a subfolder), or the folder is a subfolder
+ * of the cwd (the user opened a subfolder of the project).
+ */
+export function isCwdInWorkspace(cwd: string | undefined, workspaceFolders: readonly string[]): boolean {
+  if (!cwd || workspaceFolders.length === 0) {
+    return false;
+  }
+  const rowCwd = normalizeCwd(cwd);
+  const sep = process.platform === "win32" ? "\\" : "/";
+  for (const folder of workspaceFolders) {
+    const normalized = normalizeCwd(folder);
+    if (rowCwd === normalized) return true;
+    if (rowCwd.startsWith(`${normalized}${sep}`)) return true;
+    if (normalized.startsWith(`${rowCwd}${sep}`)) return true;
+  }
+  return false;
 }
 
 function startOfUtcWeek(nowMs: number): number {
@@ -258,7 +304,12 @@ const OPENCODE_DB_PATH = path.join(os.homedir(), ".local", "share", "opencode", 
 const HISTORY_ROWS_SQL = `
   SELECT
     CAST(COALESCE(json_extract(data, '$.time.created'), time_created) AS INTEGER) AS createdMs,
-    CAST(json_extract(data, '$.cost') AS REAL) AS cost
+    CAST(json_extract(data, '$.cost') AS REAL) AS cost,
+    CAST(json_extract(data, '$.tokens.input') AS INTEGER) AS tokensInput,
+    CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS tokensOutput,
+    CAST(json_extract(data, '$.tokens.reasoning') AS INTEGER) AS tokensReasoning,
+    CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) AS tokensCacheRead,
+    json_extract(data, '$.path.cwd') AS cwd
   FROM message
   WHERE json_valid(data)
     AND json_extract(data, '$.providerID') = 'opencode-go'
@@ -266,9 +317,64 @@ const HISTORY_ROWS_SQL = `
     AND json_type(data, '$.cost') IN ('integer', 'real')
 `;
 
-interface HistoryRow {
+export interface HistoryRow {
   createdMs: number;
   cost: number;
+  tokensInput: number;
+  tokensOutput: number;
+  tokensReasoning: number;
+  tokensCacheRead: number;
+  /** Working directory of the session the message belongs to (OpenCode CLI data). */
+  cwd?: string;
+}
+
+/** Non-negative finite integer (tokens can legitimately be 0). */
+function positiveNumberish(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+}
+
+/**
+ * Sum one day window across the OpenCode CLI history rows and the extension's
+ * tracked entries. The CLI records terminal usage and the extension records
+ * VS Code usage — they never overlap, so the sum is the user's real combined
+ * usage for the window. `source` selects which inputs participate.
+ */
+export function sumDailyUsage(
+  rows: HistoryRow[],
+  entries: UsageLogEntry[],
+  dayStartMs: number,
+  source: UsageTodayYesterdaySource = "auto",
+): UsageDaily {
+  let cost = 0;
+  let requests = 0;
+  let tokens = 0;
+
+  if (source !== "extension") {
+    for (const row of rows) {
+      if (row.createdMs < dayStartMs) continue;
+      cost += row.cost;
+      requests += 1;
+      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
+    }
+  }
+
+  if (source !== "cli") {
+    for (const entry of entries) {
+      if (entry.timestamp < dayStartMs) continue;
+      cost += entry.cost;
+      requests += 1;
+      tokens += entry.promptTokens + entry.completionTokens;
+    }
+  }
+
+  return { cost, requests, tokens };
+}
+
+/** Per-day / per-workspace usage totals (from CLI history and/or extension tracking). */
+export interface UsageDaily {
+  cost: number;
+  requests: number;
+  tokens: number;
 }
 
 function readOpenCodeHistory(): HistoryRow[] | null {
@@ -282,13 +388,23 @@ function readOpenCodeHistory(): HistoryRow[] | null {
     });
     const rows: unknown = JSON.parse(result);
     if (!Array.isArray(rows)) return null;
-    return rows.filter((row): row is HistoryRow => {
-      if (!row || typeof row !== "object") return false;
-      const candidate = row as Partial<HistoryRow>;
-      return (
-        typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
-      );
-    });
+    return rows
+      .filter((row): row is HistoryRow => {
+        if (!row || typeof row !== "object") return false;
+        const candidate = row as Partial<HistoryRow>;
+        return (
+          typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
+        );
+      })
+      .map((row) => ({
+        createdMs: row.createdMs,
+        cost: row.cost,
+        tokensInput: positiveNumberish(row.tokensInput),
+        tokensOutput: positiveNumberish(row.tokensOutput),
+        tokensReasoning: positiveNumberish(row.tokensReasoning),
+        tokensCacheRead: positiveNumberish(row.tokensCacheRead),
+        cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
+      }));
   } catch {
     return null;
   }
@@ -328,6 +444,7 @@ export class GoUsageTracker {
      * (single account, shared key).
      */
     private readonly storageKeySuffix = "",
+    private readonly options: GoUsageTrackerOptions = {},
   ) {
     this.log = log;
     this.costResolver = costResolver;
@@ -475,6 +592,47 @@ export class GoUsageTracker {
     return this.serverUsage ? mergeServerUsage(summary, this.serverUsage, GO_LIMITS) : summary;
   }
 
+  private dayStartMs(nowMs: number): number {
+    return this.options.resolveDayBoundary?.() === "local" ? startOfLocalDay(nowMs) : startOfUtcDay(nowMs);
+  }
+
+  private todayYesterdaySource(): UsageTodayYesterdaySource {
+    return this.options.resolveTodayYesterdaySource?.() ?? "auto";
+  }
+
+  /**
+   * Merge the OpenCode CLI history rows and the extension-tracked entries for
+   * one day window into a single total. The CLI DB records terminal usage and
+   * the extension records VS Code usage — the two never overlap, so summing
+   * them gives the user's real combined daily usage.
+   */
+  private dailyUsage(rows: HistoryRow[], dayStartMs: number): UsageDaily {
+    return sumDailyUsage(rows, this.entries, dayStartMs, this.todayYesterdaySource());
+  }
+
+  /**
+   * All-time usage in the CURRENT workspace, derived from the OpenCode CLI
+   * history (`path.cwd` of each session's messages). "Forever" by default —
+   * the window is controlled by `resolveCodebaseWindowDays` (0 = all history).
+   */
+  private codebaseUsage(rows: HistoryRow[]): UsageDaily {
+    const folders = this.options.resolveWorkspaceFolders?.() ?? [];
+    const windowDays = Math.max(0, this.options.resolveCodebaseWindowDays?.() ?? 0);
+    const cutoffMs = windowDays > 0 ? Date.now() - windowDays * 24 * 60 * 60 * 1000 : 0;
+
+    let cost = 0;
+    let requests = 0;
+    let tokens = 0;
+    for (const row of rows) {
+      if (cutoffMs > 0 && row.createdMs < cutoffMs) continue;
+      if (!isCwdInWorkspace(row.cwd, folders)) continue;
+      cost += row.cost;
+      requests += 1;
+      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
+    }
+    return { cost, requests, tokens };
+  }
+
   /**
    * Fetch server-accurate account-wide usage for this profile's key and
    * cache it for {@link GO_USAGE_SYNC_TTL_MS}. Safe to call on every
@@ -519,24 +677,17 @@ export class GoUsageTracker {
     return true;
   }
 
-  /** Build summary from SQLite, enriched with token/request counts from tracked entries. */
+  /** Build summary from SQLite, enriched with merged today/yesterday + codebase totals. */
   private buildSqliteEnrichedSummary(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
     const base = this.buildSummaryFromRows(nowMs, rows, clamp);
 
-    // Enrich today/yesterday tokens+requests from tracked entries (SQLite doesn't store tokens).
-    const dayMs = startOfUtcDay(nowMs);
+    // Today/Yesterday merge the CLI history (cost + tokens + requests) with
+    // the extension's own tracked requests — the two never overlap, so the
+    // sum is the user's real combined usage for the day.
+    const dayMs = this.dayStartMs(nowMs);
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
-    const todayReq = base.today.requests;
-    let todayTokens = 0;
-    const yestReq = base.yesterday.requests;
-    let yestTokens = 0;
-    for (const e of this.entries) {
-      if (e.timestamp >= dayMs) {
-        todayTokens += e.promptTokens + e.completionTokens;
-      } else if (e.timestamp >= yesterdayMs) {
-        yestTokens += e.promptTokens + e.completionTokens;
-      }
-    }
+    const today = this.dailyUsage(rows, dayMs);
+    const yesterday = this.dailyUsage(rows, yesterdayMs);
 
     // Apply baselines on top of SQLite costs.
     const activeBaselineSession = this.getActiveBaselineAmount("session", nowMs);
@@ -559,8 +710,9 @@ export class GoUsageTracker {
         spent: Math.round((base.monthly.spent + activeBaselineMonthly) * 10000) / 10000,
         percent: clamp(base.monthly.spent + activeBaselineMonthly, GO_LIMITS.monthly),
       },
-      today: { ...base.today, requests: todayReq, tokens: todayTokens },
-      yesterday: { ...base.yesterday, requests: yestReq, tokens: yestTokens },
+      today,
+      yesterday,
+      codebase: this.codebaseUsage(rows),
       hasData: true,
       sqliteAvailable: true,
     };
@@ -638,7 +790,8 @@ export class GoUsageTracker {
         tokens: 0,
       },
       hasData: true,
-      sqliteAvailable: false,
+      sqliteAvailable: true,
+      codebase: { cost: 0, requests: 0, tokens: 0 },
     };
   }
 
@@ -650,7 +803,7 @@ export class GoUsageTracker {
 
   /** Build summary from extension-tracked entries (fallback when opencode.db unavailable) */
   private buildSummaryFromTracked(nowMs: number, clamp: (v: number, limit: number) => number): UsageSummary {
-    const dayMs = startOfUtcDay(nowMs);
+    const dayMs = this.dayStartMs(nowMs);
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
     const weekMs = startOfUtcWeek(nowMs);
     const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, this.baseline);
@@ -723,6 +876,14 @@ export class GoUsageTracker {
         cost: Math.round(yestCost * 10000) / 10000,
         requests: yestReq,
         tokens: yestTokens,
+      },
+      // Without the CLI history there is no per-directory attribution, so the
+      // codebase total falls back to everything this extension has tracked
+      // (it only ever runs inside the current workspace).
+      codebase: {
+        cost: Math.round(this.entries.reduce((total, e) => total + e.cost, 0) * 10000) / 10000,
+        requests: this.entries.length,
+        tokens: this.entries.reduce((total, e) => total + e.promptTokens + e.completionTokens, 0),
       },
       hasData: this.entries.length > 0 || this.everTracked,
       sqliteAvailable: false,
@@ -860,8 +1021,10 @@ export class GoUsageTracker {
   }
 
   private prune(): void {
-    const cutoff = Date.now() - 31 * 24 * 60 * 60 * 1000; // 31 days
-    this.entries = this.entries.filter((e) => e.timestamp > cutoff).slice(-MAX_LOG_ENTRIES);
+    // Tracked usage is permanent — users rely on the history for today/
+    // yesterday/codebase totals, so no time-based cutoff. Only the hard
+    // entry cap applies.
+    this.entries = this.entries.slice(-MAX_LOG_ENTRIES);
   }
 
   /** Remove idle sessions and cap total count. */
@@ -981,7 +1144,7 @@ export function formatGoUsageStatusBarText(summary: UsageSummary): string {
 }
 
 /** Build Quick Pick items for the usage panel */
-export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false): vscode.QuickPickItem[] {
+export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false, showRollingMeter = true): vscode.QuickPickItem[] {
   const now = new Date();
   const isEmpty = !summary.hasData;
 
@@ -1019,14 +1182,16 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
   // ── Period bars ──────────────────────────────────────────────────────────
   items.push({ label: "Subscription Limits", kind: vscode.QuickPickItemKind.Separator });
 
-  items.push(
-    periodItem(
-      percentColor(summary.session.percent) + " $(clock)",
-      "Session (5h rolling)",
-      summary.session,
-      fmtDate(summary.session.resetsAt),
-    ),
-  );
+  if (showRollingMeter) {
+    items.push(
+      periodItem(
+        percentColor(summary.session.percent) + " $(clock)",
+        "Session (5h rolling)",
+        summary.session,
+        fmtDate(summary.session.resetsAt),
+      ),
+    );
+  }
 
   items.push(periodItem(percentColor(summary.weekly.percent) + " $(calendar)", "Weekly", summary.weekly, fmtDate(summary.weekly.resetsAt)));
 
@@ -1061,13 +1226,6 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
     description: "View usage at opencode.ai",
     alwaysShow: true,
     _action: "openConsole",
-  } as vscode.QuickPickItem & { _action: string });
-
-  items.push({
-    label: "$(trash) Reset tracked usage data",
-    description: "Clears all locally tracked data",
-    alwaysShow: true,
-    _action: "resetTracked",
   } as vscode.QuickPickItem & { _action: string });
 
   return items;

@@ -7,6 +7,7 @@ import os from "node:os";
 import type { ModelCost } from "../metadata.js";
 import type { TransportRequestSummary } from "../streaming.js";
 import { GO_USAGE_LOG_KEY, GO_USAGE_BASELINE_KEY, GO_SESSION_COSTS_KEY, GO_SESSION_IDLE_MS, GO_MAX_SESSIONS } from "../config.js";
+import type { HistoryRow, UsageDaily, UsageLogEntry } from "../goUsageTracker.js";
 
 // ── Types (populated by dynamic import in before()) ────────────────────────
 
@@ -18,6 +19,11 @@ let estimateCost: (
   externalCost?: ModelCost,
   liveCostResolver?: (modelId: string) => ModelCost | undefined,
 ) => number;
+
+let sumDailyUsage: (rows: HistoryRow[], entries: UsageLogEntry[], dayStartMs: number, source?: "auto" | "cli" | "extension") => UsageDaily;
+let isCwdInWorkspace: (cwd: string | undefined, workspaceFolders: readonly string[]) => boolean;
+let normalizeCwd: (value: string) => string;
+let startOfLocalDay: (nowMs: number) => number;
 
 interface SessionSummary {
   sessionId: string;
@@ -130,6 +136,10 @@ describe("goUsageTracker", () => {
     const mod = await import("../goUsageTracker.js");
     estimateCost = mod.estimateCost;
     GoUsageTracker = mod.GoUsageTracker as GoUsageTrackerConstructor;
+    sumDailyUsage = mod.sumDailyUsage;
+    isCwdInWorkspace = mod.isCwdInWorkspace;
+    normalizeCwd = mod.normalizeCwd;
+    startOfLocalDay = mod.startOfLocalDay;
   });
 
   // ════════════════════════════════════════════════════════════════════════
@@ -599,5 +609,80 @@ describe("goUsageTracker", () => {
         assert.equal(session.requests, 2);
       });
     });
+  });
+});
+
+describe("sumDailyUsage", () => {
+  const now = new Date();
+  const dayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const rows: HistoryRow[] = [
+    { createdMs: dayMs + 1000, cost: 0.1, tokensInput: 100, tokensOutput: 50, tokensReasoning: 20, tokensCacheRead: 10, cwd: "/repo" },
+    { createdMs: dayMs - 60_000, cost: 0.2, tokensInput: 200, tokensOutput: 100, tokensReasoning: 0, tokensCacheRead: 0, cwd: "/repo" },
+  ];
+  const entries: UsageLogEntry[] = [
+    {
+      timestamp: dayMs + 500,
+      modelId: "qwen3.6-plus",
+      cost: 0.05,
+      promptTokens: 30,
+      completionTokens: 10,
+      cachedTokens: 0,
+      sessionId: "s1",
+    },
+  ];
+
+  it("merges CLI rows and extension entries in auto mode", () => {
+    const total = sumDailyUsage(rows, entries, dayMs, "auto");
+    assert.equal(total.requests, 2);
+    assert.equal(total.tokens, 210);
+    assert.ok(Math.abs(total.cost - 0.15) < 1e-9, `expected ~0.15, got ${String(total.cost)}`);
+  });
+
+  it("excludes rows before the day window", () => {
+    const total = sumDailyUsage(rows, [], dayMs, "cli");
+    assert.equal(total.requests, 1, "only the row inside the window counts");
+    assert.equal(total.tokens, 170, "input + output + reasoning");
+  });
+
+  it("cli source ignores extension entries", () => {
+    const total = sumDailyUsage([], entries, dayMs, "cli");
+    assert.deepEqual(total, { cost: 0, requests: 0, tokens: 0 });
+  });
+
+  it("extension source ignores CLI rows", () => {
+    const total = sumDailyUsage(rows, entries, dayMs, "extension");
+    assert.equal(total.requests, 1);
+    assert.equal(total.tokens, 40);
+  });
+});
+
+describe("isCwdInWorkspace / normalizeCwd", () => {
+  it("normalizes trailing separators", () => {
+    assert.equal(normalizeCwd("/repo/"), "/repo");
+    assert.equal(normalizeCwd("/repo//"), "/repo");
+  });
+
+  it("matches exact, parent and subfolder layouts", () => {
+    assert.ok(isCwdInWorkspace("/repo", ["/repo"]));
+    assert.ok(isCwdInWorkspace("/repo/src", ["/repo"]), "CLI ran in a subfolder of the opened repo");
+    assert.ok(isCwdInWorkspace("/repo", ["/repo/src"]), "user opened a subfolder of the project");
+  });
+
+  it("rejects unrelated directories and missing input", () => {
+    assert.ok(!isCwdInWorkspace("/other", ["/repo"]));
+    assert.ok(!isCwdInWorkspace(undefined, ["/repo"]));
+    assert.ok(!isCwdInWorkspace("/repo", []));
+  });
+});
+
+describe("startOfLocalDay", () => {
+  it("returns the local midnight of the given time", () => {
+    const now = new Date();
+    const localMidnight = startOfLocalDay(now.getTime());
+    const d = new Date(localMidnight);
+    assert.equal(d.getHours(), 0);
+    assert.equal(d.getMinutes(), 0);
+    assert.equal(d.getSeconds(), 0);
+    assert.ok(localMidnight <= now.getTime());
   });
 });

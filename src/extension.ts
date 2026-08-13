@@ -114,6 +114,17 @@ import {
   TOOL_RESULT_TOKEN_OVERHEAD,
   VISION_PROXY_MODEL_ID_KEY,
   VISION_PROXY_PROMPT_KEY,
+  DEFAULT_USAGE_CODEBASE_ROW,
+  DEFAULT_USAGE_CODEBASE_WINDOW_DAYS,
+  DEFAULT_USAGE_DAY_BOUNDARY,
+  DEFAULT_USAGE_ROLLING_SESSION_METER,
+  DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE,
+  SETTING_USAGE_CODEBASE_ROW,
+  SETTING_USAGE_CODEBASE_WINDOW_DAYS,
+  SETTING_USAGE_DAY_BOUNDARY,
+  SETTING_USAGE_ROLLING_SESSION_METER,
+  SETTING_USAGE_TODAY_YESTERDAY_SOURCE,
+  type UsageTodayYesterdaySource,
 } from "./config";
 import { escapeHtml, formatRelativeTime, formatTokenCount, formatUsd, getErrorMessage, isRecord, sleep, toFiniteNumber } from "./utils";
 import { parseToolInput as parseToolInputShared } from "./toolCallAccumulator";
@@ -126,6 +137,7 @@ import {
   formatGoUsageStatusBarText,
   buildUsageQuickPickItems,
   estimateCost,
+  type GoUsageTrackerOptions,
   type UsageBaselineTargets,
 } from "./goUsageTracker";
 import { resolveResponseApiKey } from "./apiKeyResolution";
@@ -172,6 +184,33 @@ let usageWebviewPanel: vscode.WebviewPanel | undefined;
 let profilesCache: UsageProfile[] = [];
 let activeProfileFingerprint: string = LEGACY_FINGERPRINT;
 
+/**
+ * Resolvers for the per-view usage knobs, read live from configuration so
+ * changing a setting repaints the status bar / tooltip / card immediately.
+ */
+function usageTrackerOptions(): GoUsageTrackerOptions {
+  const config = () => vscode.workspace.getConfiguration(CONFIG_SECTION);
+  return {
+    resolveWorkspaceFolders: () => vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
+    resolveTodayYesterdaySource: () =>
+      config().get<UsageTodayYesterdaySource>(SETTING_USAGE_TODAY_YESTERDAY_SOURCE, DEFAULT_USAGE_TODAY_YESTERDAY_SOURCE),
+    resolveCodebaseWindowDays: () => config().get<number>(SETTING_USAGE_CODEBASE_WINDOW_DAYS, DEFAULT_USAGE_CODEBASE_WINDOW_DAYS),
+    resolveDayBoundary: () => config().get<"utc" | "local">(SETTING_USAGE_DAY_BOUNDARY, DEFAULT_USAGE_DAY_BOUNDARY),
+  };
+}
+
+/** Whether the detailed usage views show the server 5h rolling meter. */
+function usageRollingMeterVisible(): boolean {
+  return vscode.workspace
+    .getConfiguration(CONFIG_SECTION)
+    .get<boolean>(SETTING_USAGE_ROLLING_SESSION_METER, DEFAULT_USAGE_ROLLING_SESSION_METER);
+}
+
+/** Whether the detailed usage views show the all-time codebase row. */
+function usageCodebaseRowVisible(): boolean {
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_USAGE_CODEBASE_ROW, DEFAULT_USAGE_CODEBASE_ROW);
+}
+
 /** Look up (or create) the GoUsageTracker for a given key fingerprint. */
 function getOrCreateTracker(fingerprint: string): GoUsageTracker {
   // The singleton tracker does not have a storage suffix
@@ -185,6 +224,7 @@ function getOrCreateTracker(fingerprint: string): GoUsageTracker {
     },
     (modelId) => modelMetadataSnapshot?.providers[GO_VENDOR]?.[modelId]?.cost,
     fingerprint,
+    usageTrackerOptions(),
   );
   goUsageTrackers.set(fingerprint, tracker);
   return tracker;
@@ -712,6 +752,8 @@ export function activate(context: vscode.ExtensionContext) {
     (modelId) => {
       return modelMetadataSnapshot?.providers[GO_VENDOR]?.[modelId]?.cost;
     },
+    "",
+    usageTrackerOptions(),
   );
   _extensionContext = context;
   _usageLogChannel = goUsageLogChannel;
@@ -778,22 +820,22 @@ export function activate(context: vscode.ExtensionContext) {
       const tracker = activeGoUsageTracker();
       if (!tracker) return;
       const summary = tracker.getSummary();
-      const items = buildUsageQuickPickItems(summary, tracker.hasServerUsage);
+      const items = buildUsageQuickPickItems(summary, tracker.hasServerUsage, usageRollingMeterVisible());
 
-      const sessionCost = tracker.getCurrentSessionCost();
-      if (sessionCost && sessionCost.cost > 0) {
-        const totalTokens = sessionCost.promptTokens + sessionCost.completionTokens;
-        const sessionItem: vscode.QuickPickItem = {
-          label: `$(comment) Latest Session (est)`,
-          description: `$${sessionCost.cost.toFixed(4)}`,
-          detail: `${formatTokenCount(totalTokens)} tokens · ${String(sessionCost.requests)} requests`,
+      // All-time usage in the current workspace (from the OpenCode CLI
+      // history) — replaces the old "Latest Session (est)" estimate row.
+      if (usageCodebaseRowVisible()) {
+        const codebaseItem: vscode.QuickPickItem = {
+          label: "$(repo) Codebase (all-time)",
+          description: formatUsd(summary.codebase.cost),
+          detail: `${formatTokenCount(summary.codebase.tokens)} tokens · ${String(summary.codebase.requests)} requests`,
           alwaysShow: true,
         };
         const dailyIdx = items.findIndex((i) => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
         if (dailyIdx >= 0) {
-          items.splice(dailyIdx + 1, 0, sessionItem);
+          items.splice(dailyIdx + 1, 0, codebaseItem);
         } else {
-          items.push(sessionItem);
+          items.push(codebaseItem);
         }
       }
 
@@ -842,17 +884,6 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand("opencodego.showUsageDetails");
       } else if (action === "openConsole") {
         void vscode.env.openExternal(vscode.Uri.parse("https://opencode.ai"));
-      } else if (action === "resetTracked") {
-        const confirm = await vscode.window.showWarningMessage(
-          "Reset all locally tracked usage data (Today, Yesterday, session spend)? Server-synced meters are unaffected.",
-          { modal: true },
-          "Reset",
-        );
-        if (confirm !== "Reset") return;
-        tracker.clear();
-        refreshGoUsageStatusBar();
-        updateWebviewContent();
-        vscode.window.showInformationMessage("Locally tracked usage data cleared.");
       } else if (action === "switchProfile" && "_fp" in picked) {
         void setActiveProfile((picked as { _fp: string })._fp);
       }
@@ -1277,7 +1308,7 @@ function refreshGoUsageStatusBar(): void {
   const activeProfile = findProfile(profilesCache, activeProfileFingerprint);
   const baseText = formatGoUsageStatusBarText(s);
   goUsageStatusBarItem.text = activeProfile && profilesCache.length > 1 ? `${baseText} [${activeProfile.label}]` : baseText;
-  goUsageStatusBarItem.tooltip = buildUsageTooltip(s, tracker.getCurrentSessionCost());
+  goUsageStatusBarItem.tooltip = buildUsageTooltip(s);
   goUsageStatusBarItem.show();
   updateWebviewContent();
 
@@ -1426,12 +1457,13 @@ function updateWebviewContent(): void {
       <div class="card">
         <div class="title">${escapeHtml(profileLabel)} - Usage</div>
 
-        ${usageCardSectionHtml("Session (5h rolling)", s.session)}
+        ${usageRollingMeterVisible() ? usageCardSectionHtml("Session (5h rolling)", s.session) : ""}
         ${usageCardSectionHtml("Weekly", s.weekly)}
         ${usageCardSectionHtml("Monthly", s.monthly)}
 
         <div class="divider"></div>
 
+        ${usageCodebaseRowVisible() ? usageCardStatsHtml("Codebase (all-time)", s.codebase) : ""}
         ${usageCardStatsHtml("Today", s.today)}
         ${usageCardStatsHtml("Yesterday", s.yesterday)}
 
@@ -1475,10 +1507,7 @@ function usageCardStatsHtml(label: string, day: _UsageSummary["today"]): string 
   ].join("");
 }
 
-function buildUsageTooltip(
-  s: ReturnType<GoUsageTracker["getSummary"]>,
-  sessionCost?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
-): vscode.MarkdownString {
+function buildUsageTooltip(s: ReturnType<GoUsageTracker["getSummary"]>): vscode.MarkdownString {
   const md = new vscode.MarkdownString("", true);
   md.supportHtml = true;
   md.isTrusted = true;
@@ -1488,7 +1517,7 @@ function buildUsageTooltip(
   // The hover shows the summary card only; Set spent targets / Rename are
   // available from the Command Palette (opencodego.setUsageTargets,
   // opencodego.renameActiveProfile).
-  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, sessionCost, profileLabel)}" width="440">`);
+  md.appendMarkdown(`<img alt="Go usage summary" src="${usageTooltipSvgDataUri(s, profileLabel)}" width="440">`);
   return md;
 }
 
@@ -1599,20 +1628,12 @@ async function showUsageTargetEditor(tracker: GoUsageTracker): Promise<UsageBase
 
 type _UsageSummary = ReturnType<GoUsageTracker["getSummary"]>;
 
-function usageTooltipSvgDataUri(
-  s: _UsageSummary,
-  sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
-  profileLabel?: string,
-): string {
-  const svg = buildUsageTooltipSvg(s, sc, profileLabel);
+function usageTooltipSvgDataUri(s: _UsageSummary, profileLabel?: string): string {
+  const svg = buildUsageTooltipSvg(s, profileLabel);
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function buildUsageTooltipSvg(
-  s: _UsageSummary,
-  sc?: { cost: number; requests: number; promptTokens: number; completionTokens: number },
-  profileLabel?: string,
-): string {
+function buildUsageTooltipSvg(s: _UsageSummary, profileLabel?: string): string {
   // Stable geometry: fixed card width and fixed columns, so the layout never
   // shifts when session data appears or a day has no usage yet.
   const width = 440;
@@ -1673,28 +1694,24 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   // Title starts at the same 14px gutter as the sides. Meter rows, the
   // divider and the device rows keep a consistent 14px rhythm.
   const meterRows = [
-    ["Session (5h rolling)", s.session, 56],
+    ...(usageRollingMeterVisible() ? ([["Session (5h rolling)", s.session, 56]] as const) : []),
     ["Weekly", s.weekly, 116],
     ["Monthly", s.monthly, 176],
   ] as const;
-  const dividerY = 226;
-  const firstRowY = 248;
+  const dividerY = 46 + meterRows.length * 60;
+  const firstRowY = dividerY + 22;
   const rowGap = 24;
   // All three rows are always rendered (zeros included) so the card is
   // stable regardless of whether a session is currently active.
-  const sessionCost = sc && sc.cost > 0 ? sc : { cost: 0, requests: 0, promptTokens: 0, completionTokens: 0 };
   const deviceRows: Array<[string, number, number, number, number]> = [];
-  deviceRows.push([
-    "Session (est):",
-    sessionCost.cost,
-    sessionCost.requests,
-    sessionCost.promptTokens + sessionCost.completionTokens,
-    firstRowY,
-  ]);
-  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + rowGap]);
-  deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + 2 * rowGap]);
+  if (usageCodebaseRowVisible()) {
+    deviceRows.push(["Codebase:", s.codebase.cost, s.codebase.requests, s.codebase.tokens, firstRowY]);
+  }
+  const codebaseOffset = usageCodebaseRowVisible() ? 1 : 0;
+  deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + codebaseOffset * rowGap]);
+  deviceRows.push(["Yesterday:", s.yesterday.cost, s.yesterday.requests, s.yesterday.tokens, firstRowY + (codebaseOffset + 1) * rowGap]);
 
-  const height = firstRowY + 2 * rowGap + 14;
+  const height = firstRowY + (deviceRows.length - 1) * rowGap + 14;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 ${text(svgTitle, padX, 28, 16, 700)}

@@ -16,6 +16,11 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Fixed
 
+- **`[Usage]` Today/Yesterday now merge the OpenCode CLI history with extension-tracked usage.** The CLI database (`~/.local/share/opencode/opencode.db`) stores per-message `cost` + `tokens.{input,output,reasoning,cache}` + `path.cwd` + timestamps, so users who also run OpenCode in the terminal get their real combined daily totals (terminal + VS Code) instead of VS Code-only estimates. Configurable via `opencodego.usageTodayYesterdaySource` (`auto` / `cli` / `extension`).
+- **`[Usage]` New "Codebase" row replaces the old "Session (est)" estimate.** Shows all-time usage for the CURRENT workspace (matched per-directory from the CLI history `path.cwd`), forever by default (`opencodego.usageCodebaseWindowDays`, 0 = all history). Toggle with `opencodego.usageCodebaseRow`.
+- **`[Usage]` Local tracked data is permanent.** The "Reset tracked usage data" action is removed and the 31-day entry cutoff is gone (only the hard 2000-entry cap applies) — the data today/yesterday/codebase rely on can no longer be deleted or silently expire.
+- **`[Usage]` New display options:** `opencodego.usageRollingSessionMeter` (hide the server 5-hour rolling meter in detailed views) and `opencodego.usageDayBoundary` (`utc` / `local` midnight for the Today/Yesterday rows).
+
 - **`[Internal]` `sanitizeToolSchema` emitted `type: "object"` via a ternary whose branches were identical** — collapsed to the constant.
 - **`[Internal]` Anthropic stream extractor wrote usage fields onto itself** instead of the request summary — the real summary was already updated by the SSE data callback, so the duplicate (and wrong-object) write is gone.
 - **`[Internal]` `formatModalityBadges` duplicated its Audio branch** under two conditions that covered all cases — collapsed.
