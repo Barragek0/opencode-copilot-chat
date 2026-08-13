@@ -9,7 +9,12 @@ export class Debouncer {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private controller: AbortController | undefined;
 
-  constructor(private readonly delayMs: number) {}
+  /** Current debounce window; may be updated at runtime (config-driven). */
+  delayMs: number;
+
+  constructor(delayMs: number) {
+    this.delayMs = delayMs;
+  }
 
   /**
    * Schedule `run` after the debounce window. A previous scheduled run is

@@ -4,12 +4,9 @@
  * @see issue #63
  */
 import * as vscode from "vscode";
+import { PROFILES_REGISTRY_KEY, ACTIVE_PROFILE_KEY, MIGRATED_KEY, LEGACY_FINGERPRINT } from "./config";
 
-export const PROFILES_REGISTRY_KEY = "opencodego.profiles.v1";
-export const ACTIVE_PROFILE_KEY = "opencodego.activeProfile.v1";
-export const MIGRATED_KEY = "opencodego.migratedTo.v1";
-export const LEGACY_SECRET_KEY = "opencodego.apiKey";
-export const LEGACY_FINGERPRINT = "legacy";
+export { PROFILES_REGISTRY_KEY, ACTIVE_PROFILE_KEY, MIGRATED_KEY, LEGACY_SECRET_KEY, LEGACY_FINGERPRINT } from "./config";
 
 export interface UsageProfile {
   fingerprint: string;
@@ -64,29 +61,6 @@ export async function renameProfile(context: vscode.ExtensionContext, fingerprin
   const profiles = readProfiles(context);
   const next = profiles.map((p) => (p.fingerprint === fingerprint ? { ...p, label: newLabel.trim() || p.label } : p));
   await writeProfiles(context, next);
-}
-
-/**
- * Get or create a profile for the given fingerprint.
- * Labels are assigned sequentially: "Profile 1", "Profile 2", etc.
- */
-export async function getOrCreateProfile(context: vscode.ExtensionContext, fingerprint: string): Promise<UsageProfile> {
-  const profiles = readProfiles(context);
-  const existing = findProfile(profiles, fingerprint);
-  if (existing) {
-    existing.lastSeenAt = Date.now();
-    await writeProfiles(context, profiles);
-    return existing;
-  }
-  const nextNumber = profiles.length + 1;
-  const profile: UsageProfile = {
-    fingerprint,
-    label: `Profile ${String(nextNumber)}`,
-    lastSeenAt: Date.now(),
-  };
-  profiles.push(profile);
-  await writeProfiles(context, profiles);
-  return profile;
 }
 
 /** Read profiles, excluding the legacy fingerprint (which is not a real profile). */

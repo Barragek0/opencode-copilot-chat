@@ -8,6 +8,8 @@ export interface UsageSnapshot {
   copilotCredits?: number;
 }
 
+import { formatTokenCount } from "./utils";
+
 export interface ProviderUsagePayload {
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -38,19 +40,7 @@ export function hasUsageSnapshot(usage: UsageSnapshot): boolean {
 }
 
 export function formatCompactTokenCount(value: number | undefined): string {
-  if (value === undefined) {
-    return "?";
-  }
-
-  if (value >= 10000) {
-    return `${String(Math.round(value / 1000))}k`;
-  }
-
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(1)}k`;
-  }
-
-  return String(value);
+  return value === undefined ? "?" : formatTokenCount(value);
 }
 
 export function cacheHitRatio(usage: UsageSnapshot): number | undefined {

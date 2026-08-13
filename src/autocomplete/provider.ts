@@ -46,6 +46,13 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
       return Promise.resolve(undefined);
     }
 
+    // Keep the debounce window live: a config change applies on the next
+    // keystroke instead of requiring the provider to be recreated.
+    const debounceMs = this.options.resolveDebounceMs();
+    if (debounceMs !== this.debouncer.delayMs) {
+      this.debouncer.delayMs = debounceMs;
+    }
+
     const text = document.getText();
     const offset = document.offsetAt(position);
     const { prefix, suffix } = buildCompletionWindow(text, offset, {

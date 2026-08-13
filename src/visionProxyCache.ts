@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { IMAGE_DESCRIPTION_CACHE_LIMIT } from "./config";
+
+export { IMAGE_DESCRIPTION_CACHE_LIMIT } from "./config";
 
 /**
  * Cache mapping an image's content hash to the text description produced by
@@ -20,9 +23,6 @@ import { createHash } from "node:crypto";
  * one unit.
  */
 export const imageDescriptionCache = new Map<string, string>();
-
-/** Cap on cache entries to prevent unbounded memory growth across sessions. */
-export const IMAGE_DESCRIPTION_CACHE_LIMIT = 200;
 
 /**
  * Stable key for an image's bytes. We hash the base64 string (as produced by

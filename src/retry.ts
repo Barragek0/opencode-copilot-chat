@@ -17,14 +17,10 @@
  *   retried so real bugs surface instead of being masked by retries.
  */
 
-/** Max retries for a transient 5xx before surfacing the error to the user. */
-export const TRANSIENT_5XX_MAX_RETRIES = 2;
+import { compactErrorCode, positiveNumber } from "./utils";
+import { CONTEXT_RETRY_MIN_SAFETY_TOKENS, CONTEXT_RETRY_SAFETY_RATIO } from "./config";
 
-/** Base backoff for transient 5xx retries (doubles per attempt, max ~8s). */
-export const TRANSIENT_5XX_RETRY_BASE_MS = 1000;
-
-/** Max random jitter added to each backoff to spread concurrent retries. */
-export const TRANSIENT_5XX_RETRY_JITTER_MS = 250;
+export { TRANSIENT_5XX_MAX_RETRIES, TRANSIENT_5XX_RETRY_BASE_MS, TRANSIENT_5XX_RETRY_JITTER_MS } from "./config";
 
 /** Result of attempting to patch a request body for retry. */
 export interface RetryPatch {
@@ -33,9 +29,6 @@ export interface RetryPatch {
   /** Human-readable description of what was changed (for logging). */
   reason: string;
 }
-
-const CONTEXT_RETRY_MIN_SAFETY_TOKENS = 256;
-const CONTEXT_RETRY_SAFETY_RATIO = 0.001;
 
 /**
  * Patterns that indicate a recoverable 400 error caused by an unsupported
@@ -209,9 +202,9 @@ function patchContextOverflow(errorMessage: string, body: Record<string, unknown
   const requestedTokens = parseTokenCount(errorMessage.match(/you requested\s*([\d,]+)\s*tokens?/i)?.[1]);
   if (contextWindow === undefined || requestedTokens === undefined) return undefined;
 
-  const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveInteger(body[key]) !== undefined);
+  const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveNumber(body[key]) !== undefined);
   const generationConfig = recordValue(body.generationConfig);
-  const configuredOutput = outputKey ? positiveInteger(body[outputKey]) : positiveInteger(generationConfig?.maxOutputTokens);
+  const configuredOutput = outputKey ? positiveNumber(body[outputKey]) : positiveNumber(generationConfig?.maxOutputTokens);
   if (configuredOutput === undefined) return undefined;
 
   const reportedOutput = parseTokenCount(errorMessage.match(/([\d,]+)\s+in the (?:completion|output)/i)?.[1]);
@@ -238,11 +231,7 @@ function patchContextOverflow(errorMessage: string, body: Record<string, unknown
 
 function parseTokenCount(value: string | undefined): number | undefined {
   if (!value) return undefined;
-  return positiveInteger(Number(value.replaceAll(",", "")));
-}
-
-function positiveInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+  return positiveNumber(Number(value.replaceAll(",", "")));
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -263,8 +252,4 @@ export function isTransientServerError(status: number, errorDetail: string): boo
     return true;
   }
   return status >= 500 && /RouterUnavailable/i.test(compactErrorCode(errorDetail));
-}
-
-function compactErrorCode(value: string): string {
-  return value.replace(/[^a-zA-Z]/g, "");
 }

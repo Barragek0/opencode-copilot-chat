@@ -13,11 +13,9 @@ import type { UsageSummary } from "./goUsageTracker";
  * where `percent` is an integer 0–100 computed server-side and `resetsAt` is
  * an ISO timestamp.
  */
-export const GO_USAGE_API_URL = "https://opencode.ai/zen/go/v1/usage";
-/** How long a successful server-usage snapshot is reused before refetching. */
-export const GO_USAGE_SYNC_TTL_MS = 60_000;
-/** Hard timeout for a single usage fetch. */
-export const GO_USAGE_FETCH_TIMEOUT_MS = 10_000;
+import { GO_USAGE_API_URL, GO_USAGE_FETCH_TIMEOUT_MS } from "./config";
+
+export { GO_USAGE_API_URL, GO_USAGE_SYNC_TTL_MS, GO_USAGE_FETCH_TIMEOUT_MS } from "./config";
 
 export type GoUsagePeriodStatus = "ok" | "rate-limited";
 

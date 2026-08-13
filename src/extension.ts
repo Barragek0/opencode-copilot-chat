@@ -56,6 +56,68 @@ import { calculateModelLimits, type ModelLimits } from "./modelLimits";
 import { buildResponsesRequestEnvelope, joinedTextContent, responsesInputItemsFromMessage } from "./responsesRequest";
 import { runtimeDiagnosticsLines } from "./runtimeDiagnostics";
 import { estimatePromptTokenCount, estimateTokenCount } from "./tokenEstimate";
+import {
+  AGENTS_BYOK_BRIDGE_STATE_KEY,
+  AGENT_HOST_BYOK_ENABLED_SETTING,
+  AGENT_HOST_BYOK_MINOR_VERSION,
+  CAPACITY_LIMITED_MODEL_NOTES,
+  CONFIG_SECTION,
+  DEFAULT_REQUEST_TIMEOUT_SECONDS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
+  DEFAULT_VISION_PROXY_PROMPT,
+  EXTENSION_ID,
+  FALLBACK_USER_AGENT,
+  FREE_ZEN_MODEL_IDS,
+  IMAGE_TOKEN_ESTIMATE,
+  KNOWN_UNAVAILABLE_MODEL_IDS,
+  MAX_HISTORY_IMAGES_KEPT,
+  MAX_TOOL_RESULT_IMAGE_BYTES,
+  MESSAGE_NAME_TOKEN_OVERHEAD,
+  MESSAGE_TOKEN_OVERHEAD,
+  MODEL_LIST_CACHE_KEY_PREFIX,
+  MODEL_LIST_CACHE_TTL_MS,
+  MODEL_LIST_FETCH_MAX_RETRIES,
+  MODEL_LIST_FETCH_RETRY_BASE_MS,
+  MODEL_LIST_FETCH_TIMEOUT_MS,
+  MODEL_METADATA_FETCH_TIMEOUT_MS,
+  OPEN_CODE_CLIENT,
+  RECENT_TRANSPORT_SUMMARY_LIMIT,
+  RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
+  SECRET_KEY,
+  SETTING_AGENTS_WINDOW,
+  SETTING_AUTO_ENABLE_AGENTS_WINDOW,
+  SETTING_DEBUG_REASONING,
+  SETTING_ENABLED,
+  SETTING_FREE_ONLY,
+  SETTING_MAX_INPUT_TOKENS,
+  SETTING_MAX_TOKENS,
+  SETTING_REQUEST_TIMEOUT_SECONDS,
+  SETTING_SHOW_PROVIDER_PREFIX,
+  SETTING_SHOW_USAGE_STATUS_BAR,
+  SETTING_STREAM_IDLE_TIMEOUT_SECONDS,
+  SETTING_STRIP_THINK_TAGS,
+  SETTING_TEMPERATURE,
+  SETTING_THINKING_DEEPSEEK,
+  SETTING_THINKING_GLM,
+  SETTING_THINKING_KIMI,
+  SETTING_THINKING_MIMO,
+  SETTING_THINKING_MINIMAX,
+  SETTING_THINKING_OPENAI,
+  SETTING_THINKING_QWEN,
+  SETTING_THINKING_QWEN_BUDGET,
+  SETTING_VISION_PROXY_WHOLE_CONVERSATION,
+  SUPPORT_AGENTS_WINDOW_SETTING,
+  SUPPORT_AGENTS_WINDOW_STATE_KEY,
+  TEST_CONNECTION_TIMEOUT_MS,
+  THINKING_DEFAULTS,
+  TOOL_CALL_TOKEN_OVERHEAD,
+  TOOL_RESULT_TOKEN_OVERHEAD,
+  VISION_PROXY_MODEL_ID_KEY,
+  VISION_PROXY_PROMPT_KEY,
+} from "./config";
+import { escapeHtml, formatRelativeTime, formatTokenCount, formatUsd, getErrorMessage, isRecord, sleep, toFiniteNumber } from "./utils";
+import { parseToolInput as parseToolInputShared } from "./toolCallAccumulator";
+import { isFreeModel } from "./metadata";
 
 import { formatCacheHitRatio, formatUsageStatusBarText, formatUsageStatusBarTooltip, type UsageSnapshot } from "./usage";
 import {
@@ -83,10 +145,6 @@ import {
   type UsageProfile,
 } from "./usageProfile";
 
-const SECRET_KEY = "opencodego.apiKey";
-const RECENT_TRANSPORT_SUMMARY_LIMIT = 25;
-const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummaries";
-
 /**
  * VS Code core settings the extension manages (auto-configures and reverts)
  * so OpenCode models work in the Agents window (issue #122):
@@ -100,14 +158,6 @@ const RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX = "opencode.recentTransportSummari
  *   vendors are not registered, and neither the model picker nor the
  *   "+ Add Models" list knows OpenCode Go/Zen.
  */
-const AGENT_HOST_BYOK_ENABLED_SETTING = "byokModels.enabled";
-const SUPPORT_AGENTS_WINDOW_SETTING = "supportAgentsWindow";
-const EXTENSION_ID = "ltmoerdani.opencode-copilot-chat";
-/** How many VS Code versions old the agent-host BYOK bridge goes back to. */
-const AGENT_HOST_BYOK_MINOR_VERSION = 129;
-/** globalState keys tracking that the extension enabled each setting itself. */
-const AGENTS_BYOK_BRIDGE_STATE_KEY = "opencode.agentsByokBridge.v1";
-const SUPPORT_AGENTS_WINDOW_STATE_KEY = "opencode.supportAgentsWindow.v1";
 
 let usageStatusBarItem: vscode.StatusBarItem | undefined;
 let goUsageStatusBarItem: vscode.StatusBarItem | undefined;
@@ -246,30 +296,6 @@ interface ProviderDefinition {
 
 type ModelEndpointKind = "chat-completions" | "messages" | "responses" | "google";
 
-const FREE_ZEN_MODEL_IDS = new Set(["big-pickle"]);
-const KNOWN_UNAVAILABLE_MODEL_IDS = new Set(["ring-2.6-1t", "ring-2.6-1t-free", "trinity-large-preview-free"]);
-const DEFAULT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
-const OPEN_CODE_CLIENT = "vscode-copilot-chat";
-/** Fallback only — overridden at runtime by {@link getUserAgent} from packageJSON. */
-const FALLBACK_USER_AGENT = "opencode-copilot-chat/0.4.1 VSCode";
-
-/**
- * Hard ceiling for a single model-list fetch (connect + headers + body).
- *
- * Without this, undici's default `headersTimeout` (300s) can leave the picker
- * stuck for up to 5 minutes on a hung TCP connection (issue #78).
- */
-const MODEL_LIST_FETCH_TIMEOUT_MS = 15_000;
-/** Max retry attempts for transient network failures during model-list fetch. */
-const MODEL_LIST_FETCH_MAX_RETRIES = 3;
-/** Base delay for exponential backoff (500ms, 1s, 2s). */
-const MODEL_LIST_FETCH_RETRY_BASE_MS = 500;
-/** TTL for the last successful model-list snapshot cached in globalState. */
-const MODEL_LIST_CACHE_TTL_MS = 60 * 60 * 1000;
-/** globalState key suffix per vendor; full key = `${base}::<vendor>`. */
-const MODEL_LIST_CACHE_KEY_PREFIX = "opencode.modelListCache.v1";
-
 let cachedUserAgent: string | undefined;
 
 /**
@@ -322,7 +348,7 @@ function isTransientFetchError(error: unknown): boolean {
   // Extract HTTP status from either an explicit `.status` field or the
   // "Model list request failed (NNN): ..." message pattern.
   const explicitStatus = (error as { status?: number } | undefined)?.status;
-  const msg = error instanceof Error ? error.message : String(error);
+  const msg = getErrorMessage(error);
   const msgMatch = msg.match(/\((\d{3})\)/);
   const httpStatus = typeof explicitStatus === "number" ? explicitStatus : msgMatch ? Number(msgMatch[1]) : undefined;
   if (typeof httpStatus === "number") {
@@ -330,42 +356,6 @@ function isTransientFetchError(error: unknown): boolean {
     return false;
   }
   return false;
-}
-
-/**
- * Promise-based delay that rejects with AbortError if the token fires.
- *
- * Used to back off between model-list fetch retries without leaking
- * CancellationToken subscriptions.
- *
- * A single subscription suffices for already-cancelled tokens: VS Code's
- * cancellation tokens invoke listeners registered after cancellation
- * (shortcutEvent), and Promises ignore double settlement.
- */
-function sleep(ms: number, token?: vscode.CancellationToken): Promise<void> {
-  if (token?.isCancellationRequested) {
-    return Promise.reject(new DOMException("Aborted", "AbortError"));
-  }
-  return new Promise((resolve, reject) => {
-    const state: { timer?: ReturnType<typeof setTimeout>; subscription?: vscode.Disposable } = {};
-    const finish = (cancelled: boolean) => {
-      if (state.timer) clearTimeout(state.timer);
-      state.subscription?.dispose();
-      if (cancelled) {
-        reject(new DOMException("Aborted", "AbortError"));
-      } else {
-        resolve();
-      }
-    };
-    state.timer = setTimeout(() => {
-      finish(false);
-    }, ms);
-    if (token) {
-      state.subscription = token.onCancellationRequested(() => {
-        finish(true);
-      });
-    }
-  });
 }
 
 /** Create an agent-variant provider definition that inherits URLs, models, and filters from a base. */
@@ -472,7 +462,7 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
       "big-pickle",
     ],
     filterModel: (modelId) =>
-      vscode.workspace.getConfiguration("opencodego").get<boolean>("freeOnly", true)
+      vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_FREE_ONLY, true)
         ? modelId.endsWith("-free") || FREE_ZEN_MODEL_IDS.has(modelId)
         : true,
   };
@@ -589,11 +579,6 @@ type ConfiguredLanguageModelResponseOptions = vscode.ProvideLanguageModelChatRes
   configuration?: LanguageModelConfiguration;
 };
 
-const MESSAGE_TOKEN_OVERHEAD = 4;
-const MESSAGE_NAME_TOKEN_OVERHEAD = 1;
-const TOOL_CALL_TOKEN_OVERHEAD = 10;
-const TOOL_RESULT_TOKEN_OVERHEAD = 6;
-const IMAGE_TOKEN_ESTIMATE = 1024;
 /**
  * Hard upper limit (in bytes of raw image data) for a single image embedded
  * in a tool result. MCP screenshots from chrome-devtools-mcp / playwright-mcp
@@ -603,7 +588,6 @@ const IMAGE_TOKEN_ESTIMATE = 1024;
  * failed" rejections from OpenCode Go. Larger images are replaced with a
  * placeholder text part so the model still knows an image was returned.
  */
-const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
 
 /**
  * Maximum number of image attachments (top-level + tool-result combined) to
@@ -632,18 +616,6 @@ const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
  * still knows a screenshot existed at that point in the conversation (useful
  * for understanding agent-loop context) without incurring the payload cost.
  */
-const MAX_HISTORY_IMAGES_KEPT = 2;
-
-// Models live on the OpenCode Zen gateway but with constrained GPU capacity.
-// They were re-enabled by the OpenCode team after a brief shutdown
-// ("Qwen 3.6 Plus — free, again. Round 2. We found more GPUs.") so they are
-// NOT deprecated, but agentic workloads with long histories or large tool
-// catalogs can still hit 5xx during traffic bursts. Surface this so users know
-// to retry or fall back to another free model if the request fails.
-const CAPACITY_LIMITED_MODEL_NOTES: Record<string, string> = {
-  "qwen3.6-plus-free":
-    "Free relaunch with limited GPU capacity. Stable for short prompts; bursty traffic or very large tool catalogs may return 5xx - retry or fall back to 'deepseek-v4-flash-free' / 'big-pickle'. Paid 'qwen3.6-plus' has no quota.",
-};
 
 let modelMetadataSnapshot: CachedModelMetadataSnapshot | undefined;
 let modelMetadataRefreshPromise: Promise<CachedModelMetadataSnapshot> | undefined;
@@ -718,8 +690,6 @@ interface AnthropicRequestMessage {
   content: AnthropicContentBlock[];
 }
 
-const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 interface RecentTransportSummary extends TransportRequestSummary {
   recordedAt: string;
   endpointKind: string;
@@ -779,12 +749,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
     vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
-    vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled("opencodego", "OpenCode Go")),
+    vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled(GO_VENDOR, "OpenCode Go")),
     vscode.commands.registerCommand("opencodego.configureUtilityModels", () => configureUtilityModels()),
     vscode.commands.registerCommand("opencodezen.diagnostics", () => zenProvider.showDiagnostics()),
     vscode.commands.registerCommand("opencodezen.manage", () => zenProvider.manage()),
     vscode.commands.registerCommand("opencodezen.refreshModels", () => zenProvider.refreshModels()),
-    vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled("opencodezen", "OpenCode Zen")),
+    vscode.commands.registerCommand("opencodezen.toggleProvider", () => toggleProviderEnabled(ZEN_VENDOR, "OpenCode Zen")),
     vscode.commands.registerCommand("opencodego.modelPickerDiagnostics", () => showModelPickerDiagnostics()),
     vscode.commands.registerCommand("opencodego.setThinkingEffort", () => showThinkingEffortPicker()),
     vscode.commands.registerCommand("opencodego.showUsageDetails", () => {
@@ -812,7 +782,7 @@ export function activate(context: vscode.ExtensionContext) {
         const sessionItem: vscode.QuickPickItem = {
           label: `$(comment) Latest Session (est)`,
           description: `$${sessionCost.cost.toFixed(4)}`,
-          detail: `${tokens(totalTokens)} tokens · ${String(sessionCost.requests)} requests`,
+          detail: `${formatTokenCount(totalTokens)} tokens · ${String(sessionCost.requests)} requests`,
           alwaysShow: true,
         };
         const dailyIdx = items.findIndex((i) => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
@@ -956,7 +926,7 @@ export function activate(context: vscode.ExtensionContext) {
   ];
 
   // Agent-host providers for the Copilot Agents window (opt-in via config).
-  const enableAgents = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
+  const enableAgents = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true);
   if (enableAgents && (goProviderEnabled || zenProviderEnabled)) {
     const agentGoProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_GO_VENDOR]);
     const agentZenProvider = new OpenCodeProvider(context, PROVIDERS[AGENT_ZEN_VENDOR]);
@@ -976,17 +946,20 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("opencodego.showUsageStatusBar")) {
+      if (event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_SHOW_USAGE_STATUS_BAR}`)) {
         resetUsageStatusBar();
       }
-      if (event.affectsConfiguration("opencodego.showProviderPrefix")) {
+      if (event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_SHOW_PROVIDER_PREFIX}`)) {
         for (const provider of modelInfoProviders) {
           provider.notifyModelInfoChanged();
         }
       }
-      if (event.affectsConfiguration("opencodego.agentsWindow") || event.affectsConfiguration("opencodego.autoEnableAgentsWindow")) {
-        const agentsWindowEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true);
-        const autoEnabled = vscode.workspace.getConfiguration("opencodego").get<boolean>("autoEnableAgentsWindow", true);
+      if (
+        event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_AGENTS_WINDOW}`) ||
+        event.affectsConfiguration(`${CONFIG_SECTION}.${SETTING_AUTO_ENABLE_AGENTS_WINDOW}`)
+      ) {
+        const agentsWindowEnabled = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true);
+        const autoEnabled = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AUTO_ENABLE_AGENTS_WINDOW, true);
         if (agentsWindowEnabled && autoEnabled) {
           void ensureAgentsWindowSupport(context);
         } else if (!agentsWindowEnabled) {
@@ -1029,7 +1002,7 @@ async function configureUtilityModels(): Promise<void> {
  */
 async function toggleProviderEnabled(vendor: string, displayName: string): Promise<void> {
   const cfg = vscode.workspace.getConfiguration(vendor);
-  const current = cfg.get<boolean>("enabled", true);
+  const current = cfg.get<boolean>(SETTING_ENABLED, true);
   const next = !current;
   await cfg.update("enabled", next, vscode.ConfigurationTarget.Global);
 
@@ -1086,8 +1059,8 @@ function isModernAgentHostVscode(): boolean {
  *   anything was changed.
  */
 async function ensureAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
-  const opencodeCfg = vscode.workspace.getConfiguration("opencodego");
-  if (!opencodeCfg.get<boolean>("agentsWindow", true) || !opencodeCfg.get<boolean>("autoEnableAgentsWindow", true)) {
+  const opencodeCfg = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  if (!opencodeCfg.get<boolean>(SETTING_AGENTS_WINDOW, true) || !opencodeCfg.get<boolean>(SETTING_AUTO_ENABLE_AGENTS_WINDOW, true)) {
     return;
   }
 
@@ -1153,7 +1126,7 @@ async function warmModelPickerMetadata(): Promise<void> {
     ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true) ? [GO_VENDOR] : []),
     ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true) ? [ZEN_VENDOR] : []),
   ];
-  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true) && vendors.length > 0) {
+  if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true) && vendors.length > 0) {
     vendors.push(AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
   }
   await Promise.allSettled(vendors.map((v) => vscode.lm.selectChatModels({ vendor: v })));
@@ -1161,7 +1134,7 @@ async function warmModelPickerMetadata(): Promise<void> {
 
 async function showModelPickerDiagnostics(): Promise<void> {
   const vendors: string[] = [GO_VENDOR, ZEN_VENDOR, "copilot"];
-  if (vscode.workspace.getConfiguration("opencodego").get<boolean>("agentsWindow", true)) {
+  if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true)) {
     vendors.splice(2, 0, AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
   }
   const sections: string[] = [];
@@ -1217,7 +1190,7 @@ async function showThinkingEffortPicker(): Promise<void> {
     placeHolder: `Set ${family.family.label} → Thinking value`,
   });
   if (!choice) return;
-  const cfg = vscode.workspace.getConfiguration("opencodego.thinking");
+  const cfg = vscode.workspace.getConfiguration(`${CONFIG_SECTION}.thinking`);
   await cfg.update(family.family.key, choice, vscode.ConfigurationTarget.Global);
   vscode.window.showInformationMessage(`OpenCode Thinking — ${family.family.label}: ${choice}`);
 }
@@ -1237,7 +1210,7 @@ function ensureUsageStatusBar(context: vscode.ExtensionContext): vscode.StatusBa
 }
 
 function shouldShowUsageStatusBar(): boolean {
-  return vscode.workspace.getConfiguration("opencodego").get("showUsageStatusBar", true);
+  return vscode.workspace.getConfiguration(CONFIG_SECTION).get(SETTING_SHOW_USAGE_STATUS_BAR, true);
 }
 
 function resetUsageStatusBar(): void {
@@ -1364,7 +1337,7 @@ function updateWebviewContent(): void {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>OpenCode Usage Summary — ${escapeSvg(profileLabel)}</title>
+      <title>OpenCode Usage Summary — ${escapeHtml(profileLabel)}</title>
       <style>
         :root {
           --bg: var(--vscode-editorWidget-background, #252526);
@@ -1447,7 +1420,7 @@ function updateWebviewContent(): void {
     </head>
     <body>
       <div class="card">
-        <div class="title">${escapeSvg(profileLabel)} - Usage</div>
+        <div class="title">${escapeHtml(profileLabel)} - Usage</div>
 
         ${usageCardSectionHtml("Session (5h rolling)", s.session)}
         ${usageCardSectionHtml("Weekly", s.weekly)}
@@ -1475,12 +1448,12 @@ function usageCardSectionHtml(label: string, p: _UsageSummary["session"]): strin
   return [
     '<div class="section">',
     '<div class="row-label">',
-    `<span class="name">${escapeSvg(label)}</span>`,
-    `<span class="resets">Resets in ${escapeSvg(rel(p.resetsAt))}</span>`,
+    `<span class="name">${escapeHtml(label)}</span>`,
+    `<span class="resets">Resets in ${escapeHtml(formatRelativeTime(p.resetsAt))}</span>`,
     "</div>",
     `<div class="bar"><div class="bar-fill" style="width:${width}%"></div></div>`,
     '<div class="row-sub">',
-    `<span class="used">${escapeSvg(`${usd(p.spent)} / ${usd(p.limit)} used`)}</span>`,
+    `<span class="used">${escapeHtml(`${formatUsd(p.spent)} / ${formatUsd(p.limit)} used`)}</span>`,
     `<span class="pct">${pct}%</span>`,
     "</div>",
     "</div>",
@@ -1491,9 +1464,9 @@ function usageCardSectionHtml(label: string, p: _UsageSummary["session"]): strin
 function usageCardStatsHtml(label: string, day: _UsageSummary["today"]): string {
   return [
     '<div class="stats">',
-    `<div class="stat"><div class="label">${escapeSvg(label)}</div><div class="value">${escapeSvg(usd(day.cost))}</div></div>`,
+    `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(formatUsd(day.cost))}</div></div>`,
     `<div class="stat"><div class="label">Requests</div><div class="value">${day.requests}</div></div>`,
-    `<div class="stat"><div class="label">Tokens</div><div class="value">${escapeSvg(tokens(day.tokens))}</div></div>`,
+    `<div class="stat"><div class="label">Tokens</div><div class="value">${escapeHtml(formatTokenCount(day.tokens))}</div></div>`,
     "</div>",
   ].join("");
 }
@@ -1648,11 +1621,11 @@ function buildUsageTooltipSvg(
   const line = "#333333";
   const font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
-  const svgTitle = escapeSvg(profileLabel ? `${profileLabel} - Usage` : "OpenCode Go - Usage");
+  const svgTitle = escapeHtml(profileLabel ? `${profileLabel} - Usage` : "OpenCode Go - Usage");
   const noDataMsg = s.hasData ? null : nonLegacyCount(profilesCache) > 0 ? "No data yet for this profile." : "No usage data yet.";
 
   const text = (value: string, x: number, y: number, size: number, weight = 400, color = fg, anchor: "start" | "end" = "start"): string =>
-    `<text x="${String(x)}" y="${String(y)}" fill="${color}" font-family="${font}" font-size="${String(size)}" font-weight="${String(weight)}" text-anchor="${anchor}">${escapeSvg(value)}</text>`;
+    `<text x="${String(x)}" y="${String(y)}" fill="${color}" font-family="${font}" font-size="${String(size)}" font-weight="${String(weight)}" text-anchor="${anchor}">${escapeHtml(value)}</text>`;
 
   const bar = (pct: number, x: number, y: number, barWidth: number): string => {
     const clamped = Math.min(Math.max(pct, 0), 100);
@@ -1669,10 +1642,10 @@ function buildUsageTooltipSvg(
   const period = (label: string, p: _UsageSummary["session"], y: number): string =>
     [
       text(label, padX, y, 14, 700),
-      text(`Resets in ${rel(p.resetsAt)}`, right, y, 12, 400, muted, "end"),
+      text(`Resets in ${formatRelativeTime(p.resetsAt)}`, right, y, 12, 400, muted, "end"),
       bar(p.percent, padX, y + 14, 340),
       text(`${p.percent.toFixed(1)}%`, right, y + 21, 14, 700, fg, "end"),
-      text(`${usd(p.spent)} / ${usd(p.limit)} used`, padX, y + 36, 13, 400, fg),
+      text(`${formatUsd(p.spent)} / ${formatUsd(p.limit)} used`, padX, y + 36, 13, 400, fg),
     ].join("");
 
   // Device-local rows share one fixed column grid: label, cost, requests,
@@ -1680,11 +1653,11 @@ function buildUsageTooltipSvg(
   const deviceRow = (label: string, cost: number, requests: number, tokenCount: number, y: number): string =>
     [
       text(label, padX, y, 13, 400, muted),
-      text(usd(cost), 120, y, 13, 700),
+      text(formatUsd(cost), 120, y, 13, 700),
       text("Requests:", 190, y, 13, 400, muted),
       text(String(requests), 262, y, 13, 700),
       text("Tokens:", 305, y, 13, 400, muted),
-      text(tokens(tokenCount), 385, y, 13, 700),
+      text(formatTokenCount(tokenCount), 385, y, 13, 700),
     ].join("");
 
   if (!s.hasData) {
@@ -1724,29 +1697,6 @@ ${text(svgTitle, padX, 28, 16, 700)}
 ${meterRows.map(([label, periodValue, y]) => period(label, periodValue, y)).join("")}
 <line x1="${padX}" y1="${dividerY}" x2="${right}" y2="${dividerY}" stroke="${line}" stroke-width="1"/>
 ${deviceRows.map(([label, cost, requests, tokenCount, y]) => deviceRow(label, cost, requests, tokenCount, y)).join("")}</svg>`;
-}
-
-function escapeSvg(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function usd(v: number): string {
-  return `$${v.toFixed(2)}`;
-}
-function tokens(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toString();
-}
-function rel(date: Date): string {
-  const min = Math.max(0, Math.floor((date.getTime() - Date.now()) / 60_000));
-  if (min < 60) return `${String(min)}m`;
-  const h = Math.floor(min / 60),
-    m = min % 60;
-  if (h < 24) return m ? `${String(h)}h ${String(m)}m` : `${String(h)}h`;
-  const d = Math.floor(h / 24),
-    rh = h % 24;
-  return rh ? `${String(d)}d ${String(rh)}h` : `${String(d)}d`;
 }
 
 class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel> {
@@ -2075,7 +2025,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           max_tokens: 10,
           stream: false,
         }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(TEST_CONNECTION_TIMEOUT_MS),
       });
 
       const responseText = await response.text();
@@ -2091,7 +2041,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         );
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.log(`Test connection error: ${message}`);
       vscode.window.showErrorMessage(`${this.definition.displayName}: Connection error - ${message}`);
     } finally {
@@ -2123,7 +2073,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     try {
       models = await vscode.lm.selectChatModels({ vendor: this.definition.vendor });
     } catch (error) {
-      modelSelectionError = error instanceof Error ? error.message : String(error);
+      modelSelectionError = getErrorMessage(error);
     }
 
     const hasStoredApiKey = Boolean(await this.context.secrets.get(SECRET_KEY));
@@ -2271,7 +2221,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
     const settings = getSettings();
     const metadataSnapshot = await this.getMetadataSnapshot();
-    const showProviderPrefix = vscode.workspace.getConfiguration("opencodego").get<boolean>("showProviderPrefix", true);
+    const showProviderPrefix = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_SHOW_PROVIDER_PREFIX, true);
 
     // CONTRACT: VS Code calls provideLanguageModelChatInformation frequently
     // (every ~300ms during UI refresh). Per-model logging produces thousands
@@ -2299,7 +2249,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
       const capacityNote = CAPACITY_LIMITED_MODEL_NOTES[modelId];
       const modalityBadges = formatModalityBadges(metadata);
-      const baseDetail = this.baseVendor === ZEN_VENDOR && isFreeZenModel(modelId) ? "Free" : this.definition.displayName;
+      const baseDetail = this.baseVendor === ZEN_VENDOR && isFreeModel(modelId) ? "Free" : this.definition.displayName;
       const baseTooltip = `${this.definition.displayName} model: ${modelId}`;
       const configurationSchema = modelConfigurationSchema(modelId, metadata);
 
@@ -2444,7 +2394,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       // When `opencodego.visionProxyWholeConversation` is on, describe the whole
       // conversation instead of only the message with a new image, so descriptions
       // keep conversation context (at the cost of more tokens).
-      const describeWholeConversation = vscode.workspace.getConfiguration("opencodego").get<boolean>("visionProxyWholeConversation", false);
+      const describeWholeConversation = vscode.workspace
+        .getConfiguration(CONFIG_SECTION)
+        .get<boolean>(SETTING_VISION_PROXY_WHOLE_CONVERSATION, false);
       let imagesHandled = false;
       try {
         this.log(`[vision-proxy] Forwarding images to ${visionProxyModelId}${describeWholeConversation ? " (whole conversation)" : ""}`);
@@ -2479,7 +2431,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           );
         }
       } catch (err) {
-        this.log(`[vision-proxy] Error: ${err instanceof Error ? err.message : String(err)}`);
+        this.log(`[vision-proxy] Error: ${getErrorMessage(err)}`);
       }
 
       // If the proxy didn't handle the images (error, empty response, or
@@ -2670,7 +2622,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       });
       this.log(`Request completed: model=${model.id}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.log(`ERROR model=${model.id}: ${message}`);
       if (error instanceof OpenCodeRequestError) {
         vscode.window.showErrorMessage(error.userMessage);
@@ -2746,8 +2698,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
           .filter((id): id is string => typeof id === "string" && id.length > 0)
           .filter((id) => this.definition.filterModel?.(id) ?? true);
 
-        const resolved = this.filterAvailableModels(ids?.length ? ids : this.definition.fallbackModels);
-        const filtered = await resolved;
+        const filtered = await this.filterAvailableModels(ids?.length ? ids : this.definition.fallbackModels);
         // Persist the successful snapshot for future fallback coverage.
         this.cachedModelList = { ids: filtered, fetchedAt: Date.now() };
         void this.context.globalState.update(this.modelListCacheKey, this.cachedModelList);
@@ -2876,7 +2827,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
 
       return filteredModelIds;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.log(`Could not fetch model status metadata from models.dev. Applying local unavailable model filter only. ${message}`);
       return uniqueModelIds.filter((modelId) => !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId));
     }
@@ -2921,7 +2872,7 @@ async function refreshOpenCodeModelMetadata(
 
   modelMetadataRefreshPromise = (async () => {
     const response = await fetch(MODELS_DEV_API_URL, {
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(MODEL_METADATA_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -2940,13 +2891,13 @@ async function refreshOpenCodeModelMetadata(
     .catch((error: unknown) => {
       const cached = modelMetadataSnapshot ?? context.globalState.get<CachedModelMetadataSnapshot>(MODEL_METADATA_CACHE_KEY);
       if (cached) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         output?.appendLine(`[metadata] refresh failed, using cached snapshot: ${message}`);
         modelMetadataSnapshot = cached;
         return cached;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       const fallback = bundledModelMetadataSnapshot();
       output?.appendLine(`[metadata] refresh failed, using bundled snapshot: ${message}`);
       modelMetadataSnapshot = fallback;
@@ -3271,7 +3222,7 @@ function googleContentsFromMessages(messages: ApiMessage[]): Record<string, unkn
         parts.push({ text });
       }
       for (const toolCall of message.tool_calls ?? []) {
-        const args = parseToolInput(toolCall.function.arguments);
+        const args = parseToolInputShared(toolCall.function.arguments);
         parts.push({ functionCall: { name: toolCall.function.name, args } });
         toolNamesById.set(toolCall.id, toolCall.function.name);
       }
@@ -3373,19 +3324,6 @@ function googleFunctionResponseContent(
   }
 
   return { name, content: text, parts };
-}
-
-function parseToolInput(value: string): object {
-  if (!value.trim()) {
-    return {};
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 // The official OpenCode client sends these headers on every request. The Zen
@@ -3520,7 +3458,7 @@ function sanitizeToolSchema(schema: unknown): object {
   }
 
   return {
-    type: sanitized.type === "object" ? "object" : "object",
+    type: "object",
     properties: isRecord(sanitized.properties) ? sanitized.properties : {},
     ...(Array.isArray(sanitized.required) ? { required: sanitized.required } : {}),
   };
@@ -3849,21 +3787,7 @@ async function convertMessage(
 }
 
 function dataPartToBase64(data: Uint8Array): string {
-  let output = "";
-
-  for (let index = 0; index < data.length; index += 3) {
-    const first = data[index] ?? 0;
-    const second = data[index + 1] ?? 0;
-    const third = data[index + 2] ?? 0;
-    const chunk = (first << 16) | (second << 8) | third;
-
-    output += BASE64_ALPHABET[(chunk >> 18) & 63];
-    output += BASE64_ALPHABET[(chunk >> 12) & 63];
-    output += index + 1 < data.length ? BASE64_ALPHABET[(chunk >> 6) & 63] : "=";
-    output += index + 2 < data.length ? BASE64_ALPHABET[chunk & 63] : "=";
-  }
-
-  return output;
+  return Buffer.from(data).toString("base64");
 }
 
 function reasoningForToolCalls(toolCalls: OpenAiToolCall[], reasoningContentByToolCallId: ReadonlyMap<string, string>): string | undefined {
@@ -4197,26 +4121,35 @@ function pickThinkingModelConfiguration(override: Record<string, unknown> | unde
 }
 
 function getSettings(): ApiSettings {
-  const config = vscode.workspace.getConfiguration("opencodego");
+  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
 
+  // Config values are sanitized so a misconfigured (e.g. string) value never
+  // reaches the request body and 400s upstream.
   return {
-    temperature: config.get("temperature", 0.2),
-    maxOutputTokensOverride: config.get("maxTokens", 0),
-    maxInputTokensOverride: config.get("maxInputTokens", 0),
-    debugReasoning: config.get("debugReasoning", false),
-    requestTimeoutMs: Math.max(config.get("requestTimeoutSeconds", DEFAULT_REQUEST_TIMEOUT_MS / 1000), 1) * 1000,
-    streamIdleTimeoutMs: Math.max(config.get("streamIdleTimeoutSeconds", DEFAULT_STREAM_IDLE_TIMEOUT_MS / 1000), 1) * 1000,
+    temperature: toFiniteNumber(config.get(SETTING_TEMPERATURE, 0.2), 0.2),
+    maxOutputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_TOKENS, 0), 0, 0),
+    maxInputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_INPUT_TOKENS, 0), 0, 0),
+    debugReasoning: config.get(SETTING_DEBUG_REASONING, false),
+    requestTimeoutMs:
+      toFiniteNumber(config.get(SETTING_REQUEST_TIMEOUT_SECONDS, DEFAULT_REQUEST_TIMEOUT_SECONDS), DEFAULT_REQUEST_TIMEOUT_SECONDS, 1) *
+      1000,
+    streamIdleTimeoutMs:
+      toFiniteNumber(
+        config.get(SETTING_STREAM_IDLE_TIMEOUT_SECONDS, DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS),
+        DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
+        1,
+      ) * 1000,
     thinking: {
-      deepseek: config.get<ThinkingSettings["deepseek"]>("thinking.deepseek", "off"),
-      glm: config.get<ThinkingSettings["glm"]>("thinking.glm", "off"),
-      kimi: config.get<ThinkingSettings["kimi"]>("thinking.kimi", "off"),
-      minimax: config.get<ThinkingSettings["minimax"]>("thinking.minimax", "off"),
-      openai: config.get<ThinkingSettings["openai"]>("thinking.openai", "off"),
-      qwen: config.get<ThinkingSettings["qwen"]>("thinking.qwen", "off"),
-      qwenBudget: config.get<ThinkingSettings["qwenBudget"]>("thinking.qwenBudget", "auto"),
-      mimo: config.get<ThinkingSettings["mimo"]>("thinking.mimo", "off"),
+      deepseek: config.get<ThinkingSettings["deepseek"]>(SETTING_THINKING_DEEPSEEK, THINKING_DEFAULTS.deepseek),
+      glm: config.get<ThinkingSettings["glm"]>(SETTING_THINKING_GLM, THINKING_DEFAULTS.glm),
+      kimi: config.get<ThinkingSettings["kimi"]>(SETTING_THINKING_KIMI, THINKING_DEFAULTS.kimi),
+      minimax: config.get<ThinkingSettings["minimax"]>(SETTING_THINKING_MINIMAX, THINKING_DEFAULTS.minimax),
+      openai: config.get<ThinkingSettings["openai"]>(SETTING_THINKING_OPENAI, THINKING_DEFAULTS.openai),
+      qwen: config.get<ThinkingSettings["qwen"]>(SETTING_THINKING_QWEN, THINKING_DEFAULTS.qwen),
+      qwenBudget: config.get<ThinkingSettings["qwenBudget"]>(SETTING_THINKING_QWEN_BUDGET, THINKING_DEFAULTS.qwenBudget),
+      mimo: config.get<ThinkingSettings["mimo"]>(SETTING_THINKING_MIMO, THINKING_DEFAULTS.mimo),
     },
-    stripThinkTags: config.get<ApiSettings["stripThinkTags"]>("stripThinkTags", "auto"),
+    stripThinkTags: config.get<ApiSettings["stripThinkTags"]>(SETTING_STRIP_THINK_TAGS, "auto"),
   };
 }
 
@@ -4260,10 +4193,7 @@ function formatModalityBadges(metadata: ResolvedModelMetadata): string {
   if (metadata.supportsVideo) {
     badges.push("Video");
   }
-  if (metadata.supportsAudio && !metadata.supportsVideo && !metadata.supportsPdf) {
-    badges.push("Audio");
-  }
-  if (metadata.supportsAudio && (metadata.supportsVideo || metadata.supportsPdf)) {
+  if (metadata.supportsAudio) {
     badges.push("Audio");
   }
   return badges.join(" · ");
@@ -4285,14 +4215,6 @@ function resolveRawModelId(modelId: string): string {
     }
   }
   return base;
-}
-
-function isFreeZenModel(modelId: string): boolean {
-  return modelId.endsWith("-free") || FREE_ZEN_MODEL_IDS.has(modelId);
-}
-
-function isFreeModel(modelId: string): boolean {
-  return FREE_ZEN_MODEL_IDS.has(modelId) || modelId.endsWith("-free");
 }
 
 /** Result of a vision-proxy pass: per-message descriptions plus cache stats. */
@@ -4329,33 +4251,13 @@ function collectRequestParts(msg: vscode.LanguageModelChatRequestMessage): (vsco
  * the proxy describe ONLY the message that contains a new image, instead of
  * re-sending the whole conversation on every turn.
  */
-function buildVisionRequestMessage(msg: vscode.LanguageModelChatRequestMessage, visionPrompt: string): vscode.LanguageModelChatMessage[] {
-  const requestMessages: vscode.LanguageModelChatMessage[] = [];
-  const parts = collectRequestParts(msg);
-  if (parts.length > 0) {
-    requestMessages.push(
-      new vscode.LanguageModelChatMessage(
-        msg.role === vscode.LanguageModelChatMessageRole.Assistant
-          ? vscode.LanguageModelChatMessageRole.Assistant
-          : vscode.LanguageModelChatMessageRole.User,
-        parts,
-      ),
-    );
-  }
-  // Append the vision prompt
-  if (visionPrompt) {
-    requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
-  }
-  return requestMessages;
-}
-
 /**
- * Build a vision-model request over the WHOLE conversation: keep image and
- * text parts from every message (dropping tool parts), then append the vision
- * prompt. Used when `opencodego.visionProxyWholeConversation` is enabled, so
- * descriptions carry full conversation context (at the cost of more tokens).
+ * Build a vision-model request: keep image and text parts from every message
+ * (dropping tool parts), then append the vision prompt. Used both for the
+ * per-message path (single message) and the whole-conversation path (all
+ * messages) when `opencodego.visionProxyWholeConversation` is enabled.
  */
-function buildWholeConversationRequest(
+function buildVisionRequest(
   messages: readonly vscode.LanguageModelChatRequestMessage[],
   visionPrompt: string,
 ): vscode.LanguageModelChatMessage[] {
@@ -4465,7 +4367,7 @@ async function proxyVision(
     if (imageIndices.length > 0) {
       cacheMisses++;
       const model = await resolveVisionModel();
-      const response = await model.sendRequest(buildWholeConversationRequest(messages, visionPrompt), {}, token);
+      const response = await model.sendRequest(buildVisionRequest(messages, visionPrompt), {}, token);
       let fullDescription = "";
       for await (const part of response.text) {
         fullDescription += part;
@@ -4501,7 +4403,7 @@ async function proxyVision(
     // At least one new image → describe only this message and cache the result.
     cacheMisses++;
     const model = await resolveVisionModel();
-    const response = await model.sendRequest(buildVisionRequestMessage(msg, visionPrompt), {}, token);
+    const response = await model.sendRequest(buildVisionRequest([msg], visionPrompt), {}, token);
     let fullDescription = "";
     for await (const part of response.text) {
       fullDescription += part;
@@ -4519,12 +4421,6 @@ async function proxyVision(
 // ---------------------------------------------------------------------------
 // Vision proxy — globalState storage keys & defaults
 // ---------------------------------------------------------------------------
-
-const VISION_PROXY_MODEL_ID_KEY = "opencodego.visionProxyModelId";
-const VISION_PROXY_PROMPT_KEY = "opencodego.visionProxyPrompt";
-const DEFAULT_VISION_PROXY_PROMPT =
-  "Describe this image in detail so a text-only model can understand what it shows. " +
-  "Include all visible text, layout, colors, objects, and context.";
 
 /**
  * True when a vision proxy model has been configured (non-empty model ID
@@ -4744,8 +4640,4 @@ function costCategory(cost: { input: number; output: number }): string {
   if (weighted <= 25) return "medium";
   if (weighted <= 50) return "high";
   return "very_high";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

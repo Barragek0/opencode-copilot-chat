@@ -7,9 +7,13 @@
  * Pure and unit-tested.
  */
 
-export const DEFAULT_PREFIX_LINES = 10;
-export const DEFAULT_SUFFIX_CHARS = 300;
-export const DEFAULT_MAX_TOKENS = 128;
+import { DEFAULT_INLINE_PREFIX_LINES, DEFAULT_INLINE_SUFFIX_CHARS } from "../config";
+
+export {
+  DEFAULT_INLINE_PREFIX_LINES as DEFAULT_PREFIX_LINES,
+  DEFAULT_INLINE_SUFFIX_CHARS as DEFAULT_SUFFIX_CHARS,
+  DEFAULT_INLINE_MAX_TOKENS as DEFAULT_MAX_TOKENS,
+} from "../config";
 
 export interface CompletionWindowOptions {
   prefixLines?: number;
@@ -22,8 +26,8 @@ export interface CompletionWindow {
 }
 
 export function buildCompletionWindow(text: string, offset: number, options: CompletionWindowOptions = {}): CompletionWindow {
-  const prefixLines = options.prefixLines ?? DEFAULT_PREFIX_LINES;
-  const suffixChars = options.suffixChars ?? DEFAULT_SUFFIX_CHARS;
+  const prefixLines = options.prefixLines ?? DEFAULT_INLINE_PREFIX_LINES;
+  const suffixChars = options.suffixChars ?? DEFAULT_INLINE_SUFFIX_CHARS;
 
   const prefixStart = Math.max(0, offset - 1);
   const beforeCursor = text.slice(0, prefixStart + 1);

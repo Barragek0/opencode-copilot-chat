@@ -29,6 +29,7 @@ import {
 } from "./contextWindowHookBridge";
 import { formatUsageLogLine } from "./usage";
 import { parseToolInput, ToolCallAccumulator, type PendingToolCall } from "./toolCallAccumulator";
+import { isRecord, sleepWithCancellation } from "./utils";
 
 export interface StreamRequestOptions {
   url: string;
@@ -293,36 +294,6 @@ function emitThinkingPart(
     // Defensive: never let a thinking-part emit failure break the visible response.
     return false;
   }
-}
-
-/**
- * Wait for `ms` milliseconds, aborting early if the token is cancelled.
- *
- * The shared completion path clears the timer and disposes the cancellation
- * listener. A second cancellation check closes the registration race.
- */
-function sleepWithCancellation(ms: number, token: vscode.CancellationToken): Promise<void> {
-  if (token.isCancellationRequested) return Promise.resolve();
-
-  return new Promise((resolve) => {
-    const state: { cancellation?: vscode.Disposable; settled: boolean } = { settled: false };
-    const finish = () => {
-      if (state.settled) return;
-      state.settled = true;
-      clearTimeout(timer);
-      state.cancellation?.dispose();
-      resolve();
-    };
-    const timer = setTimeout(finish, ms);
-    state.cancellation = token.onCancellationRequested(finish);
-
-    // Close the race between the initial check and listener registration.
-    if (state.settled) {
-      state.cancellation.dispose();
-    } else if (token.isCancellationRequested) {
-      finish();
-    }
-  });
 }
 
 async function streamOpenCodeResponse(options: StreamOpenCodeResponseOptions): Promise<void> {
@@ -1345,11 +1316,10 @@ class AnthropicResponseExtractor {
       return parts;
     }
 
-    // 3. message_delta: contains stop_reason and usage.
+    // 3. message_delta: contains stop_reason and usage. Usage is already
+    //    collected via the onData callback in parseServerSentEvent (which
+    //    updates the real RequestUsageSummary); here we only flush tool calls.
     if (eventType === "message_delta" && delta) {
-      if (isRecord(data.usage)) {
-        updateRequestUsageSummary(this as unknown as RequestUsageSummary, data);
-      }
       if (delta.stop_reason) {
         const toolParts = this.flushToolCalls();
         this.emittedToolCallsCount += toolParts.length;
@@ -1711,8 +1681,4 @@ function updateRequestUsageSummary(summary: RequestUsageSummary, data: unknown):
   if (firstChoice && typeof firstChoice.finish_reason === "string") {
     summary.finishReason = firstChoice.finish_reason;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

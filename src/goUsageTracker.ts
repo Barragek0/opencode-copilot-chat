@@ -7,27 +7,32 @@ import { GO_VENDOR } from "./providerTypes";
 import type { ModelCost } from "./metadata";
 import type { TransportRequestSummary } from "./streaming";
 import { fetchGoUsage, mergeServerUsage, GO_USAGE_SYNC_TTL_MS, type GoUsageApiResponse } from "./goUsageSync";
+import {
+  GO_LIMITS,
+  FIVE_HOURS_MS,
+  WEEK_MS,
+  GO_USAGE_LOG_KEY,
+  GO_USAGE_BASELINE_KEY,
+  GO_EVER_TRACKED_KEY,
+  GO_SESSION_COSTS_KEY,
+  GO_MAX_LOG_ENTRIES,
+  GO_SESSION_IDLE_MS,
+  GO_MAX_SESSIONS,
+} from "./config";
+import { formatTokenCount, formatUsd, formatRelativeTime } from "./utils";
+
+export { GO_LIMITS } from "./config";
 
 /** Callback to resolve live model cost from the models.dev metadata cache. */
 export type CostResolver = (modelId: string) => ModelCost | undefined;
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// ─── Constants (values centralized in ./config) ──────────────────────────────
 
-const STORAGE_KEY = "opencodego.usageLog.v1";
-const BASELINE_STORAGE_KEY = "opencodego.usageBaseline.v1";
-const EVER_TRACKED_KEY = "opencodego.everTracked.v1";
-const SESSION_COSTS_KEY = "opencodego.sessionCosts.v1";
-const MAX_LOG_ENTRIES = 2000;
-
-/** OpenCode Go subscription limits in USD, from https://opencode.ai/docs/go */
-export const GO_LIMITS = {
-  session: 12, // $12 per rolling 5-hour window
-  weekly: 30, // $30 per week (Mon–Mon UTC)
-  monthly: 60, // $60 per month (anchor-based)
-} as const;
-
-const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const STORAGE_KEY = GO_USAGE_LOG_KEY;
+const BASELINE_STORAGE_KEY = GO_USAGE_BASELINE_KEY;
+const EVER_TRACKED_KEY = GO_EVER_TRACKED_KEY;
+const SESSION_COSTS_KEY = GO_SESSION_COSTS_KEY;
+const MAX_LOG_ENTRIES = GO_MAX_LOG_ENTRIES;
 
 // ─── Go model pricing ($/1M tokens) — bundled snapshot fallback ────────────
 // This table is a static snapshot kept as a last resort. The primary source
@@ -310,8 +315,8 @@ export class GoUsageTracker {
   private serverUsageFetchedAt = 0;
   /** In-flight sync promise per key — prevents duplicate concurrent fetches. */
   private syncInFlight: { apiKey: string; promise: Promise<boolean> } | undefined;
-  private static readonly SESSION_IDLE_MS = 2 * 60 * 60 * 1000; // 2h
-  private static readonly MAX_SESSIONS = 50;
+  private static readonly SESSION_IDLE_MS = GO_SESSION_IDLE_MS;
+  private static readonly MAX_SESSIONS = GO_MAX_SESSIONS;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -947,30 +952,9 @@ export class GoUsageTracker {
 
 // ─── Formatting helpers ──────────────────────────────────────────────────────
 
-function fmtUsd(v: number): string {
-  return `$${v.toFixed(2)}`;
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${String(Math.round(n / 1_000))}k`;
-  return String(n);
-}
-
 function progressBar(percent: number, width = 10): string {
   const filled = Math.round((percent / 100) * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
-function fmtRelativeTime(target: Date, from: Date = new Date()): string {
-  const diffMs = target.getTime() - from.getTime();
-  if (diffMs <= 0) return "now";
-  const totalMinutes = Math.ceil(diffMs / 60_000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${String(minutes)}m`;
-  if (minutes === 0) return `${String(hours)}h`;
-  return `${String(hours)}h ${String(minutes)}m`;
 }
 
 function fmtDate(d: Date): string {
@@ -1001,74 +985,6 @@ export function formatGoUsageStatusBarText(summary: UsageSummary): string {
   return `Go: ${String(s)}%·${String(w)}%·${String(m)}%${warn}`;
 }
 
-/** Multiline tooltip (VS Code renders newlines in tooltips as-is) */
-export function formatGoUsageTooltip(summary: UsageSummary): vscode.MarkdownString {
-  const md = new vscode.MarkdownString(undefined, true);
-  md.supportThemeIcons = true;
-  md.isTrusted = true;
-
-  md.appendMarkdown("**OpenCode Go — Usage Limits**\n\n");
-
-  for (const [label, period] of [
-    ["Session (5h rolling)", summary.session],
-    ["Weekly (Mon–Mon UTC)", summary.weekly],
-    ["Monthly", summary.monthly],
-  ] as [string, PeriodUsage][]) {
-    const bar = progressBar(period.percent);
-    const icon = percentColor(period.percent);
-    const resets = fmtRelativeTime(period.resetsAt);
-    md.appendMarkdown(
-      `${icon} **${label}**\n\n` +
-        `\`${bar}\` ${String(period.percent)}% · ${fmtUsd(period.spent)} / ${fmtUsd(period.limit)} · resets in ${resets}\n\n`,
-    );
-  }
-
-  md.appendMarkdown("---\n\n");
-  md.appendMarkdown(
-    `$(history) **Today:** ${fmtUsd(summary.today.cost)} · ${fmtTokens(summary.today.tokens)} tokens · ${String(summary.today.requests)} req\n\n`,
-  );
-
-  if (summary.yesterday.requests > 0) {
-    md.appendMarkdown(
-      `$(history) **Yesterday:** ${fmtUsd(summary.yesterday.cost)} · ${fmtTokens(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} req\n\n`,
-    );
-  }
-
-  md.appendMarkdown("\n$(info) Click for details");
-  return md;
-}
-
-/** Compact plain-text summary used by Language Status popup. */
-export function formatGoUsageLanguageStatusDetail(summary: UsageSummary): string {
-  const now = new Date();
-
-  const sessionLine = [
-    `Session ${String(summary.session.percent)}%`,
-    `${fmtUsd(summary.session.spent)} / ${fmtUsd(summary.session.limit)}`,
-    `resets in ${fmtRelativeTime(summary.session.resetsAt, now)}`,
-  ].join(" · ");
-
-  const weeklyLine = [
-    `Weekly ${String(summary.weekly.percent)}%`,
-    `${fmtUsd(summary.weekly.spent)} / ${fmtUsd(summary.weekly.limit)}`,
-    `resets in ${fmtRelativeTime(summary.weekly.resetsAt, now)}`,
-  ].join(" · ");
-
-  const monthlyLine = [
-    `Monthly ${String(summary.monthly.percent)}%`,
-    `${fmtUsd(summary.monthly.spent)} / ${fmtUsd(summary.monthly.limit)}`,
-    `resets in ${fmtRelativeTime(summary.monthly.resetsAt, now)}`,
-  ].join(" · ");
-
-  const todayLine = [
-    `Today ${fmtUsd(summary.today.cost)}`,
-    `${fmtTokens(summary.today.tokens)} tokens`,
-    `${String(summary.today.requests)} req`,
-  ].join(" · ");
-
-  return [sessionLine, weeklyLine, monthlyLine, todayLine].join("\n");
-}
-
 /** Build Quick Pick items for the usage panel */
 export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false): vscode.QuickPickItem[] {
   const now = new Date();
@@ -1076,9 +992,9 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
 
   function periodItem(icon: string, label: string, period: PeriodUsage, resetLabel: string): vscode.QuickPickItem {
     const bar = progressBar(period.percent);
-    const spent = fmtUsd(period.spent);
-    const limit = fmtUsd(period.limit);
-    const resets = fmtRelativeTime(period.resetsAt, now);
+    const spent = formatUsd(period.spent);
+    const limit = formatUsd(period.limit);
+    const resets = formatRelativeTime(period.resetsAt, now);
     return {
       label: `${icon} ${label}`,
       description: `${bar} ${String(period.percent)}%`,
@@ -1128,16 +1044,16 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
 
   items.push({
     label: `$(history) Today`,
-    description: fmtUsd(summary.today.cost),
-    detail: `${fmtTokens(summary.today.tokens)} tokens · ${String(summary.today.requests)} requests`,
+    description: formatUsd(summary.today.cost),
+    detail: `${formatTokenCount(summary.today.tokens)} tokens · ${String(summary.today.requests)} requests`,
     alwaysShow: true,
   });
 
   if (summary.yesterday.requests > 0 || isEmpty) {
     items.push({
       label: `$(history) Yesterday`,
-      description: fmtUsd(summary.yesterday.cost),
-      detail: `${fmtTokens(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} requests`,
+      description: formatUsd(summary.yesterday.cost),
+      detail: `${formatTokenCount(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} requests`,
       alwaysShow: true,
     });
   }

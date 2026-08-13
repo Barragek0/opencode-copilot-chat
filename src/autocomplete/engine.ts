@@ -9,8 +9,9 @@
 
 import { buildCompletionPrompt } from "./prompt";
 import type { CompletionContext, CompletionEngine, CompletionResult } from "./types";
+import { COMPLETION_REQUEST_TIMEOUT_MS } from "../config";
 
-export const COMPLETION_REQUEST_TIMEOUT_MS = 3_000;
+export { COMPLETION_REQUEST_TIMEOUT_MS } from "../config";
 
 export interface ChatCompletionEngineOptions {
   /** Gateway chat-completions URL (provider-specific). */
