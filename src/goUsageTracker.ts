@@ -521,7 +521,7 @@ export class GoUsageTracker {
 
   /** Build summary from SQLite, enriched with token/request counts from tracked entries. */
   private buildSqliteEnrichedSummary(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
-    const base = this.buildSummaryFromRows(nowMs, rows, clamp, true);
+    const base = this.buildSummaryFromRows(nowMs, rows, clamp);
 
     // Enrich today/yesterday tokens+requests from tracked entries (SQLite doesn't store tokens).
     const dayMs = startOfUtcDay(nowMs);
@@ -567,12 +567,7 @@ export class GoUsageTracker {
   }
 
   /** Build summary from opencode.db rows (enrichment data from CLI history) */
-  private buildSummaryFromRows(
-    nowMs: number,
-    rows: HistoryRow[],
-    clamp: (v: number, limit: number) => number,
-    hasData: boolean,
-  ): UsageSummary {
+  private buildSummaryFromRows(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
     const dayMs = startOfUtcDay(nowMs);
     const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
     const weekMs = startOfUtcWeek(nowMs);
@@ -642,7 +637,7 @@ export class GoUsageTracker {
         requests: yestReq,
         tokens: 0,
       },
-      hasData,
+      hasData: true,
       sqliteAvailable: false,
     };
   }
