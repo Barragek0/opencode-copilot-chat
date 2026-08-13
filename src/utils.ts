@@ -58,18 +58,37 @@ export function parseJsonSafe(text: string): unknown {
 
 // ─── Formatting helpers ──────────────────────────────────────────────────────
 
-/** `$12.30`-style fixed two-decimal currency. */
+/**
+ * Currency for display: `$1.23M` / `$1.50K` for large amounts, `$12.30`
+ * normally, and `$0.0004`-style precision for sub-cent spend so tiny usage
+ * never collapses to `$0.00`.
+ */
 export function formatUsd(value: number): string {
-  return `$${value.toFixed(2)}`;
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
+  if (abs >= 0.01 || value === 0) return `$${value.toFixed(2)}`;
+  return `$${value.toFixed(4)}`;
 }
 
 /**
- * Compact human token count: 1.2M / 12k / 1.2k / raw number.
+ * Compact human token count: 1.2T / 1.2B / 1.2M / 12k / 1.2k / raw number.
  * Rounds at >= 10k for a shorter status-bar label.
  */
 export function formatTokenCount(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 10_000) return `${Math.round(value / 1_000)}k`;
+  if (value >= 1_000_000_000_000) return `${(value / 1_000_000_000_000).toFixed(1)}T`;
+  if (value >= 1_000_000_000) {
+    const v = Math.round((value / 1_000_000_000) * 10) / 10;
+    return v >= 1_000 ? `${(v / 1_000).toFixed(1)}T` : `${v}B`;
+  }
+  if (value >= 1_000_000) {
+    const v = Math.round((value / 1_000_000) * 10) / 10;
+    return v >= 1_000 ? `${(v / 1_000).toFixed(1)}B` : `${v}M`;
+  }
+  if (value >= 10_000) {
+    const k = Math.round(value / 1_000);
+    return k >= 1_000 ? `${(k / 1_000).toFixed(1)}M` : `${k}k`;
+  }
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   return String(value);
 }

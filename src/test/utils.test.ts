@@ -96,6 +96,16 @@ describe("utils — formatUsd", () => {
     assert.equal(formatUsd(0), "$0.00");
     assert.equal(formatUsd(1.005), "$1.00");
   });
+
+  it("keeps sub-cent spend visible", () => {
+    assert.equal(formatUsd(0.005), "$0.0050");
+    assert.equal(formatUsd(0.0002), "$0.0002");
+  });
+
+  it("compacts large amounts", () => {
+    assert.equal(formatUsd(1_500), "$1.50K");
+    assert.equal(formatUsd(1_234_567), "$1.23M");
+  });
 });
 
 describe("utils — formatTokenCount", () => {
@@ -105,6 +115,17 @@ describe("utils — formatTokenCount", () => {
     assert.equal(formatTokenCount(1_234), "1.2k");
     assert.equal(formatTokenCount(12_345), "12k");
     assert.equal(formatTokenCount(1_234_567), "1.2M");
+  });
+
+  it("handles billions and trillions", () => {
+    assert.equal(formatTokenCount(1_234_567_890), "1.2B");
+    assert.equal(formatTokenCount(2_000_000_000_000), "2.0T");
+  });
+
+  it("escalates units when rounding would overflow", () => {
+    assert.equal(formatTokenCount(999_500), "1.0M");
+    assert.equal(formatTokenCount(999_999_500), "1.0B");
+    assert.equal(formatTokenCount(999_999_999_500), "1.0T");
   });
 });
 

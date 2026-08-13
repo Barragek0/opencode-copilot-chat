@@ -74,13 +74,13 @@ export function formatUsageStatusBarTooltip(providerDisplayName: string, modelId
   const lines = [
     `Provider: ${providerDisplayName}`,
     `Model: ${modelId}`,
-    `Prompt: ${String(normalized.promptTokens ?? "n/a")} tokens`,
-    `Output: ${String(normalized.completionTokens ?? "n/a")} tokens`,
-    `Total: ${String(normalized.totalTokens ?? "n/a")} tokens`,
+    `Prompt: ${formatTokenCount(normalized.promptTokens ?? 0)} tokens`,
+    `Output: ${formatTokenCount(normalized.completionTokens ?? 0)} tokens`,
+    `Total: ${formatTokenCount(normalized.totalTokens ?? 0)} tokens`,
   ];
 
   if (normalized.cachedTokens !== undefined) {
-    lines.push(`Cached input: ${String(normalized.cachedTokens)} tokens`);
+    lines.push(`Cached input: ${formatTokenCount(normalized.cachedTokens)} tokens`);
   }
 
   const ratio = formatCacheHitRatio(normalized);
