@@ -7,11 +7,9 @@
  */
 
 import * as vscode from "vscode";
-import { buildCompletionWindow, DEFAULT_MAX_TOKENS } from "./context";
+import { buildCompletionWindow } from "./context";
 import { Debouncer } from "./throttle";
-import type { CompletionEngine } from "./types";
-
-export const COMPLETION_DEBOUNCE_MS = 300;
+import type { CompletionContext, CompletionEngine } from "./types";
 
 export interface InlineCompletionProviderOptions {
   engine: CompletionEngine;
@@ -21,12 +19,22 @@ export interface InlineCompletionProviderOptions {
   isEnabled: () => boolean;
   /** The model to use for suggestions (config-driven). */
   resolveModelId: () => string;
+  /** Debounce delay in ms before a request is sent (config-driven). */
+  resolveDebounceMs: () => number;
+  /** Max tokens a completion may produce (config-driven). */
+  resolveMaxTokens: () => number;
+  /** Context window: lines before the cursor (config-driven). */
+  resolvePrefixLines: () => number;
+  /** Context window: chars after the cursor (config-driven). */
+  resolveSuffixChars: () => number;
 }
 
 export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
-  private readonly debouncer = new Debouncer(COMPLETION_DEBOUNCE_MS);
+  private readonly debouncer: Debouncer;
 
-  constructor(private readonly options: InlineCompletionProviderOptions) {}
+  constructor(private readonly options: InlineCompletionProviderOptions) {
+    this.debouncer = new Debouncer(options.resolveDebounceMs());
+  }
 
   provideInlineCompletionItems(
     document: vscode.TextDocument,
@@ -40,7 +48,10 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
 
     const text = document.getText();
     const offset = document.offsetAt(position);
-    const { prefix, suffix } = buildCompletionWindow(text, offset);
+    const { prefix, suffix } = buildCompletionWindow(text, offset, {
+      prefixLines: this.options.resolvePrefixLines(),
+      suffixChars: this.options.resolveSuffixChars(),
+    });
     if (!prefix.trim()) {
       return Promise.resolve(undefined);
     }
@@ -74,7 +85,13 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
           finish(undefined);
           return;
         }
-        const result = await this.options.engine.complete({ prefix, suffix, modelId, maxTokens: DEFAULT_MAX_TOKENS }, signal);
+        const ctx: CompletionContext = {
+          prefix,
+          suffix,
+          modelId,
+          maxTokens: this.options.resolveMaxTokens(),
+        };
+        const result = await this.options.engine.complete(ctx, signal);
         if (!result.text) {
           finish(undefined);
           return;
