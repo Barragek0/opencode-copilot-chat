@@ -4,6 +4,7 @@ import {
   compactErrorCode,
   escapeHtml,
   firstString,
+  formatCount,
   formatRelativeTime,
   formatTokenCount,
   formatUsd,
@@ -120,6 +121,13 @@ describe("utils — formatTokenCount", () => {
   it("handles billions and trillions", () => {
     assert.equal(formatTokenCount(1_234_567_890), "1.2B");
     assert.equal(formatTokenCount(2_000_000_000_000), "2.0T");
+  });
+
+  it("formatCount compacts request-style counts", () => {
+    assert.equal(formatCount(999), "999");
+    assert.equal(formatCount(1_715), "1.7k");
+    assert.equal(formatCount(12_345), "12k");
+    assert.equal(formatCount(1_234_567), "1.2M");
   });
 
   it("escalates units when rounding would overflow", () => {

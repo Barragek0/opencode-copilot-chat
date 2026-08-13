@@ -72,10 +72,11 @@ export function formatUsd(value: number): string {
 }
 
 /**
- * Compact human token count: 1.2T / 1.2B / 1.2M / 12k / 1.2k / raw number.
- * Rounds at >= 10k for a shorter status-bar label.
+ * Compact human count: 1.2T / 1.2B / 1.2M / 12k / 1.2k / raw number.
+ * Rounds at >= 10k for a shorter label. Used for token counts AND request
+ * counts so no UI ever prints long raw numbers.
  */
-export function formatTokenCount(value: number): string {
+export function formatCount(value: number): string {
   if (value >= 1_000_000_000_000) return `${(value / 1_000_000_000_000).toFixed(1)}T`;
   if (value >= 1_000_000_000) {
     const v = Math.round((value / 1_000_000_000) * 10) / 10;
@@ -92,6 +93,9 @@ export function formatTokenCount(value: number): string {
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   return String(value);
 }
+
+/** Compact token count — see {@link formatCount}. */
+export const formatTokenCount = formatCount;
 
 /** Compact relative time ("now", "5m", "3h", "3h 20m", "2d 4h"). */
 export function formatRelativeTime(target: Date, from: Date = new Date()): string {

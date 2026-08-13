@@ -16,7 +16,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Fixed
 
-- **`[Usage]` Compact number formatting everywhere.** Token counts render as `1.2T` / `1.2B` / `1.2M` / `12k` (with correct unit escalation at rounding boundaries — no more `1000.0M`), and dollars as `$1.23M` / `$1.50K` / `$12.30` with sub-cent precision (`$0.0004`) so tiny spend never collapses to `$0.00`. Applied to the status-bar tooltip, tooltip card, quick-pick and usage panel.
+- **`[Usage]` Compact number formatting everywhere.** Token AND request counts render as `1.2T` / `1.2B` / `1.2M` / `12k` (with correct unit escalation at rounding boundaries — no more `1000.0M`), and dollars as `$1.23M` / `$1.50K` / `$12.30` with sub-cent precision (`$0.0004`) so tiny spend never collapses to `$0.00`. Applied to the status-bar tooltip, tooltip card, quick-pick and usage panel.
 
 - **`[Usage]` Today/Yesterday now merge the OpenCode CLI history with extension-tracked usage.** The CLI database (`~/.local/share/opencode/opencode.db`) stores per-message `cost` + `tokens.{input,output,reasoning,cache}` + `path.cwd` + timestamps, so users who also run OpenCode in the terminal get their real combined daily totals (terminal + VS Code) instead of VS Code-only estimates. Configurable via `opencodego.usageTodayYesterdaySource` (`auto` / `cli` / `extension`).
 - **`[Usage]` New "Codebase" row replaces the old "Session (est)" estimate.** Shows all-time usage for the CURRENT workspace (matched per-directory from the CLI history `path.cwd`), forever by default (`opencodego.usageCodebaseWindowDays`, 0 = all history). Toggle with `opencodego.usageCodebaseRow`.

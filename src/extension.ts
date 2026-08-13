@@ -126,7 +126,17 @@ import {
   SETTING_USAGE_TODAY_YESTERDAY_SOURCE,
   type UsageTodayYesterdaySource,
 } from "./config";
-import { escapeHtml, formatRelativeTime, formatTokenCount, formatUsd, getErrorMessage, isRecord, sleep, toFiniteNumber } from "./utils";
+import {
+  escapeHtml,
+  formatCount,
+  formatRelativeTime,
+  formatTokenCount,
+  formatUsd,
+  getErrorMessage,
+  isRecord,
+  sleep,
+  toFiniteNumber,
+} from "./utils";
 import { parseToolInput as parseToolInputShared } from "./toolCallAccumulator";
 import { isFreeModel } from "./metadata";
 
@@ -828,7 +838,7 @@ export function activate(context: vscode.ExtensionContext) {
         const codebaseItem: vscode.QuickPickItem = {
           label: "$(repo) Codebase (all-time)",
           description: formatUsd(summary.codebase.cost),
-          detail: `${formatTokenCount(summary.codebase.tokens)} tokens · ${String(summary.codebase.requests)} requests`,
+          detail: `${formatTokenCount(summary.codebase.tokens)} tokens · ${formatCount(summary.codebase.requests)} requests`,
           alwaysShow: true,
         };
         const dailyIdx = items.findIndex((i) => i.kind === vscode.QuickPickItemKind.Separator && i.label === "Daily Summary");
@@ -1501,7 +1511,7 @@ function usageCardStatsHtml(label: string, day: _UsageSummary["today"]): string 
   return [
     '<div class="stats">',
     `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(formatUsd(day.cost))}</div></div>`,
-    `<div class="stat"><div class="label">Requests</div><div class="value">${day.requests}</div></div>`,
+    `<div class="stat"><div class="label">Requests</div><div class="value">${formatCount(day.requests)}</div></div>`,
     `<div class="stat"><div class="label">Tokens</div><div class="value">${escapeHtml(formatTokenCount(day.tokens))}</div></div>`,
     "</div>",
   ].join("");
@@ -1680,7 +1690,7 @@ function buildUsageTooltipSvg(s: _UsageSummary, profileLabel?: string): string {
       text(label, padX, y, 13, 400, muted),
       text(formatUsd(cost), 120, y, 13, 700),
       text("Requests:", 190, y, 13, 400, muted),
-      text(String(requests), 262, y, 13, 700),
+      text(formatCount(requests), 262, y, 13, 700),
       text("Tokens:", 305, y, 13, 400, muted),
       text(formatTokenCount(tokenCount), 385, y, 13, 700),
     ].join("");

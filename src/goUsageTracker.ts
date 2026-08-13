@@ -20,7 +20,7 @@ import {
   GO_MAX_SESSIONS,
   type UsageTodayYesterdaySource,
 } from "./config";
-import { formatTokenCount, formatUsd, formatRelativeTime } from "./utils";
+import { formatCount, formatTokenCount, formatUsd, formatRelativeTime } from "./utils";
 
 export { GO_LIMITS } from "./config";
 
@@ -1215,7 +1215,7 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
   items.push({
     label: `$(history) Today`,
     description: formatUsd(summary.today.cost),
-    detail: `${formatTokenCount(summary.today.tokens)} tokens · ${String(summary.today.requests)} requests`,
+    detail: `${formatTokenCount(summary.today.tokens)} tokens · ${formatCount(summary.today.requests)} requests`,
     alwaysShow: true,
   });
 
@@ -1223,7 +1223,7 @@ export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer
     items.push({
       label: `$(history) Yesterday`,
       description: formatUsd(summary.yesterday.cost),
-      detail: `${formatTokenCount(summary.yesterday.tokens)} tokens · ${String(summary.yesterday.requests)} requests`,
+      detail: `${formatTokenCount(summary.yesterday.tokens)} tokens · ${formatCount(summary.yesterday.requests)} requests`,
       alwaysShow: true,
     });
   }
