@@ -886,7 +886,7 @@ export function activate(context: vscode.ExtensionContext) {
       // history) — replaces the old "Latest Session (est)" estimate row.
       if (usageCodebaseRowVisible()) {
         const codebaseItem: vscode.QuickPickItem = {
-          label: "$(repo) Total spend",
+          label: "$(repo) Codebase",
           description: formatUsd(summary.codebase.cost),
           detail: `${formatTokenCount(summary.codebase.tokens)} tokens · ${formatCount(summary.codebase.requests)} requests`,
           alwaysShow: true,
@@ -1527,7 +1527,7 @@ function usageWebviewData(): Record<string, unknown> | undefined {
     completions,
     rings,
     stats: {
-      total: { label: "Total spend", cost: s.codebase.cost, tokens: s.codebase.tokens, requests: s.codebase.requests },
+      total: { label: "Codebase", cost: s.codebase.cost, tokens: s.codebase.tokens, requests: s.codebase.requests },
       today: { label: "Today", cost: s.today.cost, tokens: s.today.tokens, requests: s.today.requests },
       yesterday: { label: "Yesterday", cost: s.yesterday.cost, tokens: s.yesterday.tokens, requests: s.yesterday.requests },
     },
@@ -2349,7 +2349,7 @@ ${text(noDataMsg ?? "No usage data yet. Send a chat message to start tracking.",
   // stable regardless of whether a session is currently active.
   const deviceRows: Array<[string, number, number, number, number]> = [];
   if (usageCodebaseRowVisible()) {
-    deviceRows.push(["Total spend:", s.codebase.cost, s.codebase.requests, s.codebase.tokens, firstRowY]);
+    deviceRows.push(["Codebase:", s.codebase.cost, s.codebase.requests, s.codebase.tokens, firstRowY]);
   }
   const codebaseOffset = usageCodebaseRowVisible() ? 1 : 0;
   deviceRows.push(["Today:", s.today.cost, s.today.requests, s.today.tokens, firstRowY + codebaseOffset * rowGap]);
