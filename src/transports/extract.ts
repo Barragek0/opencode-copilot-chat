@@ -16,9 +16,11 @@ function extractChatCompletionParts(data: unknown): vscode.LanguageModelResponse
 
   const parts: vscode.LanguageModelResponsePart[] = [];
   const message = first.message;
+  let emittedText = false;
   if (isRecord(message)) {
     const text = extractTextFromDelta(message);
     if (text) {
+      emittedText = true;
       parts.push(new vscode.LanguageModelTextPart(text));
     } else {
       const reasoning = extractReasoningFromDelta(message);
@@ -38,7 +40,10 @@ function extractChatCompletionParts(data: unknown): vscode.LanguageModelResponse
     }
   }
 
-  if (typeof first.text === "string") {
+  // Some gateways put text in both `message.content` and `choices[0].text`;
+  // emitting both would duplicate the response, so only fall back to the
+  // choice-level field when the message produced no text.
+  if (typeof first.text === "string" && !emittedText) {
     parts.push(new vscode.LanguageModelTextPart(first.text));
   }
 
