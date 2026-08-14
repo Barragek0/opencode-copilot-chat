@@ -72,12 +72,9 @@ export function extractTextFromDelta(delta: Record<string, unknown>): string {
 
 /** Pure: collect reasoning from an OpenAI-style delta/message object. */
 export function extractReasoningFromDelta(delta: Record<string, unknown>): string {
-  const candidates: unknown[] = [
-    delta.reasoning_content,
-    delta.reasoning,
-    delta.thinking,
-    isRecord(delta.message) ? delta.message.reasoning_content : undefined,
-  ];
+  // Callers pass either a `choices[0].delta` or a `choices[0].message` object;
+  // neither carries a nested `.message`, so only the top-level fields are read.
+  const candidates: unknown[] = [delta.reasoning_content, delta.reasoning, delta.thinking];
   let collected = "";
   for (const candidate of candidates) {
     if (typeof candidate === "string") {
