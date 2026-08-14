@@ -7,6 +7,8 @@ import { configureUtilityModels, toggleProviderEnabled } from "./commands/provid
 import {
   CONFIG_SECTION,
   DEFAULT_USAGE_CHART_DAYS,
+  GO_EVER_TRACKED_KEY,
+  GO_SERVER_USAGE_KEY,
   SETTING_AGENTS_WINDOW,
   SETTING_AUTO_ENABLE_AGENTS_WINDOW,
   SETTING_SHOW_PROVIDER_PREFIX,
@@ -316,6 +318,10 @@ export function activate(context: vscode.ExtensionContext) {
       ctx.globalState.update(`opencodego.usageLog.v1.${fp}`, []);
       ctx.globalState.update(`opencodego.usageBaseline.v1.${fp}`, {});
       ctx.globalState.update(`opencodego.sessionCosts.v1.${fp}`, []);
+      // Also clear the per-profile server snapshot + ever-tracked flags so a
+      // re-added profile (same key) doesn't resurrect stale meters/state.
+      ctx.globalState.update(`${GO_SERVER_USAGE_KEY}.${fp}`, undefined);
+      ctx.globalState.update(`${GO_EVER_TRACKED_KEY}.${fp}`, undefined);
 
       const remaining = readProfiles(ctx).filter((p) => p.fingerprint !== fp);
       await writeProfiles(ctx, remaining);
