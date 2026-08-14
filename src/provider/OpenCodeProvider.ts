@@ -11,6 +11,7 @@ import {
   type ResolvedModelMetadata,
 } from "../models/metadata";
 import { resolveModelRouting } from "../core/routing";
+import { lookupModelRegistryEntry } from "../core/registry";
 import { extractThinkingOverride, resolveThinkingConfig, thinkingFamily, thinkingProviderFor } from "../thinking";
 import { buildOpenCodeGatewayAuthHeaders } from "../openCodeAuth";
 import { streamAnthropicMessages as runStreamAnthropicMessages } from "../transports/anthropic";
@@ -621,7 +622,10 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
       const sharedFields: Omit<OpenCodeModel, "id" | "targetChatSessionType"> = {
         rawModelId: modelId,
         name: providerModelDisplayName(this.definition.modelNamePrefix, modelId, showProviderPrefix),
-        family: `${this.definition.isAgentVariant && this.definition.baseVendor ? this.definition.baseVendor : this.definition.vendor}-${modelId}-${MODEL_METADATA_REVISION}`,
+        // A stable real family name (e.g. "deepseek", "gpt") so VS Code's
+        // family-based model selection/grouping works — a per-model unique
+        // string previously broke `modelFamily` routing and sticky grouping.
+        family: lookupModelRegistryEntry(modelId).family,
         // Include effective limits in version so VS Code invalidates stale
         // picker metadata after limit changes (eg. 2M -> 262K corrections).
         version: `1.2.0-${MODEL_METADATA_REVISION}-${String(limits.contextWindow)}-${String(limits.maxOutputTokens)}`,
