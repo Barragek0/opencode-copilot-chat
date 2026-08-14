@@ -7,6 +7,9 @@ import { dataPartToBase64 } from "./messages";
 import { resolveRawModelId, resolveVendorFromId } from "./settings";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "../visionProxyCache";
 
+/** Placeholder used when the vision model returns no text for an image. */
+const VISION_DESCRIPTION_UNAVAILABLE = "[Image could not be described by the vision model]";
+
 /** Result of a vision-proxy pass: per-message descriptions plus cache stats. */
 export interface VisionProxyResult {
   /** Original message index → text description (only for messages with images). */
@@ -148,6 +151,18 @@ export async function proxyVision(
       imageIndices.push(index);
       allHashes.push(...imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data))));
     }
+
+    // If every image in the conversation is already described, reuse the
+    // cached combined description instead of re-calling the vision model.
+    const cachedCombined = lookupImageDescriptions(allHashes);
+    if (imageIndices.length > 0 && cachedCombined !== undefined) {
+      cacheHits++;
+      for (const index of imageIndices) {
+        descriptions.set(index, cachedCombined);
+      }
+      return { descriptions, cacheHits, cacheMisses };
+    }
+
     if (imageIndices.length > 0) {
       cacheMisses++;
       const model = await resolveVisionModel();
@@ -160,6 +175,10 @@ export async function proxyVision(
         storeImageDescriptions(allHashes, fullDescription);
         for (const index of imageIndices) {
           descriptions.set(index, fullDescription);
+        }
+      } else {
+        for (const index of imageIndices) {
+          descriptions.set(index, VISION_DESCRIPTION_UNAVAILABLE);
         }
       }
     }
@@ -193,6 +212,10 @@ export async function proxyVision(
       fullDescription += part;
     }
     if (!fullDescription) {
+      // The vision model returned nothing — keep the message present with a
+      // neutral placeholder instead of leaving it undescribed (which would
+      // make the caller strip the image with a misleading "unavailable" note).
+      descriptions.set(index, VISION_DESCRIPTION_UNAVAILABLE);
       continue;
     }
     storeImageDescriptions(hashes, fullDescription);
