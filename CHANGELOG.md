@@ -2,6 +2,28 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- **`[Internal]` API keys are configured through the BYOK panel only.** The `OpenCode Go: Set API Key` / `OpenCode Zen: Set API Key` commands and the "Set / Clear API Key" menu items inside `Manage Provider` are removed — keys are entered once via **Chat: Manage Language Models → "+ Add Models"** (the native BYOK flow). `SecretStorage` is no longer a user-facing entry point; it stays as an internal per-vendor mirror (`opencodego.apiKey` / `opencodezen.apiKey`) that the BYOK resolution writes so agent-host variants and cold-start requests inherit the group key. Splitting the secret per vendor also fixes a latent collision where Go and Zen shared a single `opencodego.apiKey` and overwrote each other's key. `Refresh Models` / `Test Connection` now point at the BYOK flow when no key is configured instead of prompting for one.
+
+- **`[Internal]` Per-provider Thinking strategy classes + single config authority.** The thinking/reasoning system is refactored from one monolithic builder into a per-provider strategy (`src/thinking/`): an interface + factory (`provider.ts`), a shared base class, and one class per model family (`deepseek`, `glm`, `kimi`, `minimax`, `openai`, `qwen`, `mimo`, `fallback`). Each provider now owns its reasoning picker schema, its request-payload mapping, and whether its `reasoning_content` is surfaced as chat content. Configuration resolves from a **single authority** — the VS Code per-model configuration (model picker / Manage), with workspace settings and per-family defaults as fallbacks — instead of competing sources (workspace + modelConfiguration + a `globalState` shadow copy + defaults). The shadow copy is removed, so a thinking effort chosen for one model can no longer silently leak onto another model or override an explicit "Off". Model IDs are normalized to `effectiveModelId` (the `::sk-***` fp suffix is gone), which also stops the per-model settings group from being recreated on every pick. Request builders are split out of `extension.ts` into per-endpoint modules (`src/request/{types,schema,shared,openai,anthropic,google}.ts`). Windows tooling fixes: `scripts/lint.ts` runs npm `.cmd` shims through the shell and a new `.gitattributes` enforces LF normalization, so `npm run lint` (prettier + shellcheck) is green on Windows; `scripts/staged-lint.ts` and `isCwdInWorkspace` get the same treatment.
+
+- **`[Internal]` God files split into domain modules (no behavior change).** The three monolithic files — `src/extension.ts` (4653 lines), `src/streaming.ts` (1620) and `src/goUsageTracker.ts` (1510) — are split into domain folders:
+  - `src/usage/` — Go usage domain: `tracker.ts`, `history.ts` (OpenCode CLI SQLite read/aggregation), `pricing.ts`, `formatting.ts`, `dashboard.ts` (status bar + usage webview incl. the HTML template + tooltip SVG), plus the moved `usage.ts` / `usageProfile.ts` / `goUsageSync.ts`.
+  - `src/transports/` — one file per transport (`chatCompletions`, `responses`, `anthropic`, `google`) plus the shared streaming `engine`, pure `sse` parser, `extractors`, `extract` helpers and `thinkTags` filter; the transport contract types live in `src/core/transport.ts` (routing in `src/core/routing.ts`).
+  - `src/provider/` — `OpenCodeProvider` class, `definitions` (PROVIDERS table + model types), `messages`/`tokens` (message conversion + token estimation), `settings` (schema/getSettings/limits/capabilities), `visionProxy`.
+  - `src/models/` — `metadata`, `modelLimits`, `modelCapabilities`, `modelNames`, `pricing`, `metadataFetcher` (models.dev cache).
+  - `src/commands/` — provider, agent-window, diagnostics and thinking-picker command handlers; `src/request/headers.ts` for the OpenCode request headers.
+  - `extension.ts` is now a thin entry (~400 lines) that only wires activation + command registration. The two compat barrels (`streaming.ts`, `goUsageTracker.ts`) are removed and every importer references canonical paths. All behavior-preserving — verified by `npm run compile` + 291 unit tests + mock-server retry E2E (`npm run test-retry`) + `npm run lint`.
+
+- **`[Internal]` Data-driven model registry (`src/core/registry.ts`).** The transport router and the thinking-family detector previously each owned a hardcoded model-prefix table. Both now read ONE data-driven table: `MODEL_REGISTRY` rows map model-family patterns → `{ endpointKind, sdkPackage, thinkingFamily, vendors? }`. `resolveModelRouting()` honors per-vendor restrictions (e.g. MiniMax `m2.x` → Messages on Go, Gemini → Google on Zen); `thinkingFamily()` reads the same table vendor-agnostically. Adding a new model family = adding one row (+ optionally a thinking strategy class). Context limits / capabilities stay metadata-driven (live models.dev) rather than duplicated in a static table. Behavior-preserving — verified by 14 new registry tests (305 total).
+
+### Fixed
+
+- **DeepSeek / Mimo thinking content no longer leaks into the chat transcript.** `treatReasoningAsContent` was mis-detecting native-reasoning families as "no reasoning in body" and echoing their `reasoning_content` as plain chat text. The decision now comes from the provider strategy (always `false` for DeepSeek and Mimo), so chain-of-thought stays in the thinking panel.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
