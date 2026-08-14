@@ -223,6 +223,9 @@ function parseRetryAfter(value: string | undefined): number | undefined {
   return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : parseDurationLike(value);
 }
 
+/** Ceiling for a seconds-remaining reset value — anything larger is nonsense. */
+const MAX_RESET_REMAINING_SECONDS = 24 * 60 * 60;
+
 function parseResetAfter(value: string | undefined): number | undefined {
   if (!value) {
     return undefined;
@@ -230,12 +233,16 @@ function parseResetAfter(value: string | undefined): number | undefined {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric >= 0) {
     if (numeric > 1_000_000_000_000) {
+      // Epoch milliseconds (past timestamps clamp to 0).
       return Math.max(0, numeric - Date.now());
     }
     if (numeric > 1_000_000_000) {
+      // Epoch seconds (past timestamps clamp to 0).
       return Math.max(0, numeric * 1000 - Date.now());
     }
-    return numeric * 1000;
+    // Seconds remaining — cap so an absurd header value can't produce a
+    // multi-year "retry in" estimate in the error message.
+    return Math.min(numeric, MAX_RESET_REMAINING_SECONDS) * 1000;
   }
   const durationMs = parseDurationLike(value);
   if (durationMs !== undefined) {
