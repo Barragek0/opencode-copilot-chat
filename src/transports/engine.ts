@@ -198,7 +198,18 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
     // when the gateway is momentarily unavailable (502/503/504, or 5xx body
     // that names Router.Unavailable). Cancellation aborts the wait immediately.
     let attempt = 0;
-    while (attempt < TRANSIENT_5XX_MAX_RETRIES && isTransientServerError(response.status, consumedErrorBody ?? "")) {
+    while (attempt < TRANSIENT_5XX_MAX_RETRIES) {
+      // Consume a 5xx body so body-named transient conditions (Router.
+      // Unavailable) are recognized by isTransientServerError, and the same
+      // body is reused for the error message if the retries are exhausted.
+      // (502/503/504 are retried by status alone, but reading the small error
+      // body once here also covers the body-scanned 5xx cases.)
+      if (response.status >= 500 && consumedErrorBody === undefined) {
+        consumedErrorBody = await response.text();
+      }
+      if (!isTransientServerError(response.status, consumedErrorBody ?? "")) {
+        break;
+      }
       attempt += 1;
       // Jitter spreads concurrent retries so they don't pile on the gateway
       // at the same timestamp.
@@ -211,7 +222,7 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
         break;
       }
       response = await fetchWithBody(payload);
-      // A fresh response may carry a new error body; drop stale 400 detail.
+      // A fresh response may carry a new error body; drop stale detail.
       consumedErrorBody = undefined;
     }
 
