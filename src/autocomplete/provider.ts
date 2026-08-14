@@ -7,7 +7,7 @@
  */
 
 import * as vscode from "vscode";
-import { buildCompletionWindow } from "./context";
+import { buildCompletionWindow, isChatInputDocument } from "./context";
 import { Debouncer } from "./throttle";
 import type { CompletionContext, CompletionEngine } from "./types";
 
@@ -45,6 +45,12 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
     token: vscode.CancellationToken,
   ): Promise<vscode.InlineCompletionItem[] | undefined> {
     if (!this.options.isEnabled()) {
+      return Promise.resolve(undefined);
+    }
+
+    // Never suggest in the Copilot Chat prompt box (virtual chatSessionInput
+    // document) — ghost text belongs in code, not while writing a prompt.
+    if (isChatInputDocument(document.uri)) {
       return Promise.resolve(undefined);
     }
 

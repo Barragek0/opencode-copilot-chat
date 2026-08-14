@@ -15,6 +15,20 @@ export {
   DEFAULT_INLINE_MAX_TOKENS as DEFAULT_MAX_TOKENS,
 } from "../config";
 
+/**
+ * VS Code exposes the Copilot Chat prompt box as a virtual editor document
+ * with one of these schemes (see `chatInputSchemes` in the VS Code source:
+ * `workbench/contrib/chat/common/constants.ts`). Inline-completion providers
+ * registered on `"**"` are asked for suggestions there too — ghost text must
+ * never appear while the user is typing a prompt.
+ */
+export const CHAT_INPUT_SCHEMES = new Set(["chatSessionInput", "sessions-chat"]);
+
+/** Whether a document is a chat/interactive prompt box (no completions there). */
+export function isChatInputDocument(uri: { scheme: string }): boolean {
+  return CHAT_INPUT_SCHEMES.has(uri.scheme);
+}
+
 export interface CompletionWindowOptions {
   prefixLines?: number;
   suffixChars?: number;

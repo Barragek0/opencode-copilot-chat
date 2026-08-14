@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildCompletionWindow, DEFAULT_PREFIX_LINES, DEFAULT_SUFFIX_CHARS } from "../autocomplete/context";
+import { buildCompletionWindow, DEFAULT_PREFIX_LINES, DEFAULT_SUFFIX_CHARS, isChatInputDocument } from "../autocomplete/context";
 import { buildCompletionPrompt, completionFamily, COMPLETION_SYSTEM_PROMPT } from "../autocomplete/prompt";
 import { cleanCompletion, extractChatCompletionText, parseSseData } from "../autocomplete/engine";
 import { Debouncer } from "../autocomplete/throttle";
@@ -100,6 +100,18 @@ describe("autocomplete — engine parsing", () => {
     // A completion continuing on a new (nested) line must keep its line break.
     assert.equal(cleanCompletion("  return true;"), "return true;");
     assert.equal(cleanCompletion("\n    return inner;\n  }"), "\n    return inner;\n  }");
+  });
+});
+
+describe("autocomplete — isChatInputDocument", () => {
+  it("rejects the Copilot Chat prompt box schemes", () => {
+    assert.ok(isChatInputDocument({ scheme: "chatSessionInput" }));
+    assert.ok(isChatInputDocument({ scheme: "sessions-chat" }));
+  });
+
+  it("accepts real code documents", () => {
+    assert.ok(!isChatInputDocument({ scheme: "file" }));
+    assert.ok(!isChatInputDocument({ scheme: "untitled" }));
   });
 });
 
