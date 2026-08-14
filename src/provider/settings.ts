@@ -32,7 +32,7 @@ import { toFiniteNumber } from "../utils";
 import type { LanguageModelConfiguration, ProviderDefinition } from "./definitions";
 
 /** Allowed values per thinking setting — a misconfigured value must never reach the wire. */
-const THINKING_ALLOWED_VALUES = {
+export const THINKING_ALLOWED_VALUES = {
   deepseek: ["off", "low", "medium", "high", "max"],
   glm: ["off", "high", "max"],
   kimi: ["on", "off"],

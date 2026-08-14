@@ -1,19 +1,20 @@
 import * as vscode from "vscode";
 import { CONFIG_SECTION } from "../config";
-import { getSettings } from "../provider/settings";
-import type { ThinkingSettings } from "../thinking";
+import { getSettings, THINKING_ALLOWED_VALUES } from "../provider/settings";
 
 /** Pick a model family then set its Thinking effort (writes config). */
 export async function showThinkingEffortPicker(): Promise<void> {
-  const families: { label: string; key: keyof ThinkingSettings; options: string[] }[] = [
-    { label: "DeepSeek (deepseek-v4-*)", key: "deepseek", options: ["off", "low", "medium", "high", "max"] },
-    { label: "GLM (glm-5, glm-5.1, glm-5.2)", key: "glm", options: ["off", "high", "max"] },
-    { label: "Kimi (kimi-k2.*)", key: "kimi", options: ["on", "off"] },
-    { label: "Mimo (mimo-v2.*)", key: "mimo", options: ["off", "low", "medium", "high"] },
-    { label: "MiniMax (minimax-m*)", key: "minimax", options: ["off", "on"] },
-    { label: "OpenAI GPT (gpt-*)", key: "openai", options: ["off", "low", "medium", "high", "xhigh"] },
-    { label: "Qwen (qwen3.*)", key: "qwen", options: ["auto", "on", "off"] },
-    { label: "Qwen Thinking Budget", key: "qwenBudget", options: ["auto", "4096", "16384", "32768", "81920"] },
+  // Single source of truth (shared with request-time validation) so the option
+  // lists can never drift from what the request builder actually accepts.
+  const families: { label: string; key: keyof typeof THINKING_ALLOWED_VALUES; options: string[] }[] = [
+    { label: "DeepSeek (deepseek-v4-*)", key: "deepseek", options: [...THINKING_ALLOWED_VALUES.deepseek] },
+    { label: "GLM (glm-5, glm-5.1, glm-5.2)", key: "glm", options: [...THINKING_ALLOWED_VALUES.glm] },
+    { label: "Kimi (kimi-k2.*)", key: "kimi", options: [...THINKING_ALLOWED_VALUES.kimi] },
+    { label: "Mimo (mimo-v2.*)", key: "mimo", options: [...THINKING_ALLOWED_VALUES.mimo] },
+    { label: "MiniMax (minimax-m*)", key: "minimax", options: [...THINKING_ALLOWED_VALUES.minimax] },
+    { label: "OpenAI GPT (gpt-*)", key: "openai", options: [...THINKING_ALLOWED_VALUES.openai] },
+    { label: "Qwen (qwen3.*)", key: "qwen", options: [...THINKING_ALLOWED_VALUES.qwen] },
+    { label: "Qwen Thinking Budget", key: "qwenBudget", options: [...THINKING_ALLOWED_VALUES.qwenBudget] },
   ];
   const settings = getSettings().thinking;
   const family = await vscode.window.showQuickPick(
