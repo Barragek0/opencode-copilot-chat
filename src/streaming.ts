@@ -89,20 +89,20 @@ export interface TransportRequestSummary {
 
 export async function streamChatCompletions(options: StreamRequestOptions): Promise<void> {
   const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId);
-  // Workaround for opencode-go gateway bug (#37635): the Go gateway wraps ALL
-  // streaming responses in `reasoning_content`. Only apply when:
-  // 1. Request goes to the Go gateway URL (/zen/go/)
-  // 2. `reasoning_effort` is NOT in the body (model thinking is OFF)
-  // When thinking IS on (reasoning_effort present), reasoning_content is genuine
-  // CoT and should remain in the thinking panel.
+  // Workaround for opencode-go gateway bug (#37635): the Go gateway wraps the
+  // model's CONTENT into `reasoning_content` when thinking is off. It only
+  // applies to models that genuinely stop reasoning when no effort is sent —
+  // MiMo is the verified case. Reasoning-first models (DeepSeek V4 family)
+  // keep producing real chain-of-thought even with thinking "off", so their
+  // reasoning_content must go to the thinking block, never the visible text.
   const isGoGateway = options.url.includes("/zen/go/");
   const body = options.body as Record<string, unknown> | undefined;
   // "Thinking is ON" whenever the body asks for reasoning through any channel
   // (reasoning_effort, budget_tokens, enable_thinking, thinking block — Kimi
   // K2.7 and MiniMax M3 route through chat-completions with Anthropic-style
   // shapes), see bodyRequestsThinking().
-  const hasReasoningEffort = isGoGateway && bodyRequestsThinking(body);
-  const treatReasoningAsContent = isGoGateway && !hasReasoningEffort;
+  const hasReasoningEffort = bodyRequestsThinking(body);
+  const treatReasoningAsContent = isGoGateway && !hasReasoningEffort && !modelAlwaysReasons(options.modelId);
   if (isGoGateway) {
     options.output?.appendLine(
       `[go-gw] model=${options.modelId} hasReasoningEffort=${String(hasReasoningEffort)} treatReasoningAsContent=${String(treatReasoningAsContent)}`,
@@ -728,6 +728,16 @@ function createReasoningDebugger(
 const OPEN_THINK_TAG = "<think>";
 const CLOSE_THINK_TAG = "</think>";
 
+/**
+ * Models that produce genuine chain-of-thought even when the request carries
+ * no reasoning directive ("thinking off" only omits the effort parameter).
+ * Their `reasoning_content` is real CoT and must surface in the thinking
+ * block, never as visible text.
+ */
+function modelAlwaysReasons(modelId: string): boolean {
+  return /^deepseek-/i.test(modelId);
+}
+
 function shouldStripThinkTags(mode: "never" | "auto" | "always" | undefined, modelId: string): boolean {
   if (mode === "always") {
     return true;
@@ -1111,7 +1121,7 @@ class OpenAiResponseExtractor extends BaseResponseExtractor {
         // When treatReasoningAsContent is true AND delta.content is empty,
         // the model's response was placed in reasoning_content by the gateway.
         // Emit as visible text. Suffix-repetition loop guard still applies.
-        if (this.treatReasoningAsContent && !visible && text.length === 0) {
+        if (this.treatReasoningAsContent && text.length === 0) {
           if (!this.shouldSuppressThinkingEmit(reasoning)) {
             this.emittedTextLength += reasoning.length;
             this.reasoningAsContent += reasoning;
