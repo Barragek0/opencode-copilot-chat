@@ -90,7 +90,9 @@ export function getSettings(): ApiSettings {
   // Config values are sanitized so a misconfigured (e.g. string) value never
   // reaches the request body and 400s upstream.
   return {
-    temperature: toFiniteNumber(config.get(SETTING_TEMPERATURE, 0.2), 0.2),
+    // Clamp to the range providers accept ([0, 2]) so a bad config value never
+    // 400s upstream before the retry layer can strip it.
+    temperature: toFiniteNumber(config.get(SETTING_TEMPERATURE, 0.2), 0.2, 0, 2),
     maxOutputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_TOKENS, 0), 0, 0),
     maxInputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_INPUT_TOKENS, 0), 0, 0),
     debugReasoning: config.get(SETTING_DEBUG_REASONING, false),
