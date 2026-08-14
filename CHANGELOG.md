@@ -6,7 +6,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Added
 
-- **`[Autocomplete]` Ghost text no longer appears in the Copilot Chat prompt box.** The provider registers on `"**"`, and VS Code exposes the chat prompt as a virtual editor document (`chatSessionInput` / `sessions-chat` schemes — `chatInputSchemes` in VS Code's `chat/common/constants.ts`), so suggestions were also offered while writing prompts. The provider now skips chat-input documents (`isChatInputDocument`), keeping completions in code editors only.
+- **`[Autocomplete]` Chat-prompt suggestions are now opt-in.** VS Code exposes the Copilot Chat prompt box as a virtual `chatSessionInput` document, and the `"**"` provider selector matched it — so ghost text appeared while writing prompts. The provider now skips chat-input documents by default (`isChatInputDocument`), and users who want completions there can opt in via `opencodego.inlineSuggestionsChatInput`.
 
 - **`[Autocomplete]` Known limitation (follow-up planned):** inline-completion requests are not yet wired into the Go usage tracker's cost accounting (`tracker.record()` only runs in the chat provider path). The panel does track **Suggested / Approved** counts per day (see the usage dashboard entry), but the USD cost of completions is not attributed until a follow-up ships the transport summary from the completion engine. This is tracked as a documented TODO on #136/#138 rather than an oversight.
 

@@ -21,6 +21,8 @@ export interface InlineCompletionProviderOptions {
   isEnabled: () => boolean;
   /** The model to use for suggestions (config-driven). */
   resolveModelId: () => string;
+  /** Whether suggestions are allowed inside the chat prompt box (opt-in). */
+  resolveChatInputEnabled: () => boolean;
   /** Debounce delay in ms before a request is sent (config-driven). */
   resolveDebounceMs: () => number;
   /** Max tokens a completion may produce (config-driven). */
@@ -48,9 +50,10 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
       return Promise.resolve(undefined);
     }
 
-    // Never suggest in the Copilot Chat prompt box (virtual chatSessionInput
-    // document) — ghost text belongs in code, not while writing a prompt.
-    if (isChatInputDocument(document.uri)) {
+    // The Copilot Chat prompt box is a virtual chatSessionInput document.
+    // Off by default (completions belong in code editors); users can opt in
+    // via opencodego.inlineSuggestionsChatInput.
+    if (isChatInputDocument(document.uri) && !this.options.resolveChatInputEnabled()) {
       return Promise.resolve(undefined);
     }
 

@@ -56,6 +56,9 @@ export const SETTING_THINKING_MIMO = "thinking.mimo";
 
 export const INLINE_SUGGESTIONS_SETTING = "inlineSuggestions";
 export const INLINE_SUGGESTIONS_MODEL_SETTING = "inlineSuggestionsModel";
+/** Opt-in: also offer completions inside the Copilot Chat prompt box. */
+export const SETTING_INLINE_SUGGESTIONS_CHAT_INPUT = "inlineSuggestionsChatInput";
+export const DEFAULT_INLINE_SUGGESTIONS_CHAT_INPUT = false;
 export const INLINE_DEBOUNCE_MS_SETTING = "inlineSuggestionsDebounceMs";
 export const INLINE_TIMEOUT_MS_SETTING = "inlineSuggestionsTimeoutMs";
 export const INLINE_MAX_TOKENS_SETTING = "inlineSuggestionsMaxTokens";
