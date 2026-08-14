@@ -340,6 +340,14 @@ export interface HistoryRow {
   cwd?: string;
   /** Model that produced the message (OpenCode CLI data). */
   modelId?: string;
+  /**
+   * Total tokens for the message: input + output + reasoning + cache.read.
+   * The CLI's `tokens.input` EXCLUDES cached tokens — the authoritative
+   * `tokens.total` matches input + output + reasoning + cache.read — so this
+   * sum is what any "tokens used" display must count (parity with the
+   * extension's own promptTokens, which include cached tokens).
+   */
+  tokensTotal: number;
 }
 
 /** Non-negative finite integer (tokens can legitimately be 0). */
@@ -368,7 +376,7 @@ export function sumDailyUsage(
       if (row.createdMs < dayStartMs) continue;
       cost += row.cost;
       requests += 1;
-      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
+      tokens += row.tokensTotal;
     }
   }
 
@@ -478,7 +486,7 @@ export function buildUsageSeries(
 
   if (source !== "extension") {
     for (const row of rows) {
-      add(row.modelId, row.createdMs, row.cost, row.tokensInput + row.tokensOutput + row.tokensReasoning);
+      add(row.modelId, row.createdMs, row.cost, row.tokensTotal);
     }
   }
   if (source !== "cli") {
@@ -549,16 +557,23 @@ function normalizeHistoryRows(rows: unknown): HistoryRow[] {
         typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
       );
     })
-    .map((row) => ({
-      createdMs: row.createdMs,
-      cost: row.cost,
-      tokensInput: positiveNumberish(row.tokensInput),
-      tokensOutput: positiveNumberish(row.tokensOutput),
-      tokensReasoning: positiveNumberish(row.tokensReasoning),
-      tokensCacheRead: positiveNumberish(row.tokensCacheRead),
-      cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
-      modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
-    }));
+    .map((row) => {
+      const tokensInput = positiveNumberish(row.tokensInput);
+      const tokensOutput = positiveNumberish(row.tokensOutput);
+      const tokensReasoning = positiveNumberish(row.tokensReasoning);
+      const tokensCacheRead = positiveNumberish(row.tokensCacheRead);
+      return {
+        createdMs: row.createdMs,
+        cost: row.cost,
+        tokensInput,
+        tokensOutput,
+        tokensReasoning,
+        tokensCacheRead,
+        tokensTotal: tokensInput + tokensOutput + tokensReasoning + tokensCacheRead,
+        cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
+        modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
+      };
+    });
 }
 
 /**
@@ -902,7 +917,7 @@ export class GoUsageTracker {
       if (!isCwdInWorkspace(row.cwd, folders)) continue;
       cost += row.cost;
       requests += 1;
-      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
+      tokens += row.tokensTotal;
     }
     return { cost, requests, tokens };
   }

@@ -296,6 +296,11 @@
           "default": "qwen3.5-plus",
           "markdownDescription": "Model used for inline code suggestions. Prefer the non-thinking Qwen options — measured: `qwen3.5-plus` with `enable_thinking=false` returns in ~1.5s with zero hidden reasoning, while reasoning models (e.g. `deepseek-v4-flash`) burn 100+ reasoning tokens even with thinking off."
         },
+        "opencodego.inlineSuggestionsChatInput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also offer inline suggestions inside the GitHub Copilot Chat prompt box while typing prompts. Off by default — completions are meant for code editors."
+        },
         "opencodego.inlineSuggestionsDebounceMs": {
           "type": "number",
           "default": 300,

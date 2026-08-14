@@ -15,6 +15,35 @@ export {
   DEFAULT_INLINE_MAX_TOKENS as DEFAULT_MAX_TOKENS,
 } from "../config";
 
+/**
+ * VS Code exposes the Copilot Chat prompt box as a virtual editor document
+ * with one of these schemes (see `chatInputSchemes` in the VS Code source:
+ * `workbench/contrib/chat/common/constants.ts`). Inline-completion providers
+ * registered on `"**"` are asked for suggestions there too — ghost text must
+ * never appear while the user is typing a prompt.
+ */
+export const CHAT_INPUT_SCHEMES = new Set(["chatSessionInput", "sessions-chat"]);
+
+/** Whether a document is a chat/interactive prompt box (no completions there). */
+export function isChatInputDocument(uri: { scheme: string }): boolean {
+  return CHAT_INPUT_SCHEMES.has(uri.scheme);
+}
+
+/**
+ * Document schemes that are real editable code surfaces. Inline completions
+ * are only offered there. An ALLOWLIST (instead of only blocking known chat
+ * schemes) means any new interactive surface VS Code introduces in the
+ * future — chat prompt variants, webviews, output, custom editors — is
+ * excluded automatically without a manual update; genuinely new CODE
+ * surfaces are rare.
+ */
+export const CODE_EDITOR_SCHEMES = new Set(["file", "untitled", "git", "vscode-userdata", "vscode-notebook-cell"]);
+
+/** Whether a document is a normal editable code surface. */
+export function isCompletionDocument(uri: { scheme: string }): boolean {
+  return CODE_EDITOR_SCHEMES.has(uri.scheme);
+}
+
 export interface CompletionWindowOptions {
   prefixLines?: number;
   suffixChars?: number;

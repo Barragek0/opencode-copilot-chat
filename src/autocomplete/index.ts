@@ -15,6 +15,7 @@ import {
   COMPLETION_USAGE_KEY,
   COMPLETION_USAGE_MAX_DAYS,
   CONFIG_SECTION,
+  DEFAULT_INLINE_SUGGESTIONS_CHAT_INPUT,
   DEFAULT_INLINE_DEBOUNCE_MS,
   DEFAULT_INLINE_MAX_TOKENS,
   DEFAULT_INLINE_MODEL,
@@ -28,6 +29,7 @@ import {
   INLINE_SUGGESTIONS_SETTING,
   INLINE_SUFFIX_CHARS_SETTING,
   INLINE_TIMEOUT_MS_SETTING,
+  SETTING_INLINE_SUGGESTIONS_CHAT_INPUT,
 } from "../config";
 import { toFiniteNumber } from "../utils";
 import { bumpCompletionUsage, matchesAcceptance, utcDayStart, type CompletionUsageDay } from "./usage";
@@ -146,6 +148,7 @@ export function registerInlineCompletions(context: vscode.ExtensionContext, deps
     resolveMaxTokens: () => readNumberSetting(INLINE_MAX_TOKENS_SETTING, DEFAULT_INLINE_MAX_TOKENS, 16, 1_024),
     resolvePrefixLines: () => readNumberSetting(INLINE_PREFIX_LINES_SETTING, DEFAULT_INLINE_PREFIX_LINES, 1, 100),
     resolveSuffixChars: () => readNumberSetting(INLINE_SUFFIX_CHARS_SETTING, DEFAULT_INLINE_SUFFIX_CHARS, 0, 5_000),
+    resolveChatInputEnabled: () => readSetting(SETTING_INLINE_SUGGESTIONS_CHAT_INPUT, DEFAULT_INLINE_SUGGESTIONS_CHAT_INPUT),
   });
 
   const registration = vscode.languages.registerInlineCompletionItemProvider({ pattern: "**" }, provider);
