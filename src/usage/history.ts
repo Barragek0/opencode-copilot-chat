@@ -164,7 +164,10 @@ export function buildUsageSeries(
   const byModel = new Map<string, Map<number, ModelDayUsage>>();
 
   const add = (model: string | undefined, timestamp: number, cost: number, tokens: number): void => {
-    const index = Math.round((timestamp - firstDay) / DAY_MS);
+    // Bucket by the day whose [start, start+DAY) range contains the event.
+    // floor (not round) keeps mid-day events in the correct day — round could
+    // push an afternoon event into the next day's bucket.
+    const index = Math.floor((timestamp - firstDay) / DAY_MS);
     if (index < 0 || index >= bucketCount) return;
     const day = buckets[index];
     day.cost += cost;

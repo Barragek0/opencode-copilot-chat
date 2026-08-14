@@ -876,4 +876,25 @@ describe("buildUsageSeries", () => {
     assert.equal(series.days[0].requests, 2);
     assert.equal(series.days[1].requests, 2);
   });
+
+  it("keeps a mid-day event in its own day bucket (floor, not round)", () => {
+    const midDay: HistoryRow[] = [
+      {
+        createdMs: dayMs - DAY + DAY * 0.6, // afternoon of the previous day
+        cost: 0.1,
+        tokensInput: 10,
+        tokensOutput: 10,
+        tokensReasoning: 0,
+        tokensCacheRead: 0,
+        tokensTotal: 20,
+        cwd: "/repo",
+        modelId: "qwen3.6-plus",
+      },
+    ];
+    const series = buildUsageSeries(midDay, [], 2, dayMs, "cli");
+    // Window: dayMs-1*DAY .. dayMs → the afternoon event belongs to yesterday.
+    assert.equal(series.days[0].dayStart, dayMs - DAY);
+    assert.equal(series.days[0].requests, 1);
+    assert.equal(series.days[1].requests, 0);
+  });
 });
