@@ -1,11 +1,6 @@
 import * as vscode from "vscode";
-import * as path from "path";
-import * as os from "os";
-import * as fs from "fs";
-import { execFileSync } from "child_process";
-import { GO_VENDOR } from "./providerTypes";
-import type { ModelCost } from "./metadata";
-import type { TransportRequestSummary } from "./streaming";
+import type { ModelCost } from "../models/metadata";
+import type { TransportRequestSummary } from "../core/transport";
 import { fetchGoUsage, mergeServerUsage, GO_USAGE_SYNC_TTL_MS, type GoUsageApiResponse } from "./goUsageSync";
 import {
   GO_LIMITS,
@@ -20,13 +15,17 @@ import {
   GO_MAX_SESSIONS,
   GO_SERVER_USAGE_KEY,
   type UsageTodayYesterdaySource,
-} from "./config";
-import { formatCount, formatTokenCount, formatUsd, formatRelativeTime, getErrorMessage } from "./utils";
-
-export { GO_LIMITS } from "./config";
-
-/** Callback to resolve live model cost from the models.dev metadata cache. */
-export type CostResolver = (modelId: string) => ModelCost | undefined;
+} from "../config";
+import { estimateCost, type CostResolver } from "./pricing";
+import {
+  buildUsageSeries,
+  readOpenCodeHistory,
+  setHistoryReadDiagnostic,
+  sumDailyUsage,
+  type HistoryRow,
+  type UsageDaily,
+  type UsageSeries,
+} from "./history";
 
 // ─── Constants (values centralized in ./config) ──────────────────────────────
 
@@ -35,31 +34,6 @@ const BASELINE_STORAGE_KEY = GO_USAGE_BASELINE_KEY;
 const EVER_TRACKED_KEY = GO_EVER_TRACKED_KEY;
 const SESSION_COSTS_KEY = GO_SESSION_COSTS_KEY;
 const MAX_LOG_ENTRIES = GO_MAX_LOG_ENTRIES;
-
-// ─── Go model pricing ($/1M tokens) — bundled snapshot fallback ────────────
-// This table is a static snapshot kept as a last resort. The primary source
-// is the live models.dev metadata cache injected via CostResolver.
-
-const GO_MODEL_PRICING: Record<string, ModelCost | undefined> = {
-  "glm-5.1": { input: 1.4, output: 4.4, cache_read: 0.26 },
-  "glm-5": { input: 1.0, output: 3.2, cache_read: 0.2 },
-  "kimi-k2.6": { input: 0.95, output: 4.0, cache_read: 0.16 },
-  "kimi-k2.5": { input: 0.6, output: 3.0, cache_read: 0.1 },
-  "minimax-m3": { input: 0.6, output: 2.4, cache_read: 0.12 },
-  "minimax-m2.7": { input: 0.3, output: 1.2, cache_read: 0.06 },
-  "minimax-m2.5": { input: 0.3, output: 1.2, cache_read: 0.06 },
-  "mimo-v2.5": { input: 0.14, output: 0.28, cache_read: 0.003 },
-  "mimo-v2.5-pro": { input: 1.74, output: 3.48, cache_read: 0.015 },
-  "mimo-v2-omni": { input: 0.14, output: 0.28, cache_read: 0.003 },
-  "mimo-v2-pro": { input: 1.74, output: 3.48, cache_read: 0.015 },
-  "qwen3.7-max": { input: 2.5, output: 7.5, cache_read: 0.5 },
-  "qwen3.7-plus": { input: 0.4, output: 1.6, cache_read: 0.04 },
-  "qwen3.6-plus": { input: 0.5, output: 3.0, cache_read: 0.05 },
-  "qwen3.5-plus": { input: 0.2, output: 1.2, cache_read: 0.02 },
-  "deepseek-v4-pro": { input: 1.74, output: 3.48, cache_read: 0.015 },
-  "deepseek-v4-flash": { input: 0.14, output: 0.28, cache_read: 0.003 },
-  "hy3-preview": { input: 0.5, output: 1.5, cache_read: 0.05 },
-};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -105,7 +79,7 @@ export interface UsageSummary {
   codebase: UsageDaily;
   hasData: boolean;
   /** When true, cost data comes from the OpenCode CLI SQLite database
-      (actual billed amounts). When false, costs are estimated locally. */
+            (actual billed amounts). When false, costs are estimated locally. */
   sqliteAvailable: boolean;
 }
 
@@ -174,23 +148,33 @@ export function normalizeCwd(value: string): string {
   return normalized;
 }
 
+/** Whether `value` starts with `prefix` followed by a path separator. */
+function startsWithPathSegment(value: string, prefix: string): boolean {
+  if (!value.startsWith(prefix)) {
+    return false;
+  }
+  return value.length > prefix.length && (value.charAt(prefix.length) === "/" || value.charAt(prefix.length) === "\\");
+}
+
 /**
  * Whether a CLI row's working directory belongs to the current workspace.
  * Matches when the folder equals the cwd, is a parent of it (the user opened
  * the repo root but the CLI ran in a subfolder), or the folder is a subfolder
  * of the cwd (the user opened a subfolder of the project).
+ *
+ * Segment-boundary matching accepts both `/` and `\` so POSIX-style paths and
+ * native Windows paths (where the separator is `\`) both match on any host.
  */
 export function isCwdInWorkspace(cwd: string | undefined, workspaceFolders: readonly string[]): boolean {
   if (!cwd || workspaceFolders.length === 0) {
     return false;
   }
   const rowCwd = normalizeCwd(cwd);
-  const sep = process.platform === "win32" ? "\\" : "/";
   for (const folder of workspaceFolders) {
     const normalized = normalizeCwd(folder);
     if (rowCwd === normalized) return true;
-    if (rowCwd.startsWith(`${normalized}${sep}`)) return true;
-    if (normalized.startsWith(`${rowCwd}${sep}`)) return true;
+    if (startsWithPathSegment(rowCwd, normalized)) return true;
+    if (startsWithPathSegment(normalized, rowCwd)) return true;
   }
   return false;
 }
@@ -273,380 +257,6 @@ function nextSessionReset(entries: UsageLogEntry[], nowMs: number): Date {
     }
   }
   return new Date((oldest ?? nowMs) + FIVE_HOURS_MS);
-}
-
-// ─── Cost calculation ────────────────────────────────────────────────────────
-
-/** Priority: caller-provided cost > live models.dev snapshot > bundled table */
-export function estimateCost(
-  modelId: string,
-  promptTokens: number,
-  completionTokens: number,
-  cachedTokens: number,
-  externalCost?: ModelCost,
-  liveCostResolver?: CostResolver,
-): number {
-  // Priority: caller-provided cost > live models.dev snapshot > bundled table
-  const pricing = externalCost ?? liveCostResolver?.(modelId) ?? GO_MODEL_PRICING[modelId];
-  if (!pricing) return 0;
-
-  const billablePrompt = Math.max(0, promptTokens - cachedTokens);
-  return (
-    (billablePrompt * pricing.input) / 1_000_000 +
-    (completionTokens * pricing.output) / 1_000_000 +
-    (cachedTokens * (pricing.cache_read ?? pricing.input * 0.1)) / 1_000_000
-  );
-}
-
-// ─── OpenCode SQLite history reader (same source as OpenUsage) ───────────────
-// Reads from ~/.local/share/opencode/opencode.db
-// SQL from https://github.com/robinebers/openusage/plugins/opencode-go/plugin.js
-
-const OPENCODE_DB_PATH = path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
-
-const HISTORY_ROWS_SQL = `
-  SELECT
-    CAST(COALESCE(json_extract(data, '$.time.created'), time_created) AS INTEGER) AS createdMs,
-    CAST(json_extract(data, '$.cost') AS REAL) AS cost,
-    CAST(json_extract(data, '$.tokens.input') AS INTEGER) AS tokensInput,
-    CAST(json_extract(data, '$.tokens.output') AS INTEGER) AS tokensOutput,
-    CAST(json_extract(data, '$.tokens.reasoning') AS INTEGER) AS tokensReasoning,
-    CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) AS tokensCacheRead,
-    json_extract(data, '$.path.cwd') AS cwd,
-    json_extract(data, '$.modelID') AS modelId
-  FROM message
-  WHERE json_valid(data)
-    AND json_extract(data, '$.providerID') = 'opencode-go'
-    AND json_extract(data, '$.role') = 'assistant'
-    AND json_type(data, '$.cost') IN ('integer', 'real')
-`;
-
-export interface HistoryRow {
-  createdMs: number;
-  cost: number;
-  tokensInput: number;
-  tokensOutput: number;
-  tokensReasoning: number;
-  tokensCacheRead: number;
-  /** Working directory of the session the message belongs to (OpenCode CLI data). */
-  cwd?: string;
-  /** Model that produced the message (OpenCode CLI data). */
-  modelId?: string;
-}
-
-/** Non-negative finite integer (tokens can legitimately be 0). */
-function positiveNumberish(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
-}
-
-/**
- * Sum one day window across the OpenCode CLI history rows and the extension's
- * tracked entries. The CLI records terminal usage and the extension records
- * VS Code usage — they never overlap, so the sum is the user's real combined
- * usage for the window. `source` selects which inputs participate.
- */
-export function sumDailyUsage(
-  rows: HistoryRow[],
-  entries: UsageLogEntry[],
-  dayStartMs: number,
-  source: UsageTodayYesterdaySource = "auto",
-): UsageDaily {
-  let cost = 0;
-  let requests = 0;
-  let tokens = 0;
-
-  if (source !== "extension") {
-    for (const row of rows) {
-      if (row.createdMs < dayStartMs) continue;
-      cost += row.cost;
-      requests += 1;
-      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
-    }
-  }
-
-  if (source !== "cli") {
-    for (const entry of entries) {
-      if (entry.timestamp < dayStartMs) continue;
-      cost += entry.cost;
-      requests += 1;
-      tokens += entry.promptTokens + entry.completionTokens;
-    }
-  }
-
-  return { cost, requests, tokens };
-}
-
-/** Per-day / per-workspace usage totals (from CLI history and/or extension tracking). */
-export interface UsageDaily {
-  cost: number;
-  requests: number;
-  tokens: number;
-}
-
-/** One day bucket of the usage chart. */
-export interface UsageDayPoint {
-  /** Unix ms at the START of the day (UTC or local, per the day-boundary setting). */
-  dayStart: number;
-  cost: number;
-  tokens: number;
-  requests: number;
-}
-
-/** Per-model usage for a single day (model bar chart). */
-export interface ModelDayUsage {
-  model: string;
-  dayStart: number;
-  cost: number;
-  tokens: number;
-  requests: number;
-}
-
-/** Time-series data for the usage panel charts. */
-export interface UsageSeries {
-  /** Daily totals, oldest → newest. */
-  days: UsageDayPoint[];
-  /** Per-model-per-day rows (only days with usage are present). */
-  byModel: ModelDayUsage[];
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Bucket CLI rows + extension entries into per-day totals and per-model
- * per-day rows over the last `days` days (the oldest bucket starts at
- * `dayStartMs - (days - 1) * DAY_MS`). Pure so it can be unit-tested.
- */
-export function buildUsageSeries(
-  rows: HistoryRow[],
-  entries: UsageLogEntry[],
-  days: number,
-  dayStartMs: number,
-  source: UsageTodayYesterdaySource = "auto",
-): UsageSeries {
-  // days > 0: the last `days` days ending at dayStartMs; days <= 0: lifetime
-  // from the earliest recorded usage to today (aligned to the day grid).
-  let firstDay: number;
-  if (days > 0) {
-    firstDay = dayStartMs - (Math.max(1, Math.floor(days)) - 1) * DAY_MS;
-  } else {
-    let earliest = dayStartMs;
-    if (source !== "extension") {
-      for (const row of rows) if (row.createdMs < earliest) earliest = row.createdMs;
-    }
-    if (source !== "cli") {
-      for (const entry of entries) if (entry.timestamp < earliest) earliest = entry.timestamp;
-    }
-    firstDay = dayStartMs - Math.ceil((dayStartMs - earliest) / DAY_MS) * DAY_MS;
-  }
-  const bucketCount = Math.round((dayStartMs - firstDay) / DAY_MS) + 1;
-  const buckets: UsageDayPoint[] = Array.from({ length: bucketCount }, (_, i) => ({
-    dayStart: firstDay + i * DAY_MS,
-    cost: 0,
-    tokens: 0,
-    requests: 0,
-  }));
-  const byModel = new Map<string, Map<number, ModelDayUsage>>();
-
-  const add = (model: string | undefined, timestamp: number, cost: number, tokens: number): void => {
-    const index = Math.round((timestamp - firstDay) / DAY_MS);
-    if (index < 0 || index >= bucketCount) return;
-    const day = buckets[index];
-    day.cost += cost;
-    day.tokens += tokens;
-    day.requests += 1;
-
-    const modelName = model ?? "unknown";
-    let byDay = byModel.get(modelName);
-    if (!byDay) {
-      byDay = new Map();
-      byModel.set(modelName, byDay);
-    }
-    const point = byDay.get(index) ?? { model: modelName, dayStart: day.dayStart, cost: 0, tokens: 0, requests: 0 };
-    point.cost += cost;
-    point.tokens += tokens;
-    point.requests += 1;
-    byDay.set(index, point);
-  };
-
-  if (source !== "extension") {
-    for (const row of rows) {
-      add(row.modelId, row.createdMs, row.cost, row.tokensInput + row.tokensOutput + row.tokensReasoning);
-    }
-  }
-  if (source !== "cli") {
-    for (const entry of entries) {
-      add(entry.modelId, entry.timestamp, entry.cost, entry.promptTokens + entry.completionTokens);
-    }
-  }
-
-  return {
-    days: buckets,
-    byModel: [...byModel.entries()].flatMap(([, byDay]) =>
-      [...byDay.entries()].sort((left, right) => left[0] - right[0]).map(([, point]) => point),
-    ),
-  };
-}
-
-/**
- * The CLI database can be gigabytes large and spawning `sqlite3` is a
- * synchronous, blocking call — but the usage UI (status bar, tooltip, panel,
- * quick-pick) re-reads it on every refresh. Memoize the result for a short
- * window so a burst of refreshes pays the query cost once.
- */
-const HISTORY_READ_TTL_MS = 3_000;
-let historyCache: { rows: HistoryRow[] | null; fetchedAt: number } | undefined;
-/** Surfaces CLI-history read failures in the usage output channel. */
-let historyReadDiagnostic: ((message: string) => void) | undefined;
-
-/** Wire the diagnostic sink (called once per tracker, last one wins). */
-export function setHistoryReadDiagnostic(log: (message: string) => void): void {
-  historyReadDiagnostic = log;
-}
-
-function readOpenCodeHistory(): HistoryRow[] | null {
-  const now = Date.now();
-  if (historyCache && now - historyCache.fetchedAt < HISTORY_READ_TTL_MS) {
-    return historyCache.rows;
-  }
-  const rows = readOpenCodeHistoryUncached();
-  historyCache = { rows, fetchedAt: now };
-  return rows;
-}
-
-function readOpenCodeHistoryUncached(): HistoryRow[] | null {
-  if (!fs.existsSync(OPENCODE_DB_PATH)) {
-    historyReadDiagnostic?.(`[go-usage] CLI history: database not found at ${OPENCODE_DB_PATH}`);
-    return null;
-  }
-
-  // The `sqlite3` binary may be missing from the extension host's PATH (it is
-  // often only available from the Android SDK, e.g. launched from a terminal),
-  // so Node's built-in reader is tried first — zero external dependencies.
-  const viaNode = readHistoryViaNodeSqlite();
-  if (viaNode !== undefined) {
-    return viaNode;
-  }
-
-  return readHistoryViaSqliteCli();
-}
-
-/** Normalize raw rows (shared by both readers). */
-function normalizeHistoryRows(rows: unknown): HistoryRow[] {
-  if (!Array.isArray(rows)) return [];
-  return rows
-    .filter((row): row is HistoryRow => {
-      if (!row || typeof row !== "object") return false;
-      const candidate = row as Partial<HistoryRow>;
-      return (
-        typeof candidate.createdMs === "number" && candidate.createdMs > 0 && typeof candidate.cost === "number" && candidate.cost >= 0
-      );
-    })
-    .map((row) => ({
-      createdMs: row.createdMs,
-      cost: row.cost,
-      tokensInput: positiveNumberish(row.tokensInput),
-      tokensOutput: positiveNumberish(row.tokensOutput),
-      tokensReasoning: positiveNumberish(row.tokensReasoning),
-      tokensCacheRead: positiveNumberish(row.tokensCacheRead),
-      cwd: typeof row.cwd === "string" && row.cwd.trim() ? row.cwd : undefined,
-      modelId: typeof row.modelId === "string" && row.modelId.trim() ? row.modelId : undefined,
-    }));
-}
-
-/**
- * Read the CLI history with Node's built-in `node:sqlite` (no binary on the
- * host PATH needed). Returns `undefined` when the module is unavailable on
- * this host so the caller can fall back to the `sqlite3` binary.
- */
-function readHistoryViaNodeSqlite(): HistoryRow[] | null | undefined {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { DatabaseSync } = require("node:sqlite") as {
-      DatabaseSync?: new (
-        path: string,
-        options?: { readOnly?: boolean },
-      ) => {
-        prepare(sql: string): { all(): Record<string, unknown>[] };
-        close(): void;
-      };
-    };
-    if (typeof DatabaseSync !== "function") {
-      return undefined;
-    }
-    // Transient busy/lock states (CLI checkpointing the WAL) resolve quickly.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const db = new DatabaseSync(OPENCODE_DB_PATH, { readOnly: true });
-        try {
-          const rows = db.prepare(HISTORY_ROWS_SQL).all();
-          return rows.length > 0 ? normalizeHistoryRows(rows) : null;
-        } finally {
-          db.close();
-        }
-      } catch (error) {
-        const message = getErrorMessage(error);
-        if (attempt === 0) {
-          historyReadDiagnostic?.(`[go-usage] node:sqlite read failed (attempt 1): ${message}. Retrying…`);
-        } else {
-          historyReadDiagnostic?.(`[go-usage] node:sqlite read failed: ${message}`);
-        }
-      }
-    }
-    return null;
-  } catch (error) {
-    historyReadDiagnostic?.(`[go-usage] node:sqlite unavailable (${getErrorMessage(error)}); falling back to the sqlite3 binary.`);
-    return undefined;
-  }
-}
-
-/**
- * Candidate `sqlite3` binaries: the PATH-resolved name first, then absolute
- * paths from common installs (system, Homebrew, Android SDK) — the Android
- * SDK binary is what most dev machines actually have, and it is frequently
- * missing from the extension host's PATH.
- */
-function sqliteCliCandidates(): string[] {
-  const home = os.homedir();
-  return [
-    "sqlite3",
-    "/usr/bin/sqlite3",
-    "/usr/local/bin/sqlite3",
-    "/opt/homebrew/bin/sqlite3",
-    path.join(home, "Android", "Sdk", "platform-tools", "sqlite3"),
-    path.join(home, "Library", "Android", "sdk", "platform-tools", "sqlite3"),
-  ];
-}
-
-function readHistoryViaSqliteCli(): HistoryRow[] | null {
-  for (const binary of sqliteCliCandidates()) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const result = execFileSync(binary, ["-readonly", "-cmd", ".timeout 5000", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
-          timeout: 10_000,
-          maxBuffer: 64 * 1024 * 1024,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-        const rows: unknown = JSON.parse(result);
-        return Array.isArray(rows) ? normalizeHistoryRows(rows) : null;
-      } catch (error) {
-        const message = getErrorMessage(error);
-        // ENOENT just means this candidate isn't present — try the next one.
-        if (attempt === 0 && message.includes("ENOENT")) {
-          break;
-        }
-        if (attempt === 0) {
-          historyReadDiagnostic?.(`[go-usage] sqlite3 read failed (attempt 1): ${message}. Retrying…`);
-        } else {
-          historyReadDiagnostic?.(`[go-usage] sqlite3 read failed (${binary}): ${message}`);
-        }
-      }
-    }
-  }
-  historyReadDiagnostic?.(
-    "[go-usage] CLI history unavailable: no SQLite reader found (node:sqlite missing and no sqlite3 binary on PATH).",
-  );
-  return null;
 }
 
 // ─── Exported tracker class ──────────────────────────────────────────────────
@@ -894,7 +504,7 @@ export class GoUsageTracker {
       if (!isCwdInWorkspace(row.cwd, folders)) continue;
       cost += row.cost;
       requests += 1;
-      tokens += row.tokensInput + row.tokensOutput + row.tokensReasoning;
+      tokens += row.tokensTotal;
     }
     return { cost, requests, tokens };
   }
@@ -1375,128 +985,3 @@ export class GoUsageTracker {
     }
   }
 }
-
-// ─── Formatting helpers ──────────────────────────────────────────────────────
-
-function progressBar(percent: number, width = 10): string {
-  const filled = Math.round((percent / 100) * width);
-  return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
-function fmtDate(d: Date): string {
-  return (
-    d.toLocaleDateString("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      timeZone: "UTC",
-    }) + " UTC"
-  );
-}
-
-function percentColor(pct: number): string {
-  if (pct >= 90) return "⛔";
-  if (pct >= 75) return "🟠";
-  if (pct >= 50) return "🟡";
-  return "🟢";
-}
-
-/** Status bar label: e.g. "Go: 27%·62%·75%" */
-export function formatGoUsageStatusBarText(summary: UsageSummary): string {
-  if (!summary.hasData) return "OpenCode Go";
-  const s = summary.session.percent;
-  const w = summary.weekly.percent;
-  const m = summary.monthly.percent;
-  const warn = s >= 80 || w >= 80 || m >= 80 ? " $(warning)" : "";
-  return `Go: ${String(s)}%·${String(w)}%·${String(m)}%${warn}`;
-}
-
-/** Build Quick Pick items for the usage panel */
-export function buildUsageQuickPickItems(summary: UsageSummary, syncedFromServer = false, showRollingMeter = true): vscode.QuickPickItem[] {
-  const now = new Date();
-  const isEmpty = !summary.hasData;
-
-  function periodItem(icon: string, label: string, period: PeriodUsage, resetLabel: string): vscode.QuickPickItem {
-    const bar = progressBar(period.percent);
-    const spent = formatUsd(period.spent);
-    const limit = formatUsd(period.limit);
-    const resets = formatRelativeTime(period.resetsAt, now);
-    return {
-      label: `${icon} ${label}`,
-      description: `${bar} ${String(period.percent)}%`,
-      detail: `${spent} / ${limit} used · resets in ${resets} (${resetLabel})`,
-      alwaysShow: true,
-    };
-  }
-
-  const items: vscode.QuickPickItem[] = [];
-
-  if (isEmpty) {
-    items.push({
-      label: "$(info) Ready to track",
-      detail: "Send a chat message to any OpenCode Go model to start tracking usage.",
-      alwaysShow: true,
-    });
-  }
-
-  if (syncedFromServer) {
-    items.push({
-      label: "$(cloud) Synced from opencode.ai",
-      detail: "Session/Weekly/Monthly meters are account-wide and server-accurate.",
-      alwaysShow: true,
-    });
-  }
-
-  // ── Period bars ──────────────────────────────────────────────────────────
-  items.push({ label: "Subscription Limits", kind: vscode.QuickPickItemKind.Separator });
-
-  if (showRollingMeter) {
-    items.push(
-      periodItem(
-        percentColor(summary.session.percent) + " $(clock)",
-        "Session (5h rolling)",
-        summary.session,
-        fmtDate(summary.session.resetsAt),
-      ),
-    );
-  }
-
-  items.push(periodItem(percentColor(summary.weekly.percent) + " $(calendar)", "Weekly", summary.weekly, fmtDate(summary.weekly.resetsAt)));
-
-  items.push(
-    periodItem(percentColor(summary.monthly.percent) + " $(graph)", "Monthly", summary.monthly, fmtDate(summary.monthly.resetsAt)),
-  );
-
-  // ── Daily summary ────────────────────────────────────────────────────────
-  items.push({ label: "Daily Summary", kind: vscode.QuickPickItemKind.Separator });
-
-  items.push({
-    label: `$(history) Today`,
-    description: formatUsd(summary.today.cost),
-    detail: `${formatTokenCount(summary.today.tokens)} tokens · ${formatCount(summary.today.requests)} requests`,
-    alwaysShow: true,
-  });
-
-  if (summary.yesterday.requests > 0 || isEmpty) {
-    items.push({
-      label: `$(history) Yesterday`,
-      description: formatUsd(summary.yesterday.cost),
-      detail: `${formatTokenCount(summary.yesterday.tokens)} tokens · ${formatCount(summary.yesterday.requests)} requests`,
-      alwaysShow: true,
-    });
-  }
-
-  // ── Actions ──────────────────────────────────────────────────────────────
-  items.push({ label: "Actions", kind: vscode.QuickPickItemKind.Separator });
-
-  items.push({
-    label: "$(link-external) Open OpenCode console",
-    description: "View usage at opencode.ai",
-    alwaysShow: true,
-    _action: "openConsole",
-  } as vscode.QuickPickItem & { _action: string });
-
-  return items;
-}
-
-export { GO_VENDOR };

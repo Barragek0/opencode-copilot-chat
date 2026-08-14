@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildCompletionWindow, DEFAULT_PREFIX_LINES, DEFAULT_SUFFIX_CHARS } from "../autocomplete/context";
+import {
+  buildCompletionWindow,
+  DEFAULT_PREFIX_LINES,
+  DEFAULT_SUFFIX_CHARS,
+  isChatInputDocument,
+  isCompletionDocument,
+} from "../autocomplete/context";
 import { buildCompletionPrompt, completionFamily, COMPLETION_SYSTEM_PROMPT } from "../autocomplete/prompt";
 import { cleanCompletion, extractChatCompletionText, parseSseData } from "../autocomplete/engine";
 import { Debouncer } from "../autocomplete/throttle";
@@ -100,6 +106,36 @@ describe("autocomplete — engine parsing", () => {
     // A completion continuing on a new (nested) line must keep its line break.
     assert.equal(cleanCompletion("  return true;"), "return true;");
     assert.equal(cleanCompletion("\n    return inner;\n  }"), "\n    return inner;\n  }");
+  });
+});
+
+describe("autocomplete — isChatInputDocument", () => {
+  it("rejects the Copilot Chat prompt box schemes", () => {
+    assert.ok(isChatInputDocument({ scheme: "chatSessionInput" }));
+    assert.ok(isChatInputDocument({ scheme: "sessions-chat" }));
+  });
+
+  it("accepts real code documents", () => {
+    assert.ok(!isChatInputDocument({ scheme: "file" }));
+    assert.ok(!isChatInputDocument({ scheme: "untitled" }));
+  });
+});
+
+describe("autocomplete — isCompletionDocument (code-editor allowlist)", () => {
+  it("accepts real editable code surfaces", () => {
+    assert.ok(isCompletionDocument({ scheme: "file" }));
+    assert.ok(isCompletionDocument({ scheme: "untitled" }));
+    assert.ok(isCompletionDocument({ scheme: "git" }));
+    assert.ok(isCompletionDocument({ scheme: "vscode-userdata" }));
+    assert.ok(isCompletionDocument({ scheme: "vscode-notebook-cell" }));
+  });
+
+  it("excludes chat prompts and other non-code surfaces", () => {
+    assert.ok(!isCompletionDocument({ scheme: "chatSessionInput" }));
+    assert.ok(!isCompletionDocument({ scheme: "sessions-chat" }));
+    assert.ok(!isCompletionDocument({ scheme: "output" }));
+    assert.ok(!isCompletionDocument({ scheme: "webviewPanel" }));
+    assert.ok(!isCompletionDocument({ scheme: "vscode-interactive-input" }));
   });
 });
 
