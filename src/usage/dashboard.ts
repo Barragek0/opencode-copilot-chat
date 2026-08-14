@@ -699,6 +699,11 @@ function usageWebviewHtml(profileLabel: string): string {
         var ttip = document.getElementById('ttip');
         var current = 'spend';
 
+        // HTML-escape a value for innerHTML (model names come from gateway/CLI data).
+        function esc(s) {
+          return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
         function el(tag, attrs, text) {
           var n = document.createElementNS(svgNS, tag);
           for (var k in attrs) n.setAttribute(k, attrs[k]);
