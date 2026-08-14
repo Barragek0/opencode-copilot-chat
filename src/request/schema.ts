@@ -21,6 +21,9 @@ export function sanitizeToolSchema(schema: unknown): object {
     type: "object",
     properties: isRecord(sanitized.properties) ? sanitized.properties : {},
     ...(Array.isArray(sanitized.required) ? { required: sanitized.required } : {}),
+    // A top-level enum (e.g. a tool input that is a fixed set of values) was
+    // previously flattened away — keep it so the provider still validates it.
+    ...(Array.isArray(sanitized.enum) ? { enum: sanitized.enum } : {}),
   };
 }
 
@@ -84,7 +87,22 @@ function sanitizeJsonSchemaNode(value: unknown, root: Record<string, unknown>, s
       }
 
       if (
-        ["type", "description", "enum", "required", "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"].includes(key)
+        [
+          "type",
+          "description",
+          "enum",
+          "const",
+          "pattern",
+          "format",
+          "default",
+          "required",
+          "minimum",
+          "maximum",
+          "minLength",
+          "maxLength",
+          "minItems",
+          "maxItems",
+        ].includes(key)
       ) {
         result[key] = child;
       }

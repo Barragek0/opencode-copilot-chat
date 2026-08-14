@@ -72,4 +72,22 @@ describe("sanitizeToolSchema", () => {
   it("falls back to an empty object schema for non-object input", () => {
     assert.deepEqual(sanitizeToolSchema(undefined), { type: "object", properties: {} });
   });
+
+  it("preserves a top-level enum instead of flattening it away", () => {
+    const result = sanitizeToolSchema({ enum: ["fast", "balanced", "thorough"] });
+    assert.deepEqual(result, { type: "object", properties: {}, enum: ["fast", "balanced", "thorough"] });
+  });
+
+  it("keeps pattern/format/default keywords on properties", () => {
+    const result = sanitizeToolSchema({
+      type: "object",
+      properties: {
+        code: { type: "string", pattern: "^[a-z]+$", description: "a code" },
+        mode: { type: "string", enum: ["on", "off"], default: "off" },
+      },
+    }) as { properties: Record<string, unknown> };
+
+    assert.deepEqual(result.properties.code, { type: "string", pattern: "^[a-z]+$", description: "a code" });
+    assert.deepEqual(result.properties.mode, { type: "string", enum: ["on", "off"], default: "off" });
+  });
 });
