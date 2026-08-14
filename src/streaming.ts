@@ -989,8 +989,11 @@ class OpenAiResponseExtractor extends BaseResponseExtractor {
      *
      * CONTRACT:
      * - Only set for Go-gateway requests where `reasoning_effort` is NOT in the
-     *   payload (i.e. MiMo thinking is OFF). When thinking IS on, the model
-     *   genuinely uses reasoning_content for CoT → goes to thinking panel.
+     *   payload AND the model genuinely stops reasoning without an explicit
+     *   effort (the verified case is MiMo thinking OFF). Reasoning-first
+     *   families (DeepSeek V4) keep producing real CoT even when thinking is
+     *   off, so their `reasoning_content` goes to the thinking panel — see
+     *   {@link modelAlwaysReasons}.
      * - Zen gateway and all non-Go models are never affected.
      */
     private readonly treatReasoningAsContent = false,
