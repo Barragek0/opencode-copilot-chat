@@ -376,10 +376,11 @@ export function activate(context: vscode.ExtensionContext) {
         const autoEnabled = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AUTO_ENABLE_AGENTS_WINDOW, true);
         if (agentsWindowEnabled && autoEnabled) {
           void ensureAgentsWindowSupport(context);
-        } else if (!agentsWindowEnabled) {
-          // We may have enabled core settings for the Agents window; revert
-          // them when the user turns the feature off so the user's global
-          // configuration is restored.
+        } else {
+          // Revert the core settings we auto-enabled when either the feature
+          // is turned off OR auto-configuration is disabled — otherwise a
+          // user who only disables `autoEnableAgentsWindow` is left with the
+          // extension's settings permanently flipped in their global config.
           void revertAgentsWindowSupport(context);
         }
       }
