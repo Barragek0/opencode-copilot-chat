@@ -349,7 +349,9 @@ function readHistoryViaSqliteCli(): HistoryRow[] | null {
       try {
         const result = execFileSync(binary, ["-readonly", "-cmd", ".timeout 5000", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
           timeout: 10_000,
-          maxBuffer: 64 * 1024 * 1024,
+          // 256MB: a power user's full CLI history JSON can exceed 64MB; a too-
+          // small cap silently makes the usage panel show no history at all.
+          maxBuffer: 256 * 1024 * 1024,
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
         });
