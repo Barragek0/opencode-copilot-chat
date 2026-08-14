@@ -89,7 +89,12 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
       };
 
       const tokenSubscription = token.onCancellationRequested(() => {
-        this.debouncer.cancel();
+        // Do NOT cancel the shared debouncer here: VS Code may cancel this
+        // request's token AFTER a newer keystroke already scheduled its own
+        // debounced run, and aborting the debouncer would kill that newer
+        // pending suggestion. The debouncer cancels the previous run itself
+        // when the next debounce() is scheduled; here we only resolve this
+        // request's promise as "no suggestion".
         finish(undefined);
       });
 
