@@ -309,6 +309,12 @@ export function normalizeMessages(messages: ApiMessage[]): ApiMessage[] {
       !prevHasToolCalls &&
       !msgHasToolCalls
     ) {
+      // Merging two assistant messages must not drop the second one's
+      // reasoning_content — DeepSeek-style models require it echoed back on
+      // the next turn. Concatenate both into the merged message.
+      if (message.reasoning_content) {
+        previous.reasoning_content = [previous.reasoning_content, message.reasoning_content].filter(Boolean).join("\n");
+      }
       previous.content = `${prevContent}\n\n${msgContent}`.trim();
     } else {
       normalized.push({ ...message });
