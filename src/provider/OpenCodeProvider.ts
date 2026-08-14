@@ -971,6 +971,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
             this.storeReasoningContent(toolCallIds, reasoningContent);
           },
         });
+        this.log(`Request completed: model=${model.id}`);
         return;
       }
 
