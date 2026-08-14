@@ -46,6 +46,7 @@ import {
   type ProviderVendor,
 } from "./providerTypes";
 import { providerEnabledSetting } from "./providerEnablement";
+import { providerVariant } from "./agentProvider";
 import { isInternalDataPart, isReasoningMarkerPart, readReasoningMarker } from "./chatParts";
 import { registerInlineCompletions } from "./autocomplete";
 import { completionUsageToSeries, type CompletionUsageDay } from "./autocomplete/usage";
@@ -389,7 +390,6 @@ interface ProviderDefinition {
   chatCompletionsUrl: string;
   messagesUrl: string;
   responsesUrl?: string;
-  usageUrl?: string;
   testModelId: string;
   fallbackModels: string[];
   filterModel?: (modelId: string) => boolean;
@@ -467,29 +467,7 @@ function isTransientFetchError(error: unknown): boolean {
   return false;
 }
 
-/** Create an agent-variant provider definition that inherits URLs, models, and filters from a base. */
-function providerVariant(
-  base: ProviderDefinition,
-  agentVendor: typeof AGENT_GO_VENDOR | typeof AGENT_ZEN_VENDOR,
-  displayName: string,
-): ProviderDefinition {
-  return {
-    vendor: agentVendor,
-    displayName,
-    modelNamePrefix: base.modelNamePrefix,
-    baseUrl: base.baseUrl,
-    modelsUrl: base.modelsUrl,
-    chatCompletionsUrl: base.chatCompletionsUrl,
-    messagesUrl: base.messagesUrl,
-    responsesUrl: base.responsesUrl,
-    usageUrl: base.usageUrl,
-    testModelId: base.testModelId,
-    fallbackModels: base.fallbackModels,
-    filterModel: base.filterModel,
-  };
-}
-
-const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() => {
+const PROVIDERS: Record<typeof GO_VENDOR | typeof ZEN_VENDOR, ProviderDefinition> = (() => {
   const go: ProviderDefinition = {
     vendor: GO_VENDOR,
     displayName: "OpenCode Go",
@@ -499,7 +477,6 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
     chatCompletionsUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "chat/completions"),
     messagesUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "messages"),
     responsesUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "responses"),
-    usageUrl: appendApiPath(DEFAULT_GO_API_BASE_URL, "usage"),
     testModelId: "deepseek-v4-flash",
     fallbackModels: [
       "deepseek-v4-pro",
@@ -584,12 +561,6 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
   return {
     [GO_VENDOR]: go,
     [ZEN_VENDOR]: zen,
-    [AGENT_GO_VENDOR]: { ...providerVariant(go, AGENT_GO_VENDOR, "OpenCode Go (Agents)"), isAgentVariant: true, baseVendor: GO_VENDOR },
-    [AGENT_ZEN_VENDOR]: {
-      ...providerVariant(zen, AGENT_ZEN_VENDOR, "OpenCode Zen (Agents)"),
-      isAgentVariant: true,
-      baseVendor: ZEN_VENDOR,
-    },
   };
 })();
 
@@ -616,7 +587,6 @@ function configuredProviderDefinition(vendor: typeof GO_VENDOR | typeof ZEN_VEND
     chatCompletionsUrl: appendApiPath(baseUrl, "chat/completions"),
     messagesUrl: appendApiPath(baseUrl, "messages"),
     responsesUrl: appendApiPath(baseUrl, "responses"),
-    usageUrl: vendor === GO_VENDOR ? appendApiPath(baseUrl, "usage") : undefined,
   };
 }
 
@@ -1079,8 +1049,14 @@ export function activate(context: vscode.ExtensionContext) {
   // Agent-host providers for the Copilot Agents window (opt-in via config).
   const enableAgents = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true);
   if (enableAgents && (goProviderEnabled || zenProviderEnabled)) {
-    const agentGoProvider = new OpenCodeProvider(context, providerVariant(goDefinition, AGENT_GO_VENDOR, "OpenCode Go (Agents)"));
-    const agentZenProvider = new OpenCodeProvider(context, providerVariant(zenDefinition, AGENT_ZEN_VENDOR, "OpenCode Zen (Agents)"));
+    const agentGoProvider = new OpenCodeProvider(
+      context,
+      providerVariant(goDefinition, AGENT_GO_VENDOR, "OpenCode Go (Agents)", GO_VENDOR),
+    );
+    const agentZenProvider = new OpenCodeProvider(
+      context,
+      providerVariant(zenDefinition, AGENT_ZEN_VENDOR, "OpenCode Zen (Agents)", ZEN_VENDOR),
+    );
     modelInfoProviders.push(agentGoProvider, agentZenProvider);
     subscriptions.push(
       ...(goProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(AGENT_GO_VENDOR, agentGoProvider)] : []),
