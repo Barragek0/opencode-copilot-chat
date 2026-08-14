@@ -215,6 +215,17 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       consumedErrorBody = undefined;
     }
 
+    // A cancellation during the backoff wait means the user aborted while we
+    // were retrying a stale 5xx response. Fail cleanly as "cancelled" rather
+    // than surfacing the stale gateway error as if it were a fresh failure.
+    // (Read into a local so the throw does not narrow the token property for
+    // the rest of the function and trip no-unnecessary-condition.)
+    const cancelledDuringBackoff = options.token.isCancellationRequested;
+    if (cancelledDuringBackoff) {
+      abort("cancelled");
+      throw new DOMException("Aborted", "AbortError");
+    }
+
     responseStatus = response.status;
     responseContentType = response.headers.get("content-type") ?? "";
     options.output?.appendLine(`[http] ${String(response.status)} ${response.statusText} content-type=${responseContentType || "<none>"}`);
