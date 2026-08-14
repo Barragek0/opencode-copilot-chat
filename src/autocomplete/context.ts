@@ -29,6 +29,21 @@ export function isChatInputDocument(uri: { scheme: string }): boolean {
   return CHAT_INPUT_SCHEMES.has(uri.scheme);
 }
 
+/**
+ * Document schemes that are real editable code surfaces. Inline completions
+ * are only offered there. An ALLOWLIST (instead of only blocking known chat
+ * schemes) means any new interactive surface VS Code introduces in the
+ * future — chat prompt variants, webviews, output, custom editors — is
+ * excluded automatically without a manual update; genuinely new CODE
+ * surfaces are rare.
+ */
+export const CODE_EDITOR_SCHEMES = new Set(["file", "untitled", "git", "vscode-userdata", "vscode-notebook-cell"]);
+
+/** Whether a document is a normal editable code surface. */
+export function isCompletionDocument(uri: { scheme: string }): boolean {
+  return CODE_EDITOR_SCHEMES.has(uri.scheme);
+}
+
 export interface CompletionWindowOptions {
   prefixLines?: number;
   suffixChars?: number;

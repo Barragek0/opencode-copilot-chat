@@ -7,7 +7,7 @@
  */
 
 import * as vscode from "vscode";
-import { buildCompletionWindow, isChatInputDocument } from "./context";
+import { buildCompletionWindow, isChatInputDocument, isCompletionDocument } from "./context";
 import { Debouncer } from "./throttle";
 import type { CompletionContext, CompletionEngine } from "./types";
 
@@ -50,10 +50,11 @@ export class OpenCodeInlineCompletionProvider implements vscode.InlineCompletion
       return Promise.resolve(undefined);
     }
 
-    // The Copilot Chat prompt box is a virtual chatSessionInput document.
-    // Off by default (completions belong in code editors); users can opt in
-    // via opencodego.inlineSuggestionsChatInput.
-    if (isChatInputDocument(document.uri) && !this.options.resolveChatInputEnabled()) {
+    // Only offer completions in real editable code surfaces. The Copilot
+    // Chat prompt box is a virtual chatSessionInput document — excluded by
+    // default (completions belong in code editors); users can opt in via
+    // opencodego.inlineSuggestionsChatInput.
+    if (!isCompletionDocument(document.uri) && !(isChatInputDocument(document.uri) && this.options.resolveChatInputEnabled())) {
       return Promise.resolve(undefined);
     }
 
