@@ -189,9 +189,12 @@ describe("goUsageTracker", () => {
       assert.equal(cost, 0.0002526);
     });
 
-    it("returns 0 for an unknown model with no resolver", () => {
+    it("estimates a conservative cost for an unknown model with no resolver", () => {
+      // Unknown models use the fallback price (0.5 in / 2.0 out per 1M) instead
+      // of silently tracking $0 (which reads as free).
       const cost = estimateCost("nonexistent-model-v99", 100, 50, 0);
-      assert.equal(cost, 0);
+      assert.ok(cost > 0, "unknown model must not track as $0");
+      assert.ok(cost < 0.001, "fallback estimate stays small");
     });
 
     it("prefers externalCost over the bundled table", () => {
@@ -577,7 +580,7 @@ describe("goUsageTracker", () => {
         assert.equal(tracker.getRecentSessionCosts().length, 0);
       });
 
-      it("handles unknown modelId (cost = 0)", () => {
+      it("estimates a conservative cost for unknown modelId", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(
           makeSummary({
@@ -590,7 +593,8 @@ describe("goUsageTracker", () => {
 
         const session = tracker.getCurrentSessionCost();
         assert.equal(session?.sessionId, "s1");
-        assert.equal(session.cost, 0);
+        assert.ok(session.cost > 0, "unknown model must not track as $0");
+        assert.ok(session.cost < 0.001, "fallback estimate stays small");
         assert.equal(session.requests, 1);
       });
 
