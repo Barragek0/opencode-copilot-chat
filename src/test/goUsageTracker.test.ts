@@ -636,8 +636,26 @@ describe("sumDailyUsage", () => {
   const now = new Date();
   const dayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const rows: HistoryRow[] = [
-    { createdMs: dayMs + 1000, cost: 0.1, tokensInput: 100, tokensOutput: 50, tokensReasoning: 20, tokensCacheRead: 10, cwd: "/repo" },
-    { createdMs: dayMs - 60_000, cost: 0.2, tokensInput: 200, tokensOutput: 100, tokensReasoning: 0, tokensCacheRead: 0, cwd: "/repo" },
+    {
+      createdMs: dayMs + 1000,
+      cost: 0.1,
+      tokensInput: 100,
+      tokensOutput: 50,
+      tokensReasoning: 20,
+      tokensCacheRead: 10,
+      cwd: "/repo",
+      tokensTotal: 180,
+    },
+    {
+      createdMs: dayMs - 60_000,
+      cost: 0.2,
+      tokensInput: 200,
+      tokensOutput: 100,
+      tokensReasoning: 0,
+      tokensCacheRead: 0,
+      cwd: "/repo",
+      tokensTotal: 300,
+    },
   ];
   const entries: UsageLogEntry[] = [
     {
@@ -654,14 +672,14 @@ describe("sumDailyUsage", () => {
   it("merges CLI rows and extension entries in auto mode", () => {
     const total = sumDailyUsage(rows, entries, dayMs, "auto");
     assert.equal(total.requests, 2);
-    assert.equal(total.tokens, 210);
+    assert.equal(total.tokens, 220, "row total includes cache.read (180) plus the entry (40)");
     assert.ok(Math.abs(total.cost - 0.15) < 1e-9, `expected ~0.15, got ${String(total.cost)}`);
   });
 
   it("excludes rows before the day window", () => {
     const total = sumDailyUsage(rows, [], dayMs, "cli");
     assert.equal(total.requests, 1, "only the row inside the window counts");
-    assert.equal(total.tokens, 170, "input + output + reasoning");
+    assert.equal(total.tokens, 180, "input + output + reasoning + cache.read");
   });
 
   it("cli source ignores extension entries", () => {
@@ -747,6 +765,7 @@ describe("buildUsageSeries", () => {
       tokensOutput: 50,
       tokensReasoning: 0,
       tokensCacheRead: 0,
+      tokensTotal: 150,
       cwd: "/repo",
       modelId: "qwen3.6-plus",
     },
@@ -757,6 +776,7 @@ describe("buildUsageSeries", () => {
       tokensOutput: 100,
       tokensReasoning: 0,
       tokensCacheRead: 0,
+      tokensTotal: 300,
       cwd: "/repo",
       modelId: "deepseek-v4-flash",
     },
@@ -767,6 +787,7 @@ describe("buildUsageSeries", () => {
       tokensOutput: 150,
       tokensReasoning: 0,
       tokensCacheRead: 0,
+      tokensTotal: 450,
       cwd: "/repo",
       modelId: "qwen3.6-plus",
     },
@@ -777,6 +798,7 @@ describe("buildUsageSeries", () => {
       tokensOutput: 200,
       tokensReasoning: 0,
       tokensCacheRead: 0,
+      tokensTotal: 600,
       cwd: "/repo",
       modelId: "qwen3.6-plus",
     },
@@ -823,6 +845,24 @@ describe("buildUsageSeries", () => {
   it("cli source ignores extension entries", () => {
     const series = buildUsageSeries(rows, entries, 14, dayMs, "cli");
     assert.ok(!series.byModel.some((p) => p.model === "glm-5"));
+  });
+
+  it("counts cached tokens in daily totals (tokens.input excludes cache)", () => {
+    const cached: HistoryRow[] = [
+      {
+        createdMs: dayMs,
+        cost: 0.1,
+        tokensInput: 152,
+        tokensOutput: 209,
+        tokensReasoning: 0,
+        tokensCacheRead: 699_392,
+        tokensTotal: 699_753,
+        cwd: "/repo",
+        modelId: "deepseek-v4-flash",
+      },
+    ];
+    const series = buildUsageSeries(cached, [], 1, dayMs, "cli");
+    assert.equal(series.days[0].tokens, 699_753, "cache.read must be part of the token total");
   });
 
   it("lifetime windows (days=0) span from the earliest usage day", () => {
