@@ -157,6 +157,19 @@ export async function convertMessage(
       continue;
     }
 
+    if (part instanceof vscode.LanguageModelDataPart && isReasoningMarkerPart(part)) {
+      // Thinking-off responses carry their reasoning in a marker data part
+      // (see streaming.ts / gateway bug #37635); echo it as reasoning_content
+      // on the next turn or DeepSeek's validator 400s. Must be checked BEFORE
+      // isInternalDataPart (which now includes the marker MIME) so the marker
+      // is processed rather than skipped as an internal usage part.
+      const reasoning = readReasoningMarker(part);
+      if (reasoning) {
+        thinkingTextParts.push(reasoning);
+      }
+      continue;
+    }
+
     if (part instanceof vscode.LanguageModelDataPart && isInternalDataPart(part)) {
       continue;
     }
@@ -165,17 +178,6 @@ export async function convertMessage(
       const thinking = thinkingPartText(part);
       if (thinking) {
         thinkingTextParts.push(thinking);
-      }
-      continue;
-    }
-
-    if (part instanceof vscode.LanguageModelDataPart && isReasoningMarkerPart(part)) {
-      // Thinking-off responses carry their reasoning in a marker data part
-      // (see streaming.ts / gateway bug #37635); echo it as reasoning_content
-      // on the next turn or DeepSeek's validator 400s.
-      const reasoning = readReasoningMarker(part);
-      if (reasoning) {
-        thinkingTextParts.push(reasoning);
       }
       continue;
     }

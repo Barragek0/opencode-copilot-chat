@@ -23,7 +23,11 @@ export function createUsageDataParts(usage: UsageSnapshot): vscode.LanguageModel
 }
 
 export function isInternalDataPart(part: vscode.LanguageModelDataPart): boolean {
-  return part.mimeType === OPENCODE_USAGE_DATA_MIME || part.mimeType === COPILOT_USAGE_DATA_MIME;
+  return (
+    part.mimeType === OPENCODE_USAGE_DATA_MIME ||
+    part.mimeType === COPILOT_USAGE_DATA_MIME ||
+    part.mimeType === OPENCODE_REASONING_DATA_MIME
+  );
 }
 
 /**
