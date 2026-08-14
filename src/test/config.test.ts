@@ -206,7 +206,10 @@ describe("config — provider API URLs", () => {
   });
 
   it("normalizes safe custom HTTP(S) bases and rejects unsafe values", () => {
-    assert.equal(normalizeApiBaseUrl("https://gateway.example.test/custom/v1///", DEFAULT_GO_API_BASE_URL), "https://gateway.example.test/custom/v1");
+    assert.equal(
+      normalizeApiBaseUrl("https://gateway.example.test/custom/v1///", DEFAULT_GO_API_BASE_URL),
+      "https://gateway.example.test/custom/v1",
+    );
     assert.equal(normalizeApiBaseUrl("http://localhost:8080/v1", DEFAULT_GO_API_BASE_URL), "http://localhost:8080/v1");
     assert.equal(normalizeApiBaseUrl("javascript:alert(1)", DEFAULT_GO_API_BASE_URL), DEFAULT_GO_API_BASE_URL);
     assert.equal(normalizeApiBaseUrl("https://user:pass@gateway.example.test/v1", DEFAULT_GO_API_BASE_URL), DEFAULT_GO_API_BASE_URL);
