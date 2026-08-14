@@ -5,6 +5,7 @@ import { showModelPickerDiagnostics } from "./commands/diagnostics";
 import { showThinkingEffortPicker } from "./commands/thinkingPicker";
 import { configureUtilityModels, toggleProviderEnabled } from "./commands/providers";
 import {
+  ACTIVE_PROFILE_EXPLICIT_KEY,
   CONFIG_SECTION,
   DEFAULT_USAGE_CHART_DAYS,
   GO_EVER_TRACKED_KEY,
@@ -330,6 +331,9 @@ export function activate(context: vscode.ExtensionContext) {
       if (activeProfileFingerprint === fp) {
         setActiveProfileFingerprint(LEGACY_FINGERPRINT);
         await writeActiveProfile(ctx, LEGACY_FINGERPRINT);
+        // The user's explicit choice was deleted — clear the flag so auto-
+        // selection resumes for the remaining profiles.
+        await ctx.globalState.update(ACTIVE_PROFILE_EXPLICIT_KEY, undefined);
       }
 
       refreshGoUsageStatusBar();
