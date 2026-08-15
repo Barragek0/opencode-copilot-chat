@@ -307,23 +307,25 @@ Recent summaries include endpoint kind, initiator, metadata source, request IDs,
 
 ## Files Changed
 
-Core implementation files:
+> **Note (2026-08-14, PR #155):** the flat `src/` god-file layout below was reorganized into domain folders. The historical file list is kept for reference; the current structure is documented in feature doc [`17-20260814-data-driven-model-registry.md`](../features/17-20260814-data-driven-model-registry.md) and the repo-root `ARCHITECTURE-MAP.md`.
 
-- `src/extension.ts`
+Core implementation files (historical, pre-#155):
+
+- `src/extension.ts` → now a thin entry; provider class in `src/provider/OpenCodeProvider.ts`, commands in `src/commands/`
 - `src/providerTypes.ts`
-- `src/routing.ts`
-- `src/streaming.ts`
-- `src/metadata.ts`
+- `src/routing.ts` → moved to `src/core/routing.ts` (reads `src/core/registry.ts`)
+- `src/streaming.ts` → split into `src/transports/` (barrel removed)
+- `src/metadata.ts` → moved to `src/models/metadata.ts`
 - `src/openCodeAuth.ts`
 - `src/chatParts.ts`
-- `src/usage.ts`
-- `src/goUsageTracker.ts`
+- `src/usage.ts` → moved to `src/usage/usage.ts`
+- `src/goUsageTracker.ts` → split into `src/usage/` (barrel removed)
 - `src/contextWindowHook.ts`
 - `src/retry.ts` (400 parameter + context-overflow recovery, transient 5xx classification)
-- `src/modelLimits.ts` (advertised vs request limits, proportional tokenizer headroom)
+- `src/modelLimits.ts` → moved to `src/models/modelLimits.ts`
 - `src/responsesRequest.ts` (Responses request envelope: `truncation: "auto"`, bounded output)
 - `src/tokenEstimate.ts` (prompt estimate incl. tool/MCP schemas)
-- `src/modelCapabilities.ts` (proposal-safe capabilities, no `editTools`)
+- `src/modelCapabilities.ts` → moved to `src/models/modelCapabilities.ts`
 - `src/apiKeyResolution.ts` (configured → registered → SecretStorage key resolution)
 - `src/runtimeDiagnostics.ts` (runtime/elevation diagnostics)
 - `package.json`

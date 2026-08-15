@@ -3,9 +3,9 @@
 # Provider Adapter Architecture — Multi-Vendor / Multi-Model Structure
 
 **Topic:** architecture / provider / streaming / routing / maintainability / refactor
-**Updated:** 2026-08-09
+**Updated:** 2026-08-15
 **Tags:** #architecture #provider #streaming #routing #refactor #adapter-pattern #strangler-fig #anti-regression
-**Supersedes:** -
+**Supersedes:** —
 
 ---
 
@@ -22,13 +22,15 @@ The project already has god files. This document:
 5. Defines an **anti-regression contract** for adding new vendors/models.
 6. Lays out a **phased Strangler Fig migration plan**.
 
-Status: 🟢 Active — this is a living reference document. It is a proposal; implementation has not started yet. Timeline entries will be appended as phases are executed.
+Status: 🟢 Active — living reference. The proposal has been **implemented** via PR [#155](https://github.com/ltmoerdani/opencode-copilot-chat/pull/155) (merged 2026-08-14, merge commit `a95565f`). This doc now records the plan, what landed, and the remaining future work. The full folder map + registry table live in feature doc [`17-20260814-data-driven-model-registry.md`](../features/17-20260814-data-driven-model-registry.md) and the repo-root `ARCHITECTURE-MAP.md`.
 
 ---
 
 ## 1. Current State Diagnosis (Evidence from Codebase)
 
-The project is not flat-modular across the board. It has **three god files** that mix multiple concerns. Every other file (25 files, mostly <300 lines) is already lean and correctly flat-modular.
+> **Updated 2026-08-15:** this section documents the **pre-#155** state that motivated the refactor. As of PR #155 the god files are split (see "Post-#155 state" at the end of this section). The numbers below are kept for historical reference.
+
+The project was not flat-modular across the board. It had **three god files** that mixed multiple concerns. Every other file (25 files, mostly <300 lines) was already lean and correctly flat-modular.
 
 | File                    | Lines     | Mixed Concerns                                                                                                                                                       |
 | ----------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -43,6 +45,18 @@ The project is not flat-modular across the board. It has **three god files** tha
 - **Vendor onboarding friction**: every new transport/behavior becomes a diff inside already-huge files instead of a self-contained addition.
 
 The core problem is **not** "flat vs folders" — it is that these 3 files mix too many domains. The fix must separate domains, not merely reorganize folders.
+
+### Post-#155 state (2026-08-14)
+
+The Strangler Fig split (PR #155) is executed. The god files are gone:
+
+| Pre-#155                      | Post-#155                                                                                                                                                        |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/extension.ts` 4,653      | thin entry ~415 lines (activation + command wiring); provider class → `src/provider/OpenCodeProvider.ts`, commands → `src/commands/`                             |
+| `src/streaming.ts` 1,620      | `src/transports/` (one file per transport + `engine` / `sse` / `extractors` / `extract` / `streamParts` / `thinkTags`); contract types → `src/core/transport.ts` |
+| `src/goUsageTracker.ts` 1,510 | `src/usage/` (`tracker` / `history` / `pricing` / `formatting` / `dashboard` + moved `usage` / `usageProfile` / `goUsageSync`)                                   |
+
+Also landed: `src/thinking/` (per-provider strategy classes), `src/models/` (metadata domain), `src/request/` (per-endpoint body builders), and the data-driven `src/core/registry.ts`. Verified behavior-preserving — 310 unit tests + retry E2E 7/7 + lint green (see issue doc [`67-20260814-pr155-split-god-files-review-merge.md`](../issues/67-20260814-pr155-split-god-files-review-merge.md)).
 
 ---
 
@@ -147,45 +161,49 @@ flowchart TD
 
 ## 4. Target Folder Structure (Lean — max 2 subfolder depth)
 
-Group by domain; keep depth shallow so it stays simple and not over-engineered.
+> **Updated 2026-08-15:** this target is **achieved** as of PR #155, with a few name differences vs the original sketch (actual in parentheses). Principle: _"do not move what is healthy."_
 
 ```text
 src/
-  extension.ts                    # wiring only (target <300 lines)
+  extension.ts                    # wiring only ✓ (~415 lines; target <300 — close)
   core/
-    transport.ts                  # ModelTransport interface (port) + types
-    registry.ts                   # modelId → transport + per-model config (data-driven)
+    transport.ts                  # contract types (was: ModelTransport interface — types landed; interface still future) ✓
+    registry.ts                   # MODEL_REGISTRY — data-driven transport + thinking family ✓
   transports/
-    chatCompletions.ts            # OpenAI chat adapter
-    responses.ts                  # OpenAI Responses adapter
-    anthropic.ts                  # Anthropic messages adapter
-    google.ts                     # Gemini adapter
-    sse.ts                        # pure SSE parser (unit-testable)
-    streamParts.ts                # emit thinking/progress/text → vscode parts
+    chatCompletions.ts            # OpenAI chat adapter ✓
+    responses.ts                  # OpenAI Responses adapter ✓
+    anthropic.ts                  # Anthropic messages adapter ✓
+    google.ts                     # Gemini adapter ✓
+    engine.ts                     # shared HTTP+SSE streaming engine + retry/backoff (added)
+    sse.ts                        # pure SSE parser ✓
+    extractors.ts / extract.ts    # response extractors (added)
+    streamParts.ts                # emit thinking/progress/text → vscode parts ✓
+    thinkTags.ts                  # inline <think> tag stripper (added)
   models/
-    metadata.ts                   # live fetch + fallback snapshot (moved from extension.ts)
-    limits.ts / capabilities.ts / thinking.ts   # per-model config (already exist, keep)
+    metadata.ts / metadataFetcher.ts   # live fetch + fallback snapshot ✓
+    modelLimits.ts / modelCapabilities.ts / modelNames.ts / pricing.ts   # per-model config ✓
+  provider/
+    OpenCodeProvider.ts           # provider class (was: inside extension.ts) ✓
+    definitions.ts / settings.ts / messages.ts / tokens.ts / visionProxy.ts
+  thinking/
+    provider.ts + per-family strategies (deepseek/glm/kimi/minimax/openai/qwen/mimo/fallback)  # added
+  request/
+    openai.ts / anthropic.ts / google.ts / types.ts / schema.ts / shared.ts / headers.ts  # added
   usage/
-    tracker.ts                    # core tracker (from goUsageTracker.ts)
-    history.ts                    # SQLite read (from goUsageTracker.ts)
-    formatting.ts                 # status bar text / tooltip / quickpick (from goUsageTracker.ts)
-    webview.ts                    # usage webview (from extension.ts)
+    tracker.ts                    # core tracker ✓
+    history.ts                    # SQLite read ✓
+    pricing.ts / formatting.ts    # cost + status bar / tooltip / quickpick ✓
+    dashboard.ts                  # usage webview + tooltip SVG (target: webview.ts — still one file) ⚠️
+    usage.ts / usageProfile.ts / goUsageSync.ts
   commands/
-    diagnostics.ts
-    thinkingPicker.ts
-    usageTargetEditor.ts
-  auth/
-    openCodeAuth.ts               # key resolution + BYOK (already exists)
-  util/
-    errors.ts / retry.ts / tokenEstimate.ts / chatParts.ts
-    toolCallAccumulator.ts / imageNormalizer.ts
-  contextWindow/
-    contextWindowHook.ts / contextWindowHookBridge.ts
+    diagnostics.ts / thinkingPicker.ts / agentsWindow.ts / providers.ts  ✓
+  openCodeAuth.ts               # key resolution + BYOK (stayed at root — fine, <300 lines)
+  contextWindowHook.ts          # stayed at root (fine, small)
+  errors.ts / retry.ts / tokenEstimate.ts / chatParts.ts / utils.ts / apiKeyResolution.ts  # stayed at root
+  toolCallAccumulator.ts / imageNormalizer.ts
 ```
 
-**Not everything must move.** Files that are flat and small (<300 lines) may stay where they are. Principle: _"do not move what is healthy."_
-
----
+**Not everything moved** — small flat files (<300 lines) stayed at the root (`openCodeAuth.ts`, `contextWindowHook.ts`, `errors.ts`, `retry.ts`, `utils.ts`, …). That matches the original principle.
 
 ## 5. Anti-Regression Contract — Checklist for Adding a New Vendor/Model
 
@@ -218,9 +236,10 @@ Each phase gate: `npm run compile` must pass + a targeted test with at least 1 m
 
 ## 7. Conclusion
 
-- The core problem is not "missing folders" — it is that **3 files mix multiple domains**, causing a large blast radius on every model addition.
+- The core problem was not "missing folders" — it was that **3 files mixed multiple domains**, causing a large blast radius on every model addition.
 - The industry-proven pattern (AI SDK, Continue, Cline) is **one adapter per transport + a single contract interface + a data-driven registry + a thin entry file** — this answers both "simple and lean" and "minimal regression".
-- Do not rewrite all at once — **Strangler Fig, phase by phase**, starting with the lowest-risk area (`goUsageTracker.ts` split).
+- **Executed (2026-08-14, PR #155):** Strangler Fig phase-by-phase from the lowest-risk area (`goUsageTracker.ts` split) upward. All 5 phases landed, behavior-preserving (310 tests + E2E 7/7 + lint green).
+- **Remaining future work:** full `ModelTransport` port interface, usage webview HTML → own file (see issue doc 67).
 
 ---
 
@@ -231,6 +250,8 @@ Each phase gate: `npm run compile` must pass + a targeted test with at least 1 m
 | 2026-08-09 | 🟢 Active | Initial research + analysis document created. Proposal only; no code changed.                                                                                                                                                                                                                                                                                                                    |
 | 2026-08-14 | ✅ Done   | God-file split executed on `refactor/split-god-files` (usage/ · transports/ · provider/ · models/ · core/ · commands/); `extension.ts` 4653 → ~414 lines. See CHANGELOG `[Unreleased]`.                                                                                                                                                                                                          |
 | 2026-08-14 | ✅ Done   | **Data-driven registry implemented** (`src/core/registry.ts`). `resolveModelRouting()` (transport) and `thinkingFamily()` both read the `MODEL_REGISTRY` table; `ModelEndpointKind` type moved to the registry. Scope note: context limits/capabilities stay metadata-driven (live models.dev) — not duplicated as a static table. The full `ModelTransport` port interface remains future work. |
+| 2026-08-14 | ✅ Done   | **PR #155 merged** (merge commit `a95565f`, not squash) — all phases 1–5 landed, contributor history preserved. Independent verification: 310 unit tests + retry E2E 7/7 + lint green; routing/thinking/SSE verified behavior-identical. See issue doc [`67-20260814-pr155-split-god-files-review-merge.md`](../issues/67-20260814-pr155-split-god-files-review-merge.md).                       |
+| 2026-08-15 | 🟢 Active | Post-merge: docs updated (this doc, feature doc 17, devlog, issue 131). Remaining future work: full `ModelTransport` port interface; usage webview HTML → own file; Zen API key one-time migration before release.                                                                                                                                                                               |
 
 ---
 

@@ -1,14 +1,14 @@
-**Status:** 🟢 Active (fix PR #135 open, not yet merged as of 2026-08-13)
+**Status:** ✅ Solved (PR #135 merged 2026-08-13, merge commit `7df19f4` context; final fix also reinforced by PR #155 model-ID normalization)
 
 # Issue #131 — Duplicate OpenCode Zen / Go models after per-model config (reasoningEffort)
 
 **Topic:** provider / byok / vscode / configuration / duplicate / per-model-config
-**Updated:** 2026-08-13
+**Updated:** 2026-08-15
 **Tags:** #provider #byok #vscode #configuration #duplicate #per-model-config #reasoning-effort
-**Related:** Issue [#131](https://github.com/ltmoerdani/opencode-copilot-chat/issues/131) (this issue), PR [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) (fix, open), issue doc [`48-20260805-issue106-zen-duplicate-models.md`](48-20260805-issue106-zen-duplicate-models.md) (original #106), [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86) (SecretStorage fallback)
+**Related:** Issue [#131](https://github.com/ltmoerdani/opencode-copilot-chat/issues/131) (this issue), PR [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) (fix, merged), issue doc [`48-20260805-issue106-zen-duplicate-models.md`](48-20260805-issue106-zen-duplicate-models.md) (original #106), [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86) (SecretStorage fallback), PR [#155](https://github.com/ltmoerdani/opencode-copilot-chat/pull/155) (model-ID normalization)
 **Reporter:** [@xianhongtao](https://github.com/xianhongtao) (follow-up to #106)
 **Extension version affected:** 0.5.2 (also present in 0.5.0/0.5.1)
-**Fixed in:** Unreleased (PR #135)
+**Fixed in:** Unreleased (PR #135), reinforced by PR #155
 
 ---
 
@@ -120,11 +120,11 @@ Discriminator rationale (verified against VS Code source): the groupless call pa
 - `npm run lint` (strict + tsc check) green.
 - Scenarios preserved: #86 (key via command, no group), #106/#63 (groups carrying an `apiKey`), agent variants (no `configuration` schema → `configuration` always `undefined`).
 
-## Review note for next session
+## Resolution
 
-- PR #135 `mergeable` was `UNKNOWN` at last fetch — re-fetch before merge.
-- Merge as **merge commit** (`--merge`), never squash.
-- After merge: update this document to `✅ Solved`, add the CHANGELOG entry (already staged under `[Unreleased]`), and reply to @xianhongtao on #106 with the fix + 0.5.3 target.
+- **PR #135 merged** 2026-08-13 (merge commit `7df19f4`) — the `else if (opts.configuration !== undefined) return [];` carve-out landed. This document was updated to ✅ Solved on 2026-08-15.
+- **Reinforcement from PR #155 (2026-08-14):** the thinking refactor normalizes model IDs to `effectiveModelId` — the `::sk-***` key-fingerprint suffix is gone from the per-model settings key. This stops the per-model settings group from being recreated on every pick (a contributing factor to churn around this issue) and aligns the picker with the single-config-authority model.
+- The `Set API Key` extension command that seeded the old `::sk-***`-suffixed IDs is also removed in PR #155 (BYOK-only entry point), so the reported repro path is no longer reachable on new installs.
 
 ## Workaround for users before 0.5.3
 
@@ -134,7 +134,8 @@ Discriminator rationale (verified against VS Code source): the groupless call pa
 ## References
 
 - GitHub Issue: [#131](https://github.com/ltmoerdani/opencode-copilot-chat/issues/131)
-- Fix PR: [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) by [@Fahad090NP](https://github.com/Fahad090NP)
+- Fix PR: [#135](https://github.com/ltmoerdani/opencode-copilot-chat/pull/135) by [@Fahad090NP](https://github.com/Fahad090NP) (merged 2026-08-13)
+- Model-ID normalization + BYOK-only entry: PR [#155](https://github.com/ltmoerdani/opencode-copilot-chat/pull/155) — see issue doc [`67-20260814-pr155-split-god-files-review-merge.md`](67-20260814-pr155-split-god-files-review-merge.md)
 - Original duplicate issue: [#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106) — `docs/issues/48-20260805-issue106-zen-duplicate-models.md`
 - SecretStorage fallback: [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86) — `docs/issues/43-20260803-issue86-zen-nonagent-0-models.md`
 - Open PR tracker: `docs/issues/63-20260813-open-prs-133-135-136-tracker.md`

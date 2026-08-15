@@ -3,9 +3,10 @@
 # Per-Model Thinking Controls
 
 **Topic:** provider / models / thinking / vscode / copilot-chat
-**Updated:** 2026-05-17
+**Updated:** 2026-08-15
 **Tags:** #provider #models #thinking #vscode #copilot-chat #reasoning #byok
 **Supersedes:** —
+**Related:** PR [#155](https://github.com/ltmoerdani/opencode-copilot-chat/pull/155) (per-provider strategy refactor) · feature doc [`17-20260814-data-driven-model-registry.md`](17-20260814-data-driven-model-registry.md)
 
 ---
 
@@ -110,29 +111,50 @@ The request mapping is endpoint-aware and family-aware:
 
 ## Implementation Notes
 
-| Function / Area                       | Purpose                                                         |
-| ------------------------------------- | --------------------------------------------------------------- |
-| `thinkingFamily()`                    | Classifies raw model IDs into Thinking families                 |
-| `modelConfigurationSchema()`          | Creates VS Code per-model configuration schema                  |
-| `buildFamilyThinkingSchema()`         | Builds picker options from `models.dev` or family defaults      |
-| `applyRequestThinkingOverride()`      | Applies `modelConfiguration` over persistent defaults           |
-| `getRequestModelConfiguration()`      | Reads `options.modelConfiguration` with a defensive fallback    |
-| `buildThinkingPayload()`              | Emits OpenCode request fields for each model family             |
-| `buildQwenAnthropicThinkingPayload()` | Converts Qwen settings for Anthropic-style `/messages` requests |
-| `showThinkingEffortPicker()`          | Provides command-based fallback configuration                   |
+> **Architecture (post-#155, 2026-08-14):** the thinking system is now **per-provider strategy classes** under `src/thinking/`, not one monolithic builder. The behavior table below is still the source of truth for user-visible controls; the internal layout is described in the section after this one.
 
----
+| Function / Area                                | Purpose                                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `thinkingFamily()` (in `thinking/provider.ts`) | Classifies raw model IDs into Thinking families, **reading `core/registry.ts`**        |
+| `thinkingProviderFor()`                        | Factory returning the per-family strategy class (`DeepSeekThinking`, `GlmThinking`, …) |
+| `modelConfigurationSchema()`                   | Creates VS Code per-model configuration schema                                         |
+| `buildFamilyThinkingSchema()`                  | Builds picker options from `models.dev` or family defaults                             |
+| `applyRequestThinkingOverride()`               | Applies `modelConfiguration` over persistent defaults                                  |
+| `getRequestModelConfiguration()`               | Reads `options.modelConfiguration` with a defensive fallback                           |
+| `buildThinkingPayload()`                       | Emits OpenCode request fields for each model family                                    |
+| `buildQwenAnthropicThinkingPayload()`          | Converts Qwen settings for Anthropic-style `/messages` requests                        |
+| `showThinkingEffortPicker()`                   | Provides command-based fallback configuration (`src/commands/thinkingPicker.ts`)       |
+
+## Architecture Refactor (PR #155, 2026-08-14)
+
+The monolithic thinking builder was split into per-provider **strategy classes** so each family owns its picker schema, request-payload mapping, and the `treatReasoningAsContent` decision (whether `reasoning_content` surfaces as visible chat text — always `false` for DeepSeek and Mimo, fixing the CoT echo).
+
+```text
+src/thinking/
+├── provider.ts     ← ThinkingProvider interface + thinkingProviderFor() factory
+├── base.ts         ← shared base class
+├── types.ts / schema.ts / payload.ts / resolve.ts
+├── deepseek.ts / glm.ts / kimi.ts / minimax.ts / openai.ts / qwen.ts / mimo.ts / fallback.ts
+└── thinking.ts     ← thin barrel (historical public API)
+```
+
+**Single config authority:** configuration resolves from the VS Code per-model configuration (model picker / Manage), with workspace settings and per-family defaults as fallbacks. The old `globalState` shadow copy is **removed** — a thinking effort chosen for one model can no longer silently leak onto another or override an explicit "Off". Model IDs are normalized to `effectiveModelId` (the `::sk-***` key-fingerprint suffix is gone), which also stops the per-model settings group from being recreated on every pick (related: issue #131).
+
+Family→strategy routing is data-driven via `core/registry.ts` (same table the transport router reads), so the family detection no longer lives in two places.
 
 ## Files Changed
 
-| File                                    | Role                                                                                                   |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `src/extension.ts`                      | Thinking family detection, picker schema, request override handling, payload mapping, command fallback |
-| `src/vscode.proposed.chatProvider.d.ts` | Proposed API typing for `modelConfiguration` and `configurationSchema`                                 |
-| `src/metadata.ts`                       | Metadata support for `reasoning_options`                                                               |
-| `package.json`                          | Settings and command contribution                                                                      |
-| `README.md`                             | Thinking controls documentation                                                                        |
-| `CHANGELOG.md`                          | Release notes for Thinking controls                                                                    |
+| File                                         | Role                                                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `src/thinking/` (per-provider classes)       | (post-#155) strategy classes, factory, payload/schema/type modules, thin barrel `thinking.ts`    |
+| `src/core/registry.ts`                       | (post-#155) data-driven family→thinking-family mapping                                           |
+| `src/commands/thinkingPicker.ts`             | (post-#155) command-based fallback picker                                                        |
+| `src/extension.ts`                           | (pre-#155) family detection, picker schema, override handling, payload mapping, command fallback |
+| `src/vscode.proposed.chatProvider.d.ts`      | Proposed API typing for `modelConfiguration` and `configurationSchema`                           |
+| `src/metadata.ts` / `src/models/metadata.ts` | Metadata support for `reasoning_options`                                                         |
+| `package.json`                               | Settings and command contribution                                                                |
+| `README.md`                                  | Thinking controls documentation                                                                  |
+| `CHANGELOG.md`                               | Release notes for Thinking controls                                                              |
 
 ---
 
