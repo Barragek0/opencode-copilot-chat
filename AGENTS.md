@@ -1,5 +1,11 @@
 # Agent Instructions
 
+## Source of Truth
+
+- **ARCHITECTURE-MAP.md** — living navigation map of the codebase (domain ownership, dependencies, hot spots, anti-regression contracts). Read it before starting any task so you work from the real structure, not assumptions.
+- **CONTRIBUTING.md** — authoritative automation rules (never push/PR/merge without permission, commit only when asked, feature branches). This file only summarises them; if they drift, CONTRIBUTING.md wins.
+- **docs/** — repo conventions: `docs/documentation-standards.md` (docs naming, status lifecycle, "update docs/CHANGELOG after a task") plus architecture/features/issues history to check before touching sensitive areas (streaming, routing, metadata, thinking config).
+
 ## Core Philosophy
 
 Act as a lazy, elite senior developer. Lazy means hyper-efficient, not careless — the best code is the code that never had to be written. Before writing anything new, stop at the first rung that holds:
@@ -26,14 +32,20 @@ Climb this ladder only after fully understanding the problem and tracing the rea
 - **Bug fixing:** fix root causes, not symptoms. A report names a symptom — grep every caller of the touched function and fix the shared logic once, rather than patching each call site.
 - **Diagnostics:** never silently suppress a warning or error that signals a real bug. If something can't be fixed, say so explicitly — don't bypass it quietly. Flag anything likely to waste time later.
 - **Task management:** keep todos/tasks up to date at all times. If given multiple tasks, prioritize doing fewer exactly right over rushing through all of them.
-- **Commits:** small, atomic commits — one logical change per commit, Conventional Commits style (`fix(streaming): …`, `feat(usage): …`). Never push, open PRs, or merge without explicit permission; commit only when asked; work on feature branches (see CONTRIBUTING.md).
+- **Commits:** small, atomic commits — one logical change per commit, Conventional Commits style (`fix(streaming): …`, `feat(usage): …`). Never push, open PRs, or merge without explicit permission; commit only when asked; work on feature branches.
+- **Merges:** always merge commit (`gh pr merge --merge`), never squash — squash erases contributor commit history. This is a hard rule here.
 - **No bulk automation:** never mass-edit values via scripts or find/replace — change things deliberately, one at a time.
 - **Self-review:** after changes, re-read as the next engineer (human or AI) who maintains this code.
+
+### Context & Documentation SOP
+
+- **Before you start:** read `ARCHITECTURE-MAP.md` and the relevant `docs/` (architecture, features, issues) for the area you're touching. This grounds you in the real state of the repo and keeps changes evidence-based instead of hallucinated.
+- **After you finish:** find the existing doc that covers what you changed and update it; if none exists, create a new one in `docs/` following `docs/documentation-standards.md` (naming `[seq]-[YYYYMMDD]-[topic].md`, status lifecycle). Update the CHANGELOG when the change is release-relevant.
 
 ### Verification
 
 - `npm run lint` is the single gate — one command runs all 7 checks (editorconfig, eslint, markdown, prettier, shellcheck, typecheck, and the unit tests), so `npm test` and `compile` are already covered.
-- Husky's pre-commit hook enforces the same checks on every commit — a commit can't land unless they pass; if a hook fails, fix the root cause, never bypass with `--no-verify`.
+- Husky's pre-commit hook runs a zero-tolerance staged-lint gate on every commit (`scripts/staged-lint.ts` + lint-staged); a commit can't land unless it passes. If it fails, fix the root cause, never bypass with `--no-verify`.
 - Non-trivial logic leaves behind exactly one runnable check: an assert-based self-check or one small test — no new test frameworks or fixtures. Trivial one-liners need none.
 - Keep linting and formatting at their strictest configured level — never ignore, bypass, or silence any error, warning, or info.
 
