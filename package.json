@@ -200,6 +200,16 @@
           "maximum": 2,
           "description": "Sampling temperature used for chat completions."
         },
+        "opencodego.apiBaseUrl": {
+          "type": "string",
+          "default": "https://opencode.ai/zen/go/v1",
+          "description": "Base URL for the OpenCode Go-compatible API. The extension appends /models, /chat/completions, /messages, /responses, and /usage. Requires a window reload after changing."
+        },
+        "opencodezen.apiBaseUrl": {
+          "type": "string",
+          "default": "https://opencode.ai/zen/v1",
+          "description": "Base URL for the OpenCode Zen-compatible API. The extension appends /models, /chat/completions, /messages, and /responses. Requires a window reload after changing."
+        },
         "opencodego.maxTokens": {
           "type": "number",
           "default": 0,

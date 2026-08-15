@@ -96,6 +96,8 @@ export interface GoUsageTrackerOptions {
   resolveCodebaseWindowDays?: () => number;
   /** Day boundary for Today/Yesterday ("utc" default | "local"). */
   resolveDayBoundary?: () => "utc" | "local";
+  /** Usage endpoint derived from the configured Go API base URL. */
+  resolveUsageUrl?: () => string;
 }
 
 interface UsageBaselinePeriod {
@@ -538,7 +540,7 @@ export class GoUsageTracker {
     if (this.serverUsageFetchedAt > 0 && now - this.serverUsageFetchedAt < GO_USAGE_SYNC_TTL_MS) {
       return false;
     }
-    const result = await fetchGoUsage(apiKey);
+    const result = await fetchGoUsage(apiKey, fetch, undefined, this.options.resolveUsageUrl?.());
     // Pace retries after failures too — an invalid key or unreachable
     // endpoint must not hammer the API on every request.
     this.serverUsageFetchedAt = Date.now();
@@ -549,7 +551,7 @@ export class GoUsageTracker {
     this.serverUsage = result.data;
     // Persist so the next window start can render the meters instantly.
     void this.context.globalState.update(this.storageKey(GO_SERVER_USAGE_KEY), result.data);
-    this.log?.("[go-usage] Server usage synced from /zen/go/v1/usage.");
+    this.log?.("[go-usage] Server usage synced.");
     return true;
   }
 

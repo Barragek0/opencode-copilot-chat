@@ -4,7 +4,15 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Added
+
+- **`[Providers]` Configurable API base URL.** The extension no longer hardcodes the `opencode.ai` endpoints — it can now point at any compatible gateway via `opencodego.apiBaseUrl` (default `https://opencode.ai/zen/go/v1`) and `opencodezen.apiBaseUrl` (default `https://opencode.ai/zen/v1`). The extension derives the `/chat/completions`, `/messages`, `/responses`, `/models`, and (Go only) `/usage` routes from the configured base and applies them to every provider (normal chat, Agents window variants, inline completions, usage sync). Custom URLs are normalized and validated — non-`http(s)`, embedded credentials, query strings, and hashes are rejected and fall back to the default. Reload the window after changing the setting. Unit tests added for URL normalization and route construction.
+
+---
+
 ### Changed
+
+- **`[Providers]` Configurable API base URL.** The extension no longer hardcodes the `opencode.ai` endpoints — it can now point at any compatible gateway via `opencodego.apiBaseUrl` (default `https://opencode.ai/zen/go/v1`) and `opencodezen.apiBaseUrl` (default `https://opencode.ai/zen/v1`). The extension derives the `/chat/completions`, `/messages`, `/responses`, `/models`, and (Go only) `/usage` routes from the configured base and applies them to every provider (normal chat, Agents window variants, inline completions, usage sync). Custom URLs are normalized and validated — non-`http(s)`, embedded credentials, query strings, and hashes are rejected and fall back to the default. Reload the window after changing the setting. Unit tests added for URL normalization and route construction.
 
 - **`[Internal]` API keys are configured through the BYOK panel only.** The `OpenCode Go: Set API Key` / `OpenCode Zen: Set API Key` commands and the "Set / Clear API Key" menu items inside `Manage Provider` are removed — keys are entered once via **Chat: Manage Language Models → "+ Add Models"** (the native BYOK flow). `SecretStorage` is no longer a user-facing entry point; it stays as an internal per-vendor mirror (`opencodego.apiKey` / `opencodezen.apiKey`) that the BYOK resolution writes so agent-host variants and cold-start requests inherit the group key. Splitting the secret per vendor also fixes a latent collision where Go and Zen shared a single `opencodego.apiKey` and overwrote each other's key. `Refresh Models` / `Test Connection` now point at the BYOK flow when no key is configured instead of prompting for one.
 

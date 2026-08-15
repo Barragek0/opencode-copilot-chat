@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   ACTIVE_PROFILE_KEY,
+  appendApiPath,
   AGENT_HOST_BYOK_MINOR_VERSION,
   COMPLETION_REQUEST_TIMEOUT_MS,
   CONFIG_SECTION,
@@ -11,6 +12,8 @@ import {
   DEFAULT_INLINE_PREFIX_LINES,
   DEFAULT_INLINE_SUFFIX_CHARS,
   DEFAULT_INLINE_TIMEOUT_MS,
+  DEFAULT_GO_API_BASE_URL,
+  DEFAULT_ZEN_API_BASE_URL,
   DEFAULT_MODEL_CONTEXT_WINDOW,
   DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -37,6 +40,7 @@ import {
   MODEL_METADATA_CACHE_TTL_MS,
   MODEL_METADATA_REVISION,
   MODELS_DEV_API_URL,
+  normalizeApiBaseUrl,
   PROFILES_REGISTRY_KEY,
   REASONING_CACHE_LIMIT,
   RECENT_TRANSPORT_SUMMARY_LIMIT,
@@ -202,5 +206,22 @@ describe("config — references", () => {
     expectValue("model-list TTL", MODEL_LIST_CACHE_TTL_MS, (v) => v > 0, "positive");
     expectValue("agent-host minor", AGENT_HOST_BYOK_MINOR_VERSION, (v) => v >= 100, "1.1xx era");
     expectValue("vision prompt", DEFAULT_VISION_PROXY_PROMPT, (v) => v.length > 0, "non-empty");
+  });
+});
+
+describe("config — provider API URLs", () => {
+  it("builds routes from the default bases", () => {
+    assert.equal(appendApiPath(DEFAULT_GO_API_BASE_URL, "/chat/completions"), "https://opencode.ai/zen/go/v1/chat/completions");
+    assert.equal(appendApiPath(`${DEFAULT_ZEN_API_BASE_URL}/`, "models"), "https://opencode.ai/zen/v1/models");
+  });
+
+  it("normalizes safe custom HTTP(S) bases and rejects unsafe values", () => {
+    assert.equal(
+      normalizeApiBaseUrl("https://gateway.example.test/custom/v1///", DEFAULT_GO_API_BASE_URL),
+      "https://gateway.example.test/custom/v1",
+    );
+    assert.equal(normalizeApiBaseUrl("http://localhost:8080/v1", DEFAULT_GO_API_BASE_URL), "http://localhost:8080/v1");
+    assert.equal(normalizeApiBaseUrl("javascript:alert(1)", DEFAULT_GO_API_BASE_URL), DEFAULT_GO_API_BASE_URL);
+    assert.equal(normalizeApiBaseUrl("https://user:pass@gateway.example.test/v1", DEFAULT_GO_API_BASE_URL), DEFAULT_GO_API_BASE_URL);
   });
 });

@@ -64,13 +64,14 @@ export async function fetchGoUsage(
   apiKey: string,
   fetcher: typeof fetch = fetch,
   timeoutMs: number = GO_USAGE_FETCH_TIMEOUT_MS,
+  endpointUrl: string = GO_USAGE_API_URL,
 ): Promise<GoUsageSyncResult> {
   if (!apiKey) {
     return { ok: false, reason: "no-key" };
   }
   let response: Response;
   try {
-    response = await fetcher(GO_USAGE_API_URL, {
+    response = await fetcher(endpointUrl, {
       method: "GET",
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(timeoutMs),
