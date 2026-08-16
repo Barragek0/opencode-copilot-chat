@@ -396,6 +396,18 @@
           "default": "off",
           "markdownDescription": "Thinking mode for MiniMax models (`minimax-m2.5`, `minimax-m3`, etc.). Maps to `thinking: { type: 'disabled'|'adaptive'|'enabled' }`. The OpenCode gateway only supports on/off for this family (`reasoning_effort` is silently ignored)."
         },
+        "opencodego.thinking.openai": {
+          "type": "string",
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "default": "off",
+          "markdownDescription": "Thinking mode for OpenAI GPT models such as GPT-5.6 Luna. Maps to the Responses API `reasoning.effort` field. Higher effort increases reasoning depth and may increase latency and usage."
+        },
         "opencodego.thinking.mimo": {
           "type": "string",
           "enum": [
