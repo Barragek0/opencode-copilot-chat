@@ -207,7 +207,7 @@ export async function setActiveProfile(fingerprint: string): Promise<void> {
   activeProfileFingerprint = fingerprint;
   await writeActiveProfile(extensionContext(), fingerprint);
   // Remember this was a deliberate user choice so provider/request resolution
-  // never silently overrides it (issue #51).
+  // never silently overrides it (issue #63).
   await extensionContext().globalState.update(ACTIVE_PROFILE_EXPLICIT_KEY, true);
   refreshGoUsageStatusBar();
   updateWebviewContent();
