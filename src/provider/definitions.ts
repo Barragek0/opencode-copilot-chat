@@ -132,6 +132,7 @@ export const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition>
       "mimo-v2-pro",
       "mimo-v2.5",
       "mimo-v2.5-pro",
+      "minimax-m3",
       "minimax-m2.7",
       "minimax-m2.5",
       "qwen3.7-max",

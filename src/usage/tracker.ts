@@ -424,7 +424,9 @@ export class GoUsageTracker {
 
   getSummary(): UsageSummary {
     const nowMs = Date.now();
-    const clamp = (v: number, limit: number) => Math.round(Math.min(100, (v / limit) * 100) * 10) / 10;
+    // Percent is bounded to [0, 100] — a negative spend (baseline over-
+    // correction) must never render a negative percentage.
+    const clamp = (v: number, limit: number) => Math.round(Math.min(100, Math.max(0, (v / limit) * 100)) * 10) / 10;
 
     // The CLI database is DEVICE-level usage (it has no per-key column), so
     // it is safe for the device rows (Today / Yesterday / Codebase). The

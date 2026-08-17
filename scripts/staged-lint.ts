@@ -49,9 +49,11 @@ function run(cmd: string, args: string[]): CommandResult {
   return { status: res.status, output: `${res.stdout}${res.stderr}`.trim() };
 }
 
-/** Staged (added/copied/modified) file paths relative to the repo root. */
+/** Staged (added/copied/modified/renamed) file paths relative to the repo root. */
 function stagedFiles(): string[] {
-  const res = run("git", ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACM"]);
+  // Include renamed (R) files and enable rename detection so a staged rename's
+  // new path is linted too.
+  const res = run("git", ["diff", "--cached", "--name-only", "-z", "--find-renames", "--diff-filter=ACMR"]);
   if (res.status !== 0) {
     return [];
   }
@@ -88,6 +90,13 @@ function resolveImport(fromFile: string, spec: string): string | undefined {
     path.join(base, "index.ts"),
     path.join(base, "index.js"),
   ];
+  // NodeNext-style: in ESM, `./foo.js` resolves to `./foo.ts`. Without this,
+  // changing foo.ts would not lint its dependents (this repo imports ESM
+  // scripts with `.js` specifiers that map to `.ts` sources).
+  if (/\.(js|cjs|mjs)$/.test(base)) {
+    const tsBase = base.replace(/\.(js|cjs|mjs)$/, "");
+    candidates.unshift(`${tsBase}.ts`, `${tsBase}.tsx`);
+  }
   for (const candidate of candidates) {
     try {
       statSync(candidate);

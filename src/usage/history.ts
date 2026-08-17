@@ -164,7 +164,10 @@ export function buildUsageSeries(
   const byModel = new Map<string, Map<number, ModelDayUsage>>();
 
   const add = (model: string | undefined, timestamp: number, cost: number, tokens: number): void => {
-    const index = Math.round((timestamp - firstDay) / DAY_MS);
+    // Bucket by the day whose [start, start+DAY) range contains the event.
+    // floor (not round) keeps mid-day events in the correct day — round could
+    // push an afternoon event into the next day's bucket.
+    const index = Math.floor((timestamp - firstDay) / DAY_MS);
     if (index < 0 || index >= bucketCount) return;
     const day = buckets[index];
     day.cost += cost;
@@ -346,7 +349,9 @@ function readHistoryViaSqliteCli(): HistoryRow[] | null {
       try {
         const result = execFileSync(binary, ["-readonly", "-cmd", ".timeout 5000", "-json", OPENCODE_DB_PATH, HISTORY_ROWS_SQL], {
           timeout: 10_000,
-          maxBuffer: 64 * 1024 * 1024,
+          // 256MB: a power user's full CLI history JSON can exceed 64MB; a too-
+          // small cap silently makes the usage panel show no history at all.
+          maxBuffer: 256 * 1024 * 1024,
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
         });

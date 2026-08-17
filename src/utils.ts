@@ -65,10 +65,12 @@ export function parseJsonSafe(text: string): unknown {
  */
 export function formatUsd(value: number): string {
   const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
-  if (abs >= 0.01 || value === 0) return `$${value.toFixed(2)}`;
-  return `$${value.toFixed(4)}`;
+  // Render the sign before the currency symbol (`-$5.00`, not `$-5.00`).
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(2)}K`;
+  if (abs >= 0.01 || value === 0) return `${sign}$${abs.toFixed(2)}`;
+  return `${sign}$${abs.toFixed(4)}`;
 }
 
 /**
@@ -116,7 +118,7 @@ export function formatRelativeTime(target: Date, from: Date = new Date()): strin
 
 /** Escape a value for embedding in HTML/SVG text content. */
 export function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // ─── Async helpers ───────────────────────────────────────────────────────────

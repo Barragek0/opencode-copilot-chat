@@ -4,6 +4,7 @@ import { createThinkTagFilter } from "./thinkTags";
 import { createReasoningDebugger, streamOpenCodeResponse } from "./engine";
 import { OpenAiResponseExtractor } from "./extractors";
 import { extractChatCompletionParts } from "./extract";
+import { reportProgressPart } from "./streamParts";
 
 /** OpenAI-compatible chat-completions transport. */
 export async function streamChatCompletions(options: StreamRequestOptions): Promise<void> {
@@ -41,10 +42,11 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
   extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
   // Dormant marker path: no provider treats reasoning as visible text anymore
   // (old gateway #37635 mislabel is not worked around), so flushReasoningMarker
-  // is a no-op today — kept as the designed seam.
+  // is a no-op today — kept as the designed seam. Reported through the shared
+  // progress wrapper so a bound context-window request stays correctly scoped.
   const reasoningMarker = extractor.flushReasoningMarker();
   if (reasoningMarker) {
-    options.progress.report(reasoningMarker);
+    reportProgressPart(options.requestHeaders["x-opencode-request"], options.progress, reasoningMarker);
   }
   options.output?.appendLine(
     `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,

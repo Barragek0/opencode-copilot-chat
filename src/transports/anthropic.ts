@@ -25,4 +25,9 @@ export async function streamAnthropicMessages(options: StreamRequestOptions): Pr
   options.output?.appendLine(
     `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,
   );
+  if (extractor.emittedText === 0 && extractor.emittedTools === 0) {
+    options.output?.appendLine(
+      `[warn] empty response from model=${options.modelId} (no text, no tool calls, no reasoning). Try a different free model or enable opencodego.debugReasoning to inspect raw SSE.`,
+    );
+  }
 }

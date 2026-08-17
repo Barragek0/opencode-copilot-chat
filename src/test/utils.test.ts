@@ -107,6 +107,12 @@ describe("utils — formatUsd", () => {
     assert.equal(formatUsd(1_500), "$1.50K");
     assert.equal(formatUsd(1_234_567), "$1.23M");
   });
+
+  it("places the sign before the currency symbol", () => {
+    assert.equal(formatUsd(-5), "-$5.00");
+    assert.equal(formatUsd(-1_500), "-$1.50K");
+    assert.equal(formatUsd(-0.005), "-$0.0050");
+  });
 });
 
 describe("utils — formatTokenCount", () => {
@@ -153,6 +159,10 @@ describe("utils — escapeHtml", () => {
   it("escapes the four HTML-significant characters", () => {
     assert.equal(escapeHtml(`<a href="x&y">`), "&lt;a href=&quot;x&amp;y&quot;&gt;");
     assert.equal(escapeHtml("plain"), "plain");
+  });
+
+  it("escapes single quotes for single-quoted attribute contexts", () => {
+    assert.equal(escapeHtml("it's a 'test'"), "it&#39;s a &#39;test&#39;");
   });
 });
 

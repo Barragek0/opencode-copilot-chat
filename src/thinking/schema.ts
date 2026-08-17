@@ -53,8 +53,10 @@ export function schemaFromReasoningOptions(metadata?: ResolvedModelMetadata): Th
   const enumLabels: string[] = ["Off"];
   const enumDescriptions: string[] = ["Fastest responses"];
 
-  // Toggle-only (no effort values): add "on" for a simple off/on choice.
-  if (hasToggle && effortValues.length === 0) {
+  // A toggle-capable model should always expose a plain "on" choice, even when
+  // it also has effort levels (previously "on" was only added for toggle-only
+  // models, so a user wanting plain enablement couldn't pick it).
+  if (hasToggle && !enumOptions.includes("on")) {
     enumOptions.push("on");
     enumLabels.push("On");
     enumDescriptions.push("Enable reasoning");

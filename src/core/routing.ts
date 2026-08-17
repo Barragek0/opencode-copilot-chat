@@ -224,7 +224,10 @@ export function normalizeGoogleStreamEvent(data: unknown): unknown {
     return [
       {
         index,
-        id: "",
+        // Gemini has no native tool-call ids; emit a stable synthetic one so
+        // downstream tool-call parts carry a real callId (empty ids made calls
+        // indistinguishable and broke reasoning replication).
+        id: `google-tool-${String(index)}`,
         type: "function",
         function: {
           name: part.functionCall.name,
@@ -273,14 +276,14 @@ export function normalizeGoogleFullResponse(data: unknown): unknown {
     .filter((part) => typeof part.text === "string" && part.thought === true)
     .map((part) => part.text as string)
     .join("");
-  const toolCalls = parts.flatMap((part) => {
+  const toolCalls = parts.flatMap((part, index) => {
     if (!isRecord(part.functionCall) || typeof part.functionCall.name !== "string") {
       return [];
     }
 
     return [
       {
-        id: "",
+        id: `google-tool-${String(index)}`,
         type: "function",
         function: {
           name: part.functionCall.name,

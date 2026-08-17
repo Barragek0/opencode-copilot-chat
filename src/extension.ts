@@ -5,8 +5,11 @@ import { showModelPickerDiagnostics } from "./commands/diagnostics";
 import { showThinkingEffortPicker } from "./commands/thinkingPicker";
 import { configureUtilityModels, toggleProviderEnabled } from "./commands/providers";
 import {
+  ACTIVE_PROFILE_EXPLICIT_KEY,
   CONFIG_SECTION,
   DEFAULT_USAGE_CHART_DAYS,
+  GO_EVER_TRACKED_KEY,
+  GO_SERVER_USAGE_KEY,
   SETTING_AGENTS_WINDOW,
   SETTING_AUTO_ENABLE_AGENTS_WINDOW,
   SETTING_SHOW_PROVIDER_PREFIX,
@@ -316,6 +319,10 @@ export function activate(context: vscode.ExtensionContext) {
       ctx.globalState.update(`opencodego.usageLog.v1.${fp}`, []);
       ctx.globalState.update(`opencodego.usageBaseline.v1.${fp}`, {});
       ctx.globalState.update(`opencodego.sessionCosts.v1.${fp}`, []);
+      // Also clear the per-profile server snapshot + ever-tracked flags so a
+      // re-added profile (same key) doesn't resurrect stale meters/state.
+      ctx.globalState.update(`${GO_SERVER_USAGE_KEY}.${fp}`, undefined);
+      ctx.globalState.update(`${GO_EVER_TRACKED_KEY}.${fp}`, undefined);
 
       const remaining = readProfiles(ctx).filter((p) => p.fingerprint !== fp);
       await writeProfiles(ctx, remaining);
@@ -324,6 +331,9 @@ export function activate(context: vscode.ExtensionContext) {
       if (activeProfileFingerprint === fp) {
         setActiveProfileFingerprint(LEGACY_FINGERPRINT);
         await writeActiveProfile(ctx, LEGACY_FINGERPRINT);
+        // The user's explicit choice was deleted — clear the flag so auto-
+        // selection resumes for the remaining profiles.
+        await ctx.globalState.update(ACTIVE_PROFILE_EXPLICIT_KEY, undefined);
       }
 
       refreshGoUsageStatusBar();
@@ -376,10 +386,11 @@ export function activate(context: vscode.ExtensionContext) {
         const autoEnabled = vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AUTO_ENABLE_AGENTS_WINDOW, true);
         if (agentsWindowEnabled && autoEnabled) {
           void ensureAgentsWindowSupport(context);
-        } else if (!agentsWindowEnabled) {
-          // We may have enabled core settings for the Agents window; revert
-          // them when the user turns the feature off so the user's global
-          // configuration is restored.
+        } else {
+          // Revert the core settings we auto-enabled when either the feature
+          // is turned off OR auto-configuration is disabled — otherwise a
+          // user who only disables `autoEnableAgentsWindow` is left with the
+          // extension's settings permanently flipped in their global config.
           void revertAgentsWindowSupport(context);
         }
       }

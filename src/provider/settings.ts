@@ -26,10 +26,27 @@ import { buildStableModelCapabilities } from "../models/modelCapabilities";
 import { calculateModelLimits, type ModelLimits } from "../models/modelLimits";
 import { AGENT_GO_VENDOR, AGENT_ZEN_VENDOR, GO_VENDOR, ZEN_VENDOR, resolveBaseVendor, type AllProviderVendor } from "../providerTypes";
 import type { ApiSettings } from "../request/types";
-import { thinkingProviderFor, type ThinkingSettings } from "../thinking";
+import { thinkingProviderFor } from "../thinking";
 import { extensionContext } from "../usage/dashboard";
 import { toFiniteNumber } from "../utils";
 import type { LanguageModelConfiguration, ProviderDefinition } from "./definitions";
+
+/** Allowed values per thinking setting — a misconfigured value must never reach the wire. */
+export const THINKING_ALLOWED_VALUES = {
+  deepseek: ["off", "low", "medium", "high", "max"],
+  glm: ["off", "high", "max"],
+  kimi: ["on", "off"],
+  minimax: ["off", "on"],
+  openai: ["off", "low", "medium", "high", "xhigh"],
+  qwen: ["auto", "on", "off"],
+  qwenBudget: ["auto", "4096", "16384", "32768", "81920"],
+  mimo: ["off", "low", "medium", "high"],
+} as const;
+
+/** Return `value` when it is one of `allowed`, else `fallback`. */
+function validThinkingValue<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}
 
 export function getConfiguredApiKey(options?: { configuration?: LanguageModelConfiguration }): string | undefined {
   const configuredApiKey = options?.configuration?.apiKey;
@@ -90,28 +107,65 @@ export function getSettings(): ApiSettings {
   // Config values are sanitized so a misconfigured (e.g. string) value never
   // reaches the request body and 400s upstream.
   return {
-    temperature: toFiniteNumber(config.get(SETTING_TEMPERATURE, 0.2), 0.2),
+    // Clamp to the range providers accept ([0, 2]) so a bad config value never
+    // 400s upstream before the retry layer can strip it.
+    temperature: toFiniteNumber(config.get(SETTING_TEMPERATURE, 0.2), 0.2, 0, 2),
     maxOutputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_TOKENS, 0), 0, 0),
     maxInputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_INPUT_TOKENS, 0), 0, 0),
     debugReasoning: config.get(SETTING_DEBUG_REASONING, false),
+    // Clamped to sane upper bounds so a misconfigured huge value can't
+    // silently disable the timeout safety net.
     requestTimeoutMs:
-      toFiniteNumber(config.get(SETTING_REQUEST_TIMEOUT_SECONDS, DEFAULT_REQUEST_TIMEOUT_SECONDS), DEFAULT_REQUEST_TIMEOUT_SECONDS, 1) *
-      1000,
+      toFiniteNumber(
+        config.get(SETTING_REQUEST_TIMEOUT_SECONDS, DEFAULT_REQUEST_TIMEOUT_SECONDS),
+        DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        1,
+        1800,
+      ) * 1000,
     streamIdleTimeoutMs:
       toFiniteNumber(
         config.get(SETTING_STREAM_IDLE_TIMEOUT_SECONDS, DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS),
         DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
         1,
+        600,
       ) * 1000,
     thinking: {
-      deepseek: config.get<ThinkingSettings["deepseek"]>(SETTING_THINKING_DEEPSEEK, THINKING_DEFAULTS.deepseek),
-      glm: config.get<ThinkingSettings["glm"]>(SETTING_THINKING_GLM, THINKING_DEFAULTS.glm),
-      kimi: config.get<ThinkingSettings["kimi"]>(SETTING_THINKING_KIMI, THINKING_DEFAULTS.kimi),
-      minimax: config.get<ThinkingSettings["minimax"]>(SETTING_THINKING_MINIMAX, THINKING_DEFAULTS.minimax),
-      openai: config.get<ThinkingSettings["openai"]>(SETTING_THINKING_OPENAI, THINKING_DEFAULTS.openai),
-      qwen: config.get<ThinkingSettings["qwen"]>(SETTING_THINKING_QWEN, THINKING_DEFAULTS.qwen),
-      qwenBudget: config.get<ThinkingSettings["qwenBudget"]>(SETTING_THINKING_QWEN_BUDGET, THINKING_DEFAULTS.qwenBudget),
-      mimo: config.get<ThinkingSettings["mimo"]>(SETTING_THINKING_MIMO, THINKING_DEFAULTS.mimo),
+      deepseek: validThinkingValue(
+        config.get(SETTING_THINKING_DEEPSEEK, THINKING_DEFAULTS.deepseek),
+        THINKING_ALLOWED_VALUES.deepseek,
+        THINKING_DEFAULTS.deepseek,
+      ),
+      glm: validThinkingValue(config.get(SETTING_THINKING_GLM, THINKING_DEFAULTS.glm), THINKING_ALLOWED_VALUES.glm, THINKING_DEFAULTS.glm),
+      kimi: validThinkingValue(
+        config.get(SETTING_THINKING_KIMI, THINKING_DEFAULTS.kimi),
+        THINKING_ALLOWED_VALUES.kimi,
+        THINKING_DEFAULTS.kimi,
+      ),
+      minimax: validThinkingValue(
+        config.get(SETTING_THINKING_MINIMAX, THINKING_DEFAULTS.minimax),
+        THINKING_ALLOWED_VALUES.minimax,
+        THINKING_DEFAULTS.minimax,
+      ),
+      openai: validThinkingValue(
+        config.get(SETTING_THINKING_OPENAI, THINKING_DEFAULTS.openai),
+        THINKING_ALLOWED_VALUES.openai,
+        THINKING_DEFAULTS.openai,
+      ),
+      qwen: validThinkingValue(
+        config.get(SETTING_THINKING_QWEN, THINKING_DEFAULTS.qwen),
+        THINKING_ALLOWED_VALUES.qwen,
+        THINKING_DEFAULTS.qwen,
+      ),
+      qwenBudget: validThinkingValue(
+        config.get(SETTING_THINKING_QWEN_BUDGET, THINKING_DEFAULTS.qwenBudget),
+        THINKING_ALLOWED_VALUES.qwenBudget,
+        THINKING_DEFAULTS.qwenBudget,
+      ),
+      mimo: validThinkingValue(
+        config.get(SETTING_THINKING_MIMO, THINKING_DEFAULTS.mimo),
+        THINKING_ALLOWED_VALUES.mimo,
+        THINKING_DEFAULTS.mimo,
+      ),
     },
     stripThinkTags: config.get<ApiSettings["stripThinkTags"]>(SETTING_STRIP_THINK_TAGS, "auto"),
   };

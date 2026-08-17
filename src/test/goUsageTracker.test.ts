@@ -189,9 +189,12 @@ describe("goUsageTracker", () => {
       assert.equal(cost, 0.0002526);
     });
 
-    it("returns 0 for an unknown model with no resolver", () => {
+    it("estimates a conservative cost for an unknown model with no resolver", () => {
+      // Unknown models use the fallback price (0.5 in / 2.0 out per 1M) instead
+      // of silently tracking $0 (which reads as free).
       const cost = estimateCost("nonexistent-model-v99", 100, 50, 0);
-      assert.equal(cost, 0);
+      assert.ok(cost > 0, "unknown model must not track as $0");
+      assert.ok(cost < 0.001, "fallback estimate stays small");
     });
 
     it("prefers externalCost over the bundled table", () => {
@@ -577,7 +580,7 @@ describe("goUsageTracker", () => {
         assert.equal(tracker.getRecentSessionCosts().length, 0);
       });
 
-      it("handles unknown modelId (cost = 0)", () => {
+      it("estimates a conservative cost for unknown modelId", () => {
         const tracker = new GoUsageTracker(createMockContext());
         tracker.record(
           makeSummary({
@@ -590,7 +593,8 @@ describe("goUsageTracker", () => {
 
         const session = tracker.getCurrentSessionCost();
         assert.equal(session?.sessionId, "s1");
-        assert.equal(session.cost, 0);
+        assert.ok(session.cost > 0, "unknown model must not track as $0");
+        assert.ok(session.cost < 0.001, "fallback estimate stays small");
         assert.equal(session.requests, 1);
       });
 
@@ -875,5 +879,26 @@ describe("buildUsageSeries", () => {
     assert.equal(series.days[1].dayStart, dayMs);
     assert.equal(series.days[0].requests, 2);
     assert.equal(series.days[1].requests, 2);
+  });
+
+  it("keeps a mid-day event in its own day bucket (floor, not round)", () => {
+    const midDay: HistoryRow[] = [
+      {
+        createdMs: dayMs - DAY + DAY * 0.6, // afternoon of the previous day
+        cost: 0.1,
+        tokensInput: 10,
+        tokensOutput: 10,
+        tokensReasoning: 0,
+        tokensCacheRead: 0,
+        tokensTotal: 20,
+        cwd: "/repo",
+        modelId: "qwen3.6-plus",
+      },
+    ];
+    const series = buildUsageSeries(midDay, [], 2, dayMs, "cli");
+    // Window: dayMs-1*DAY .. dayMs → the afternoon event belongs to yesterday.
+    assert.equal(series.days[0].dayStart, dayMs - DAY);
+    assert.equal(series.days[0].requests, 1);
+    assert.equal(series.days[1].requests, 0);
   });
 });

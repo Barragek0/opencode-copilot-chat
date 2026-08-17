@@ -90,11 +90,13 @@ abstract class BaseResponseExtractor {
     if (!reasoning) {
       return;
     }
-    // If the thinking part API is available, reasoning was already streamed
-    // live during extractStreamParts via handleReasoning(). The accumulated
-    // reasoningContent is retained only for tool-call replication
-    // (flushToolCalls → onReasoningContent). Nothing more to emit here.
-    if (thinkingPartConstructor) {
+    // If the thinking part API is available AND we had a progress sink,
+    // reasoning was already streamed live during extractStreamParts via
+    // handleReasoning(). The accumulated reasoningContent is retained only
+    // for tool-call replication (flushToolCalls → onReasoningContent).
+    // Without a progress sink nothing was ever streamed, so fall through to
+    // the legacy emit path rather than silently dropping the reasoning.
+    if (thinkingPartConstructor && this.progress) {
       this.reasoningContent = "";
       return;
     }

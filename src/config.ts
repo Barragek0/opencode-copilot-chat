@@ -235,6 +235,8 @@ export const COMPLETION_USAGE_MAX_DAYS = 370;
 
 export const PROFILES_REGISTRY_KEY = "opencodego.profiles.v1";
 export const ACTIVE_PROFILE_KEY = "opencodego.activeProfile.v1";
+/** Set once the user explicitly picks a profile — auto-resolution must not override it. */
+export const ACTIVE_PROFILE_EXPLICIT_KEY = "opencodego.activeProfileExplicit.v1";
 export const MIGRATED_KEY = "opencodego.migratedTo.v1";
 export const LEGACY_SECRET_KEY = SECRET_KEY;
 export const LEGACY_FINGERPRINT = "legacy";

@@ -11,7 +11,15 @@ export async function showModelPickerDiagnostics(): Promise<void> {
   const sections: string[] = [];
 
   for (const vendor of vendors) {
-    const models = await vscode.lm.selectChatModels({ vendor });
+    let models: readonly vscode.LanguageModelChat[];
+    try {
+      models = await vscode.lm.selectChatModels({ vendor });
+    } catch (error) {
+      // One failing vendor (e.g. no Copilot models installed) must not abort
+      // the whole diagnostics report.
+      sections.push(`## vendor: ${vendor}`, "", `selection error: ${error instanceof Error ? error.message : String(error)}`, "");
+      continue;
+    }
     sections.push(`## vendor: ${vendor}`, "", `models: ${String(models.length)}`, "");
     for (const model of models) {
       const internalModel = model as unknown as { configurationSchema?: unknown; detail?: unknown };

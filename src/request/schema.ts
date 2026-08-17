@@ -12,7 +12,7 @@ import { isRecord } from "../utils";
 
 export function sanitizeToolSchema(schema: unknown): object {
   const root = isRecord(schema) ? schema : { type: "object", properties: {} };
-  const sanitized = sanitizeJsonSchemaNode(root, root, new Set());
+  const sanitized = sanitizeJsonSchemaNode(root, root, new Set(), new WeakSet());
   if (!isRecord(sanitized)) {
     return { type: "object", properties: {} };
   }
@@ -21,64 +21,97 @@ export function sanitizeToolSchema(schema: unknown): object {
     type: "object",
     properties: isRecord(sanitized.properties) ? sanitized.properties : {},
     ...(Array.isArray(sanitized.required) ? { required: sanitized.required } : {}),
+    // A top-level enum (e.g. a tool input that is a fixed set of values) was
+    // previously flattened away — keep it so the provider still validates it.
+    ...(Array.isArray(sanitized.enum) ? { enum: sanitized.enum } : {}),
   };
 }
 
-function sanitizeJsonSchemaNode(value: unknown, root: Record<string, unknown>, seenRefs: Set<string>): unknown {
+function sanitizeJsonSchemaNode(value: unknown, root: Record<string, unknown>, seenRefs: Set<string>, visiting: WeakSet<object>): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeJsonSchemaNode(item, root, seenRefs));
+    return value.map((item) => sanitizeJsonSchemaNode(item, root, seenRefs, visiting));
   }
 
   if (!isRecord(value)) {
     return value;
   }
 
-  const ref = typeof value.$ref === "string" ? value.$ref : undefined;
-  if (ref?.startsWith("#/") && !seenRefs.has(ref)) {
-    const target = resolveJsonPointer(root, ref);
-    if (target !== undefined) {
-      const nextSeenRefs = new Set(seenRefs);
-      nextSeenRefs.add(ref);
-      const siblings = Object.fromEntries(Object.entries(value).filter(([key]) => key !== "$ref"));
-      const resolved = sanitizeJsonSchemaNode(target, root, nextSeenRefs);
-      return isRecord(resolved)
-        ? sanitizeJsonSchemaNode({ ...resolved, ...siblings }, root, nextSeenRefs)
-        : sanitizeJsonSchemaNode(siblings, root, nextSeenRefs);
-    }
+  // Cycle guard: a self/recursive (non-$ref) schema reference would recurse
+  // forever and crash the extension host with a stack overflow. Break the
+  // cycle by returning an empty schema for the back-edge. Mark-on-entry /
+  // unmark-on-exit keeps shared (DAG) sub-schemas intact while still catching
+  // true cycles.
+  if (visiting.has(value)) {
+    return {};
   }
-
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "$schema" || key === "$id" || key === "$ref" || key === "$defs" || key === "definitions") {
-      continue;
+  visiting.add(value);
+  try {
+    const ref = typeof value.$ref === "string" ? value.$ref : undefined;
+    if (ref?.startsWith("#/") && !seenRefs.has(ref)) {
+      const target = resolveJsonPointer(root, ref);
+      if (target !== undefined) {
+        const nextSeenRefs = new Set(seenRefs);
+        nextSeenRefs.add(ref);
+        const siblings = Object.fromEntries(Object.entries(value).filter(([key]) => key !== "$ref"));
+        const resolved = sanitizeJsonSchemaNode(target, root, nextSeenRefs, visiting);
+        return isRecord(resolved)
+          ? sanitizeJsonSchemaNode({ ...resolved, ...siblings }, root, nextSeenRefs, visiting)
+          : sanitizeJsonSchemaNode(siblings, root, nextSeenRefs, visiting);
+      }
     }
 
-    if (key === "properties" && isRecord(child)) {
-      result.properties = Object.fromEntries(
-        Object.entries(child).map(([propertyName, propertySchema]) => [
-          propertyName,
-          sanitizeJsonSchemaNode(propertySchema, root, seenRefs),
-        ]),
-      );
-      continue;
+    const result: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "$schema" || key === "$id" || key === "$ref" || key === "$defs" || key === "definitions") {
+        continue;
+      }
+
+      if (key === "properties" && isRecord(child)) {
+        result.properties = Object.fromEntries(
+          Object.entries(child).map(([propertyName, propertySchema]) => [
+            propertyName,
+            sanitizeJsonSchemaNode(propertySchema, root, seenRefs, visiting),
+          ]),
+        );
+        continue;
+      }
+
+      if (key === "items" || key === "additionalProperties") {
+        result[key] = sanitizeJsonSchemaNode(child, root, seenRefs, visiting);
+        continue;
+      }
+
+      if ((key === "anyOf" || key === "oneOf" || key === "allOf") && Array.isArray(child)) {
+        result[key] = child.map((item) => sanitizeJsonSchemaNode(item, root, seenRefs, visiting));
+        continue;
+      }
+
+      if (
+        [
+          "type",
+          "description",
+          "enum",
+          "const",
+          "pattern",
+          "format",
+          "default",
+          "required",
+          "minimum",
+          "maximum",
+          "minLength",
+          "maxLength",
+          "minItems",
+          "maxItems",
+        ].includes(key)
+      ) {
+        result[key] = child;
+      }
     }
 
-    if (key === "items" || key === "additionalProperties") {
-      result[key] = sanitizeJsonSchemaNode(child, root, seenRefs);
-      continue;
-    }
-
-    if ((key === "anyOf" || key === "oneOf" || key === "allOf") && Array.isArray(child)) {
-      result[key] = child.map((item) => sanitizeJsonSchemaNode(item, root, seenRefs));
-      continue;
-    }
-
-    if (["type", "description", "enum", "required", "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"].includes(key)) {
-      result[key] = child;
-    }
+    return result;
+  } finally {
+    visiting.delete(value);
   }
-
-  return result;
 }
 
 function resolveJsonPointer(root: Record<string, unknown>, pointer: string): unknown {

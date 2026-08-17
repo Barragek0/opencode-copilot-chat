@@ -5,7 +5,10 @@ import type { PeriodUsage, UsageSummary } from "./tracker";
 // ─── Formatting helpers ──────────────────────────────────────────────────────
 
 function progressBar(percent: number, width = 10): string {
-  const filled = Math.round((percent / 100) * width);
+  // Clamp so out-of-range values (negative spend, >100% overage) never render
+  // a bar wider than `width` or with a negative fill.
+  const clamped = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((clamped / 100) * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 

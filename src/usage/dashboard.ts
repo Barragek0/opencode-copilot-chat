@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { completionUsageToSeries, type CompletionUsageDay } from "../autocomplete/usage";
 import {
+  ACTIVE_PROFILE_EXPLICIT_KEY,
   COMPLETION_USAGE_KEY,
   CONFIG_SECTION,
   DEFAULT_USAGE_CHART_DAYS,
@@ -201,10 +202,13 @@ export function activeGoUsageTracker(): GoUsageTracker | undefined {
   return goUsageTrackers.get(activeProfileFingerprint);
 }
 
-/** Switch the active profile and refresh the UI. */
+/** Switch the active profile and refresh the UI. Marks the choice as explicit. */
 export async function setActiveProfile(fingerprint: string): Promise<void> {
   activeProfileFingerprint = fingerprint;
   await writeActiveProfile(extensionContext(), fingerprint);
+  // Remember this was a deliberate user choice so provider/request resolution
+  // never silently overrides it (issue #63).
+  await extensionContext().globalState.update(ACTIVE_PROFILE_EXPLICIT_KEY, true);
   refreshGoUsageStatusBar();
   updateWebviewContent();
 }
@@ -239,9 +243,13 @@ export function ensureProfileSync(apiKey: string): void {
     profilesCache = readProfiles(extensionContext());
   }
 
-  // Update active profile to this one
-  activeProfileFingerprint = fp;
-  void writeActiveProfile(extensionContext(), fp);
+  // Update active profile to this one ONLY while the user hasn't explicitly
+  // chosen a profile — otherwise every ~300ms model-info resolution would
+  // silently override the user's selection.
+  if (!extensionContext().globalState.get<boolean>(ACTIVE_PROFILE_EXPLICIT_KEY, false)) {
+    activeProfileFingerprint = fp;
+    void writeActiveProfile(extensionContext(), fp);
+  }
 }
 
 /**
@@ -698,6 +706,11 @@ function usageWebviewHtml(profileLabel: string): string {
         var chips = document.getElementById('statChips');
         var ttip = document.getElementById('ttip');
         var current = 'spend';
+
+        // HTML-escape a value for innerHTML (model names come from gateway/CLI data).
+        function esc(s) {
+          return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
 
         function el(tag, attrs, text) {
           var n = document.createElementNS(svgNS, tag);
