@@ -678,8 +678,8 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
     if (registeredCount > 0) {
       this.log(
         `Models registered: count=${String(registeredCount)} provider=${this.definition.vendor}` +
-        ` first=${firstModelId} last=${lastModelId}` +
-        (this.definition.isAgentVariant ? " (agents)" : ""),
+          ` first=${firstModelId} last=${lastModelId}` +
+          (this.definition.isAgentVariant ? " (agents)" : ""),
       );
     }
 
