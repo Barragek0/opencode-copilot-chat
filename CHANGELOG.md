@@ -30,7 +30,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Fixed
 
-- **`[Thinking]` Sampling-level `repetition_penalty` for MiMo curbs infinite thinking loops (#36, https://github.com/XiaomiMiMo/MiMo-Code/issues/914).** A `repetition_penalty: 1.2` is now applied unconditionally in every MiMo payload (regardless of reasoning effort) to suppress the degenerate token-repeat pattern that triggered the Go gateway's infinite-loop detector upstream. This is a third mitigation layer alongside the `budget_tokens` cap and suffix-repetition stream detection shipped earlier. Applies with reasoning off (where the loop fires less often) and on; does not trip `bodyRequestsThinking()` so the gateway workaround path is unaffected.
+- **`[Thinking]` Sampling-level `repetition_penalty` for MiMo curbs infinite thinking loops (#36).** A `repetition_penalty: 1.2` is now applied unconditionally in every MiMo payload (regardless of reasoning effort) to suppress the degenerate token-repeat pattern that triggered the Go gateway's infinite-loop detector upstream. This is a third mitigation layer alongside the `budget_tokens` cap and suffix-repetition stream detection shipped earlier. Applies with reasoning off (where the loop fires less often) and on; does not trip `bodyRequestsThinking()` so the gateway workaround path is unaffected.
 
 - **DeepSeek / Mimo thinking content no longer leaks into the chat transcript.** `treatReasoningAsContent` was mis-detecting native-reasoning families as "no reasoning in body" and echoing their `reasoning_content` as plain chat text. The decision now comes from the provider strategy (always `false` for DeepSeek and Mimo), so chain-of-thought stays in the thinking panel.
 
