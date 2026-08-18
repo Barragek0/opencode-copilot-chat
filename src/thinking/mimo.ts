@@ -16,6 +16,9 @@ import type { ThinkingSettings, ThinkingFamily, BuildThinkingPayloadOptions } fr
 
 const MIMO_EFFORTS = ["off", "low", "medium", "high"] as const;
 
+/** Sampling-level repetition penalty — applied unconditionally to curb infinite thinking loops. */
+const MIMO_REPETITION_PENALTY = 1.2;
+
 /** Effort → reasoning-token budget cap (conservative; see buildPayload). */
 const MIMO_BUDGET_MAP: Record<string, number | undefined> = {
   low: 8192,
@@ -51,7 +54,7 @@ export class MimoThinking extends BaseThinkingProvider {
 
   buildPayload(thinking: ThinkingSettings, _opts?: BuildThinkingPayloadOptions): Record<string, unknown> {
     // Fixes infinite-loop: https://github.com/XiaomiMiMo/MiMo-Code/issues/914
-    const base: Record<string, unknown> = { repetition_penalty: 1.2 };
+    const base: Record<string, unknown> = { repetition_penalty: MIMO_REPETITION_PENALTY };
     if (thinking.mimo === "off") {
       return base;
     }
