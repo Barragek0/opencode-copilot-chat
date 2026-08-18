@@ -175,14 +175,14 @@ describe("DeepSeekThinking — display (native reasoning model)", () => {
 });
 
 describe("MimoThinking — payload + display (native reasoning model)", () => {
-  it("mimo 'off' emits empty object", () => {
+  it("mimo 'off' emits only repetition_penalty", () => {
     const payload = thinkingProviderFor("mimo-v2.5").buildPayload({ ...defaultSettings, mimo: "off" });
-    assert.deepEqual(payload, {});
+    assert.deepEqual(payload, { repetition_penalty: 1.2 });
   });
 
-  it("mimo 'medium' emits reasoning_effort + budget_tokens", () => {
+  it("mimo 'medium' emits reasoning_effort + budget_tokens + repetition_penalty", () => {
     const payload = thinkingProviderFor("mimo-v2.5").buildPayload({ ...defaultSettings, mimo: "medium" });
-    assert.deepEqual(payload, { reasoning_effort: "medium", budget_tokens: 16384 });
+    assert.deepEqual(payload, { reasoning_effort: "medium", budget_tokens: 16384, repetition_penalty: 1.2 });
   });
 
   it("never surfaces reasoning_content as visible text (native reasoning model)", () => {
