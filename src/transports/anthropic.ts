@@ -6,7 +6,7 @@ import { extractAnthropicParts } from "./extract";
 
 /** Anthropic Messages API transport (Claude-family / MiniMax m2.x / Qwen 3.x-plus). */
 export async function streamAnthropicMessages(options: StreamRequestOptions): Promise<void> {
-  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId);
+  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId, options.forceStripThinkTags);
   const extractor = new AnthropicResponseExtractor(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),

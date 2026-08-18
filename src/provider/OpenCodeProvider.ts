@@ -901,6 +901,11 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
 
     try {
       const contextWindowOutputBuffer = limits.advertisedMaxOutputTokens;
+      // Subagent/tool-call requests always have tools present. Force
+      // think-tag stripping for these requests to prevent <think> tags
+      // in content from rendering as blank code blocks in the chat UI.
+      const isToolCallRequest = Array.isArray(options.tools) && options.tools.length > 0;
+      const forceStripThinkTags = isToolCallRequest || undefined;
 
       if (routing.endpointKind === "messages") {
         await runStreamAnthropicMessages({
@@ -921,6 +926,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
           capacityLimitedModelNotes: CAPACITY_LIMITED_MODEL_NOTES,
           onTransportSummary,
           stripThinkTags: settings.stripThinkTags,
+          forceStripThinkTags,
         });
         return;
       }
@@ -944,6 +950,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
           capacityLimitedModelNotes: CAPACITY_LIMITED_MODEL_NOTES,
           onTransportSummary,
           stripThinkTags: settings.stripThinkTags,
+          forceStripThinkTags,
           onReasoningContent: (toolCallIds, reasoningContent) => {
             this.storeReasoningContent(toolCallIds, reasoningContent);
           },
@@ -971,6 +978,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
           capacityLimitedModelNotes: CAPACITY_LIMITED_MODEL_NOTES,
           onTransportSummary,
           stripThinkTags: settings.stripThinkTags,
+          forceStripThinkTags,
           onReasoningContent: (toolCallIds, reasoningContent) => {
             this.storeReasoningContent(toolCallIds, reasoningContent);
           },
@@ -997,6 +1005,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
         capacityLimitedModelNotes: CAPACITY_LIMITED_MODEL_NOTES,
         onTransportSummary,
         stripThinkTags: settings.stripThinkTags,
+        forceStripThinkTags,
         treatReasoningAsContent: thinkingProviderFor(rawModelId).treatReasoningAsContent(routing.endpointUrl, settings.thinking),
         onReasoningContent: (toolCallIds, reasoningContent) => {
           this.storeReasoningContent(toolCallIds, reasoningContent);

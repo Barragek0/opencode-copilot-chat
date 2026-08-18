@@ -42,6 +42,12 @@ export interface StreamRequestOptions {
    * - "always" — strip for every model
    */
   stripThinkTags?: "never" | "auto" | "always";
+  /**
+   * Force think-tag stripping regardless of stripThinkTags mode.
+   * Set to true when the request is a subagent/tool-call invocation
+   * to prevent <think> tags in content from rendering as blank code blocks.
+   */
+  forceStripThinkTags?: boolean;
 }
 
 export interface TransportRequestSummary {
