@@ -32,8 +32,13 @@ export function shouldStripThinkTags(mode: "never" | "auto" | "always" | undefin
   return /^minimax-m/i.test(modelId);
 }
 
-export function createThinkTagFilter(mode: "never" | "auto" | "always" | undefined, modelId: string): ThinkTagFilter | undefined {
-  return shouldStripThinkTags(mode, modelId) ? new ThinkTagFilter() : undefined;
+export function createThinkTagFilter(
+  mode: "never" | "auto" | "always" | undefined,
+  modelId: string,
+  forceOverride?: boolean,
+): ThinkTagFilter | undefined {
+  const effective = forceOverride ? "always" : mode;
+  return shouldStripThinkTags(effective, modelId) ? new ThinkTagFilter() : undefined;
 }
 
 export class ThinkTagFilter {

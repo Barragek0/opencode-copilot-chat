@@ -8,7 +8,7 @@ import { reportProgressPart } from "./streamParts";
 
 /** OpenAI-compatible chat-completions transport. */
 export async function streamChatCompletions(options: StreamRequestOptions): Promise<void> {
-  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId);
+  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId, options.forceStripThinkTags);
   // Display decision: whether `reasoning_content` should be surfaced as visible
   // text instead of a thinking part. Computed UPSTREAM by the thinking provider
   // strategy from the resolved thinking config — not inferred from the body

@@ -7,7 +7,7 @@ import { extractChatCompletionParts } from "./extract";
 
 /** Google Generative Language API transport (Gemini via Zen). */
 export async function streamGoogleGenerateContent(options: StreamRequestOptions): Promise<void> {
-  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId);
+  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId, options.forceStripThinkTags);
   const extractor = new OpenAiResponseExtractor(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),

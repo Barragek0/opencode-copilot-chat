@@ -7,7 +7,7 @@ import { extractChatCompletionParts } from "./extract";
 
 /** OpenAI Responses API transport (GPT-family models). */
 export async function streamResponsesApi(options: StreamRequestOptions): Promise<void> {
-  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId);
+  const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId, options.forceStripThinkTags);
   const extractor = new OpenAiResponseExtractor(
     options.onReasoningContent,
     createReasoningDebugger(options.output, options.debugReasoning),
