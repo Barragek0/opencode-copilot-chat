@@ -50,15 +50,16 @@ export class MimoThinking extends BaseThinkingProvider {
   }
 
   buildPayload(thinking: ThinkingSettings, _opts?: BuildThinkingPayloadOptions): Record<string, unknown> {
+    // Fixes infinite-loop: https://github.com/XiaomiMiMo/MiMo-Code/issues/914
+    const base: Record<string, unknown> = { repetition_penalty: 1.2 };
     if (thinking.mimo === "off") {
-      return {};
+      return base;
     }
     const mimoBudget = MIMO_BUDGET_MAP[thinking.mimo];
     return {
+      ...base,
       reasoning_effort: thinking.mimo,
       ...(mimoBudget !== undefined ? { budget_tokens: mimoBudget } : {}),
-      // Fixes infinite-loop: https://github.com/XiaomiMiMo/MiMo-Code/issues/914
-      repetition_penalty: 1.2,
     };
   }
 
