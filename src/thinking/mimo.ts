@@ -57,6 +57,8 @@ export class MimoThinking extends BaseThinkingProvider {
     return {
       reasoning_effort: thinking.mimo,
       ...(mimoBudget !== undefined ? { budget_tokens: mimoBudget } : {}),
+      // Fixes infinite-loop: https://github.com/XiaomiMiMo/MiMo-Code/issues/914
+      repetition_penalty: 1.2,
     };
   }
 
