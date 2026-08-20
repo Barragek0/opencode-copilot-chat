@@ -299,6 +299,16 @@ export const TRANSIENT_5XX_MAX_RETRIES = 2;
 export const TRANSIENT_5XX_RETRY_BASE_MS = 1000;
 export const TRANSIENT_5XX_RETRY_JITTER_MS = 250;
 
+// ─── Transient network (fetch) retry for chat requests (engine.ts) ───────────
+// Mirrors the model-list fetch resilience (issue #78): a `fetch()` that *throws*
+// (undici `TypeError: fetch failed` — ECONNRESET / EAI_AGAIN / UND_ERR_CONNECT_TIMEOUT
+// under concurrent load, nodejs/undici#5450) is retried with exponential backoff
+// so a transient socket race doesn't surface as a hard "Sorry, your request failed".
+
+export const TRANSIENT_FETCH_MAX_RETRIES = 3;
+export const TRANSIENT_FETCH_RETRY_BASE_MS = 500;
+export const TRANSIENT_FETCH_RETRY_JITTER_MS = 250;
+
 // ─── Model classification ────────────────────────────────────────────────────
 
 /** Zen free-model IDs that do not end in `-free`. */
