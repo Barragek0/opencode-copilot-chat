@@ -22,7 +22,7 @@ import {
 } from "../contextWindowHookBridge";
 import { formatUsageLogLine } from "../usage/usage";
 import { getErrorMessage, sleepWithCancellation } from "../utils";
-import { parseServerSentEvent } from "./sse";
+import { parseServerSentEvent, isStreamTruncated } from "./sse";
 import { reportProgressPart, type RequestUsageSummary, type StreamOpenCodeResponseOptions } from "./streamParts";
 import type { TransportRequestSummary } from "../core/transport";
 import { updateRequestUsageSummary } from "./extract";
@@ -301,9 +301,13 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
     // format mismatches between gateway output and our extractor (issue #93).
     const rawSseData: unknown[] = [];
     let extractedPartCount = 0;
+    // Whether we received OpenCode's `data: [DONE]` stream-terminator. A
+    // successful stream always sends it; its absence at connection close
+    // signals a truncated/aborted response (see isStreamTruncated below).
+    const streamFlags: { sawDone: boolean } = { sawDone: false };
     resetStreamIdleTimeout();
 
-    while (!options.token.isCancellationRequested) {
+    while (!options.token.isCancellationRequested && !streamFlags.sawDone) {
       const { value, done } = await reader.read();
       if (done) {
         break;
@@ -327,10 +331,17 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
         if (options.debugReasoning && options.output && event.trim()) {
           options.output.appendLine(`[sse] ${truncateForLog(event)}`);
         }
-        for (const part of parseServerSentEvent(event, options.extractStreamParts, (data) => {
-          updateRequestUsageSummary(usageSummary, data);
-          rawSseData.push(data);
-        })) {
+        for (const part of parseServerSentEvent(
+          event,
+          options.extractStreamParts,
+          (data) => {
+            updateRequestUsageSummary(usageSummary, data);
+            rawSseData.push(data);
+          },
+          () => {
+            streamFlags.sawDone = true;
+          },
+        )) {
           extractedPartCount += 1;
           reportProgressPart(localRequestId, options.progress, part);
         }
@@ -341,10 +352,17 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       if (options.debugReasoning && options.output) {
         options.output.appendLine(`[sse-tail] ${truncateForLog(buffer)}`);
       }
-      for (const part of parseServerSentEvent(buffer, options.extractStreamParts, (data) => {
-        updateRequestUsageSummary(usageSummary, data);
-        rawSseData.push(data);
-      })) {
+      for (const part of parseServerSentEvent(
+        buffer,
+        options.extractStreamParts,
+        (data) => {
+          updateRequestUsageSummary(usageSummary, data);
+          rawSseData.push(data);
+        },
+        () => {
+          streamFlags.sawDone = true;
+        },
+      )) {
         extractedPartCount += 1;
         reportProgressPart(localRequestId, options.progress, part);
       }
@@ -367,6 +385,27 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       for (let i = 0; i < rawSseData.length; i++) {
         options.output?.appendLine(`[diag-sse-event-${String(i)}] ${truncateForLog(JSON.stringify(rawSseData[i]))}`);
       }
+    }
+
+    // Detect abnormal stream termination. OpenCode always terminates a
+    // successful stream with a `data: [DONE]` sentinel, and the extractors
+    // capture a `finish_reason`/`stop_reason` from the final chunk. A stream
+    // that ends (connection closed) WITHOUT either signal while we had already
+    // extracted content was truncated or aborted (gateway dropped the
+    // connection, proxy reset, upstream crash). Previously this was treated as
+    // a silent success, leaving the user with a partial/empty response and no
+    // indication of what happened — the "model stopped working / session ended
+    // with no warning" bug.
+    if (isStreamTruncated({ sawDone: streamFlags.sawDone, finishReason: usageSummary.finishReason, extractedPartCount, totalBytes })) {
+      const requestError = new OpenCodeRequestError(
+        `${options.providerDisplayName} response stream ended before completion (no [DONE] or finish_reason after ${String(totalBytes)} bytes / ${String(totalEvents)} events).`,
+        `${options.providerDisplayName} stopped sending data before the response was complete (the connection closed unexpectedly). Your message may be cut off — try sending it again. If this keeps happening, check your connection, VPN, or firewall.`,
+      );
+      emitSummary(totalBytes, totalEvents, {
+        errorMessage: requestError.message,
+        rateLimitSummary,
+      });
+      throw requestError;
     }
 
     emitSummary(totalBytes, totalEvents, { rateLimitSummary });
