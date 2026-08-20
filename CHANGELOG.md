@@ -34,6 +34,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 - **DeepSeek / Mimo thinking content no longer leaks into the chat transcript.** `treatReasoningAsContent` was mis-detecting native-reasoning families as "no reasoning in body" and echoing their `reasoning_content` as plain chat text. The decision now comes from the provider strategy (always `false` for DeepSeek and Mimo), so chain-of-thought stays in the thinking panel.
 
+- **`[Chat]` Conversation history is now trimmed to fit the model context window.** Long multi-turn conversations (or many repeated turns without running Compact Conversation) could grow past the model's context limit, so the upstream rejected the oversized request (HTTP 400) or returned an empty stream — surfacing in VS Code as "No response came". `trimOldMessagesToFitContext` now drops the oldest messages (preserving the system/anchor and the current prompt, and never splitting a tool-call group) until the payload fits the available input budget. This also bounds the request size for models with tight payload limits. Unit tests added in `src/test/messages.test.ts`.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
