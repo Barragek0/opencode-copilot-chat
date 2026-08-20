@@ -52,7 +52,7 @@ export function buildResponsesRequestBody(
   limits: ModelLimits,
 ): Record<string, unknown> {
   const input = messages.flatMap((message) => responsesInputItemsFromMessage(message));
-  const tools = mapResponsesTools(options.tools);
+  const tools = mapResponsesTools(options.tools, modelId);
   const thinkingPayload = thinkingProviderFor(modelId).buildPayload(settings.thinking, {
     hasImageInput: messagesHaveImages(messages),
     endpoint: "responses",
@@ -62,6 +62,7 @@ export function buildResponsesRequestBody(
     model: modelId,
     input,
     maxOutputTokens: limits.maxOutputTokens,
+    truncation: /^muse-/i.test(modelId) ? "disabled" : "auto",
     // Some models reject any non-default temperature value.
     ...(metadata.temperature === false ? {} : { temperature: settings.temperature }),
     thinkingPayload,
@@ -81,13 +82,36 @@ function mapOpenAiTools(tools: readonly vscode.LanguageModelChatTool[] | undefin
   }));
 }
 
-function mapResponsesTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): Record<string, unknown>[] {
+function mapResponsesTools(tools: readonly vscode.LanguageModelChatTool[] | undefined, modelId?: string): Record<string, unknown>[] {
+  const needsTruncation = /^muse-/i.test(modelId ?? "");
   return (tools ?? []).map((tool) => ({
     type: "function",
-    name: tool.name,
+    name: needsTruncation ? truncateToolName(tool.name) : tool.name,
     description: tool.description,
     parameters: sanitizeToolSchema(tool.inputSchema),
   }));
+}
+
+// --- Muse Spark tool-name truncation (Responses API limit: 64 chars) ----------
+
+const MUSE_MAX_TOOL_NAME = 64;
+const MUSE_HASH_SUFFIX_LEN = 8;
+
+function truncateToolName(name: string): string {
+  if (name.length <= MUSE_MAX_TOOL_NAME) {
+    return name;
+  }
+  const hash = simpleHash(name);
+  const available = MUSE_MAX_TOOL_NAME - MUSE_HASH_SUFFIX_LEN - 1; // -1 for separator
+  return `${name.slice(0, available)}_${hash}`;
+}
+
+function simpleHash(value: string): string {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) {
+    h = (h * 31 + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36);
 }
 
 function toolChoice(mode: vscode.LanguageModelChatToolMode): "auto" | "required" {
