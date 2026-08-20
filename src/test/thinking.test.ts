@@ -262,6 +262,64 @@ describe("GLMThinking — picker schema", () => {
   });
 });
 
+describe("GLMThinking — glm-5.3 always-thinking (issue #162)", () => {
+  it("forces glm='high' through resolve even with no override (defensive default)", () => {
+    const resolved = resolveThinkingConfig({ modelId: "glm-5.3", workspace: defaultSettings });
+    assert.equal(resolved.settings.glm, "high");
+  });
+
+  it("forces glm='high' even when override requests 'off' (stale cache)", () => {
+    const resolved = resolveThinkingConfig({
+      modelId: "glm-5.3",
+      workspace: defaultSettings,
+      modelConfiguration: { reasoningEffort: "off" },
+    });
+    assert.equal(resolved.settings.glm, "high");
+  });
+
+  it("respects a valid 'max' override for glm-5.3", () => {
+    const resolved = resolveThinkingConfig({
+      modelId: "glm-5.3",
+      workspace: defaultSettings,
+      modelConfiguration: { reasoningEffort: "max" },
+    });
+    assert.equal(resolved.settings.glm, "max");
+  });
+
+  it("glm-5.3 with glm='high' emits reasoning_effort: 'high' (never disabled)", () => {
+    const payload = thinkingProviderFor("glm-5.3").buildPayload({ ...defaultSettings, glm: "high" });
+    assert.deepEqual(payload, { reasoning_effort: "high" });
+  });
+
+  it("glm-5.3 with glm='max' emits reasoning_effort: 'max'", () => {
+    const payload = thinkingProviderFor("glm-5.3").buildPayload({ ...defaultSettings, glm: "max" });
+    assert.deepEqual(payload, { reasoning_effort: "max" });
+  });
+
+  it("picker schema exposes only high/max (no 'off') and defaults to 'high'", () => {
+    const schema = thinkingProviderFor("glm-5.3").schema();
+    assert.ok(schema, "expected schema to be defined");
+    const reasoningEffort = schema.properties.reasoningEffort as Record<string, unknown>;
+    assert.deepEqual(reasoningEffort.enum, ["high", "max"]);
+    assert.deepEqual(reasoningEffort.enumItemLabels, ["High", "Max"]);
+    assert.equal(reasoningEffort.default, "high");
+  });
+
+  it("detects glm-5.3 variants (dot/hyphen, free/suffix) as always-thinking", () => {
+    for (const id of ["glm-5.3", "glm-5.3-free", "glm-5-3", "glm-5.10", "glm-5.3-code"]) {
+      const resolved = resolveThinkingConfig({ modelId: id, workspace: defaultSettings });
+      assert.equal(resolved.settings.glm, "high", `expected ${id} to force thinking on`);
+    }
+  });
+
+  it("still allows glm-5.2 / glm-5.1 / glm-5 to disable thinking", () => {
+    for (const id of ["glm-5.2", "glm-5.1", "glm-5"]) {
+      const payload = thinkingProviderFor(id).buildPayload({ ...defaultSettings, glm: "off" });
+      assert.deepEqual(payload, { thinking: { type: "disabled" } }, `expected ${id} to allow disabled`);
+    }
+  });
+});
+
 describe("QwenThinking — payload per endpoint", () => {
   it("chat endpoint with qwen='off' emits enable_thinking: false", () => {
     const payload = thinkingProviderFor("qwen3.6-plus").buildPayload({ ...defaultSettings, qwen: "off" });
