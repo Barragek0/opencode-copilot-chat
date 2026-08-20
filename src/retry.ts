@@ -65,6 +65,16 @@ const RECOVERABLE_ERROR_PATTERNS: {
     },
     describe: () => "removed thinking field (model requires disabled)",
   },
+  // "This model always engages in thinking and cannot be disabled" (GLM 5.3+)
+  {
+    pattern: /cannot be disabled/i,
+    patch: (body) => {
+      const next = { ...body };
+      delete next.thinking;
+      return next;
+    },
+    describe: () => "removed thinking field (model cannot disable thinking)",
+  },
   // Generic "invalid thinking" — strip the field entirely
   {
     pattern: /invalid thinking/i,
