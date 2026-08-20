@@ -42,7 +42,7 @@ import {
 } from "../request/builders";
 import type { ApiMessage, ApiSettings, OpenAiContentPart } from "../request/types";
 import { runtimeDiagnosticsLines } from "../runtimeDiagnostics";
-import { estimatePromptTokenCount, estimateTokenCount } from "../tokenEstimate";
+import { estimateTokenCount } from "../tokenEstimate";
 import {
   CAPACITY_LIMITED_MODEL_NOTES,
   CONFIG_SECTION,
@@ -56,6 +56,8 @@ import {
   MODEL_METADATA_REVISION,
   MAX_HISTORY_IMAGES_KEPT,
   HISTORY_TRIM_SAFETY_MARGIN_TOKENS,
+  HISTORY_TRIM_TARGET_RATIO,
+  MAX_REQUEST_PAYLOAD_BYTES,
   RECENT_TRANSPORT_SUMMARY_LIMIT,
   RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
   SETTING_SHOW_PROVIDER_PREFIX,
@@ -857,23 +859,30 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
     // Bound the text conversation history to the model's input context window.
     // Long multi-turn conversations (or repeated turns without Compact
     // Conversation) can exceed the context limit, causing the upstream to reject
-    // the oversized request (HTTP 400) or return an empty stream — surfaced by
-    // VS Code as "No response came". Drop the oldest messages (preserving the
+    // the oversized request (HTTP 400/503) or return an empty stream — surfaced
+    // by VS Code as "No response came" / "Sorry, no response was returned" — and
+    // a huge payload also makes the upstream hang (10-minute request timeout)
+    // and slows the extension session. Drop the oldest messages (preserving the
     // anchor and the current prompt, never splitting a tool-call group) until
-    // the payload fits the available input budget.
+    // the payload fits BOTH the input token budget AND a hard byte ceiling.
     const effectiveContextWindow = contextSizeOverride ?? metadata.contextWindow;
     const outputReserve = Math.min(metadata.maxOutputTokens, effectiveContextWindow);
-    const inputBudget = Math.max(1, effectiveContextWindow - outputReserve - HISTORY_TRIM_SAFETY_MARGIN_TOKENS);
-    const historyTrimmed = trimOldMessagesToFitContext(apiMessages, inputBudget, options.tools);
-    if (historyTrimmed > 0) {
+    // Stay safely below the window: the upstream rejects near the full limit
+    // (the reporter saw failures at ~70% context), so cap at a target ratio and
+    // also leave room for the output reserve + a fixed safety margin.
+    const ratioBudget = Math.floor(effectiveContextWindow * HISTORY_TRIM_TARGET_RATIO);
+    const maxBudget = Math.max(1, effectiveContextWindow - outputReserve - HISTORY_TRIM_SAFETY_MARGIN_TOKENS);
+    const inputBudget = Math.min(ratioBudget, maxBudget);
+    const historyTrim = trimOldMessagesToFitContext(apiMessages, inputBudget, MAX_REQUEST_PAYLOAD_BYTES, options.tools);
+    if (historyTrim.removed > 0) {
       this.log(
-        `[history-trim] Dropped ${String(historyTrimmed)} old message(s) to fit context window (budget=${String(inputBudget)} tokens).`,
+        `[history-trim] Dropped ${String(historyTrim.removed)} old message(s) to fit context window (budget=${String(inputBudget)} tokens, maxBytes=${String(MAX_REQUEST_PAYLOAD_BYTES)}); estimated payload now ~${String(historyTrim.finalTokens)} tokens / ${String(historyTrim.finalBytes)} bytes.`,
       );
     }
 
-    // Estimate after vision proxying and history trimming so the output budget
-    // reflects the payload that is actually sent upstream.
-    const promptTokens = estimatePromptTokenCount(apiMessages, options.tools);
+    // Use the estimate computed during trimming (no second full re-estimation)
+    // so the output budget reflects the payload that is actually sent upstream.
+    const promptTokens = historyTrim.finalTokens;
     const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
 
     const thinkingPayload = thinkingProviderFor(rawModelId).buildPayload(settings.thinking, {
