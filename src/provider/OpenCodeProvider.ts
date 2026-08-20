@@ -55,6 +55,7 @@ import {
   MODEL_LIST_FETCH_TIMEOUT_MS,
   MODEL_METADATA_REVISION,
   MAX_HISTORY_IMAGES_KEPT,
+  HISTORY_TRIM_SAFETY_MARGIN_TOKENS,
   RECENT_TRANSPORT_SUMMARY_LIMIT,
   RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
   SETTING_SHOW_PROVIDER_PREFIX,
@@ -77,6 +78,7 @@ import { estimateCost } from "../usage/pricing";
 import { resolveResponseApiKey } from "../apiKeyResolution";
 import { clearOpenCodeModelMetadataCache, getOpenCodeModelMetadata } from "../models/metadataFetcher";
 import { convertMessage, normalizeMessages, trimOldImagesFromHistoryInPlace } from "./messages";
+import { trimOldMessagesToFitContext } from "./historyTrim";
 import { estimateChatMessageTokenCount } from "./tokens";
 import {
   formatModalityBadges,
@@ -849,6 +851,23 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
     if (trimmedCount > 0) {
       this.log(
         `[history-trim] Replaced ${String(trimmedCount)} old image(s) with placeholder text to bound payload (kept most recent ${String(MAX_HISTORY_IMAGES_KEPT)}).`,
+      );
+    }
+
+    // Bound the text conversation history to the model's input context window.
+    // Long multi-turn conversations (or repeated turns without Compact
+    // Conversation) can exceed the context limit, causing the upstream to reject
+    // the oversized request (HTTP 400) or return an empty stream — surfaced by
+    // VS Code as "No response came". Drop the oldest messages (preserving the
+    // anchor and the current prompt, never splitting a tool-call group) until
+    // the payload fits the available input budget.
+    const effectiveContextWindow = contextSizeOverride ?? metadata.contextWindow;
+    const outputReserve = Math.min(metadata.maxOutputTokens, effectiveContextWindow);
+    const inputBudget = Math.max(1, effectiveContextWindow - outputReserve - HISTORY_TRIM_SAFETY_MARGIN_TOKENS);
+    const historyTrimmed = trimOldMessagesToFitContext(apiMessages, inputBudget, options.tools);
+    if (historyTrimmed > 0) {
+      this.log(
+        `[history-trim] Dropped ${String(historyTrimmed)} old message(s) to fit context window (budget=${String(inputBudget)} tokens).`,
       );
     }
 
