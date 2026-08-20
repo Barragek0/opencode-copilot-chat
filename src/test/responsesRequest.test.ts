@@ -40,6 +40,25 @@ describe("buildResponsesRequestEnvelope", () => {
     assert.deepEqual(body.tools, [{ type: "function", name: "read_file" }]);
     assert.equal(body.tool_choice, "auto");
   });
+
+  it("defaults truncation to auto when not specified", () => {
+    const body = buildResponsesRequestEnvelope({
+      model: "gpt-5.6-luna",
+      input: [],
+      maxOutputTokens: 4096,
+    });
+    assert.equal(body.truncation, "auto");
+  });
+
+  it("allows overriding truncation to disabled", () => {
+    const body = buildResponsesRequestEnvelope({
+      model: "muse-spark-1.2-contributor",
+      input: [],
+      maxOutputTokens: 4096,
+      truncation: "disabled",
+    });
+    assert.equal(body.truncation, "disabled");
+  });
 });
 
 describe("responsesInputItemsFromMessage", () => {
