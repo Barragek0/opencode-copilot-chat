@@ -167,6 +167,12 @@ export const IMAGE_TOKEN_ESTIMATE = 1024;
 export const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
 /** Max images kept in conversation history before older ones are placeholder-replaced. */
 export const MAX_HISTORY_IMAGES_KEPT = 2;
+/**
+ * Tokens reserved below the model's input context window when trimming old
+ * conversation history. Keeps the trimmed payload safely under the limit so the
+ * upstream never rejects an oversized request (HTTP 400 / empty "No response").
+ */
+export const HISTORY_TRIM_SAFETY_MARGIN_TOKENS = 2048;
 /** Hard ceiling (base64 chars) for a normalized image attachment. */
 export const MAX_IMAGE_BASE64_BYTES = 5 * 1024 * 1024;
 /** Dimension cap for normalized images. */
