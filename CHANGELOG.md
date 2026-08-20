@@ -34,6 +34,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 - **DeepSeek / Mimo thinking content no longer leaks into the chat transcript.** `treatReasoningAsContent` was mis-detecting native-reasoning families as "no reasoning in body" and echoing their `reasoning_content` as plain chat text. The decision now comes from the provider strategy (always `false` for DeepSeek and Mimo), so chain-of-thought stays in the thinking panel.
 
+- **`[Thinking]` GLM 5.3+ can no longer be disabled (HTTP 400, #162).** GLM 5.3 and later reject `thinking: { type: "disabled" }` with _"This model always engages in thinking and cannot be disabled; please use low, high, or max"_. `GlmThinking` now detects GLM 5.3+ by version and forces thinking on (default `high`; the picker exposes only `high`/`max` and hides `off`), mirroring the Kimi K2.7-code force-on fix. A defensive retry pattern in `retry.ts` also strips `thinking` when the upstream reports it cannot be disabled, so any stale cached `off` is recovered automatically. Unit tests added for version detection, forced-on resolution, payload shape and picker schema.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added

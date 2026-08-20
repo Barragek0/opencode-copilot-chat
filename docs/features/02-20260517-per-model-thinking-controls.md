@@ -59,6 +59,8 @@ The feature adds explicit settings under the `opencodego.thinking.*` namespace:
 
 These settings act as persistent defaults and as a fallback when the VS Code model picker does not expose native model configuration controls.
 
+> **GLM 5.3+ cannot disable thinking (issue #162).** GLM 5.3 and later reject `thinking: { type: "disabled" }` with _"This model always engages in thinking and cannot be disabled"_. The `glm` strategy detects 5.3+ by version, forces thinking on (default `high`), and hides `off` from the picker — mirroring the Kimi K2.7-code force-on behavior. A defensive retry pattern also strips `thinking` when the upstream reports it cannot be disabled.
+
 ### Native Model Configuration Schema
 
 Thinking-capable models publish a `configurationSchema` through `LanguageModelChatInformation`.
