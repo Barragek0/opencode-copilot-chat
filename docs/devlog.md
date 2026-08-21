@@ -1,6 +1,26 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
 
-**Branch:** `main` | **Updated:** 2026-08-15 Asia/Jakarta | **Current Phase:** PR #155 merged (god-file split + data-driven registry); post-merge deep validation before next release.
+**Branch:** `main` | **Updated:** 2026-08-21 Asia/Jakarta | **Current Phase:** PR #158–#172 merged; docs/changelog/devlog sync complete. Open: PR #161 (restore API key command), PR #170 (truncated-stream detection).
+
+---
+
+## ✅ Contributor PR wave + docs sync — 2026-08-15 → 2026-08-21
+
+**Merged (all merge commits, no squash):**
+
+- **PR #157** — Bug-hunt pass, 35 latent fixes (webview `esc()` crash, dead 5xx retry branch, stale-cancel error, day bucketing, profile override every ~300 ms, reasoning marker phantom tokens, debouncer race, schema/staged-lint hardening). No CHANGELOG/doc at merge → added in this sync: CHANGELOG `[Internal]` Fixed entry + `docs/issues/74-20260821-pr157-bug-hunt-pass-35-fixes.md`.
+
+- **PR #163** — MiMo `repetition_penalty: 1.2` (third mitigation layer for #36 infinite thinking loop). CHANGELOG entry by contributor; issue doc 36 updated with follow-up section in this sync.
+- **PR #164** — Force think-tag stripping when tools are present (`options.tools.length > 0`) — fixes blank code boxes during subagent runs. No CHANGELOG/doc at merge → added in this sync: CHANGELOG `[Streaming]` Fixed entry + `docs/issues/72-20260821-pr164-force-think-tag-stripping-subagents.md`.
+- **PR #166 / issue #162** — GLM 5.3+ always-thinking force-on (`GlmThinking` version detection, picker hides `off`) + defensive retry strip. CHANGELOG + features/02 note by contributor; dedicated issue doc added: `docs/issues/73-20260821-issue162-glm53-always-thinking.md`.
+- **PR #167/#169** — History trim to 70% context ratio + 512 KB byte cap (O(n), tool-group units) + chat-request transient `fetch failed` retry. Docs 68/69 + CHANGELOG by contributor — complete.
+- **PR #168** — Muse Spark 1.2 (`muse-spark-1.2-contributor` Go + `-free` Zen): Responses API + `truncation: disabled` + 64-char tool-name mapping + `MuseThinking` strategy. CHANGELOG by contributor; feature doc added: `docs/features/18-20260821-muse-spark-1-2.md`.
+- **PR #171/#172** — `patchMaxTokensCap` retry classifier (stale `deepseek-v4-flash` completion cap self-heals) + bundled fallback corrected to 131072. Doc 71 + CHANGELOG by contributor — complete.
+- **PR #160** — `opencodego.thinking.openai` setting (off/low/medium/high/xhigh → `reasoning.effort`). No CHANGELOG/doc at merge → added in this sync: CHANGELOG `[Thinking]` Added entry + features/02 note.
+
+**Docs sync actions (this session):** audited git log + PR list vs `docs/issues` + `docs/features` + CHANGELOG; created 4 new docs (issues 72, 73, 74; features 18), updated features/02 (OpenAI + Muse notes, GLM doc link), appended PR #163 follow-up to issue doc 36, added 3 missing CHANGELOG `[Unreleased]` entries (PR #157, #160, #164).
+
+**Open PRs (tracked, not actioned):** #161 (restore API key command + route usage — buhagee), #170 (detect truncated streams / prompt `[DONE]` completion — Fahadk0NP). PR #159 (fair-use one-account-per-install) closed unmerged.
 
 ---
 
@@ -1953,6 +1973,7 @@ rg -n "sk-[A-Za-z0-9]|apiKey.*[A-Za-z0-9]{20,}|Authorization: Bearer [A-Za-z0-9]
 
 | Date       | Version                           | Summary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-21 | docs                              | Docs sync for PR wave #157–#172: created issues 72 (PR #164 think-tag force-strip) + 73 (#162 GLM 5.3) + 74 (PR #157 bug-hunt) + features 18 (Muse Spark 1.2); features/02 + issues/36 updated; 3 missing CHANGELOG [Unreleased] entries added (PR #157, #160, #164); devlog refreshed. Open PRs #161, #170 tracked.                                                                                                                                                                                                                  |
 | 2026-08-13 | refactor/thinking-request-modules | Thinking refactor (per-provider strategy classes + single VS Code per-model config authority + removed globalState shadow + `effectiveModelId`) + request module split (`src/request/`) + Windows lint fixes (`.cmd` shims + `.gitattributes` LF). 6 commits. CHANGELOG [Unreleased] updated.                                                                                                                                                                                                                                         |
 | 2026-06-13 | docs                              | Deep audit — all 4 🟢 Active docs verified against codebase + git history + CHANGELOG. All marked ✅ Solved: issue #19 (PR #15 merged), references #01 (research complete), architecture #01 (living ref complete), issue #01 (all code fixed v0.1.9/v0.1.10, remaining tool-call loop is model behavior not code bug). 0 Active docs remain.                                                                                                                                                                                         |
 | 2026-06-13 | docs                              | Rewrote devlog into work-context format and flagged unrelated `WORK-CONTEXT.md` content                                                                                                                                                                                                                                                                                                                                                                                                                                               |

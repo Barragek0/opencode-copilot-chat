@@ -3,7 +3,7 @@
 # Per-Model Thinking Controls
 
 **Topic:** provider / models / thinking / vscode / copilot-chat
-**Updated:** 2026-08-15
+**Updated:** 2026-08-21
 **Tags:** #provider #models #thinking #vscode #copilot-chat #reasoning #byok
 **Supersedes:** —
 **Related:** PR [#155](https://github.com/ltmoerdani/opencode-copilot-chat/pull/155) (per-provider strategy refactor) · feature doc [`17-20260814-data-driven-model-registry.md`](17-20260814-data-driven-model-registry.md)
@@ -59,7 +59,11 @@ The feature adds explicit settings under the `opencodego.thinking.*` namespace:
 
 These settings act as persistent defaults and as a fallback when the VS Code model picker does not expose native model configuration controls.
 
-> **GLM 5.3+ cannot disable thinking (issue #162).** GLM 5.3 and later reject `thinking: { type: "disabled" }` with _"This model always engages in thinking and cannot be disabled"_. The `glm` strategy detects 5.3+ by version, forces thinking on (default `high`), and hides `off` from the picker — mirroring the Kimi K2.7-code force-on behavior. A defensive retry pattern also strips `thinking` when the upstream reports it cannot be disabled.
+> **GLM 5.3+ cannot disable thinking (issue #162).** GLM 5.3 and later reject `thinking: { type: "disabled" }` with _"This model always engages in thinking and cannot be disabled"_. The `glm` strategy detects 5.3+ by version, forces thinking on (default `high`), and hides `off` from the picker — mirroring the Kimi K2.7-code force-on behavior. A defensive retry pattern also strips `thinking` when the upstream reports it cannot be disabled. Full write-up: `docs/issues/73-20260821-issue162-glm53-always-thinking.md`.
+>
+> **OpenAI effort is now a first-class setting (PR #160).** `opencodego.thinking.openai` exposes the OpenAI/GPT reasoning effort (`off`/`low`/`medium`/`high`/`xhigh`), mapped to the Responses API `reasoning.effort` field.
+>
+> **Muse Spark 1.2 (PR #168).** New `MuseThinking` strategy with the same effort ladder via `reasoning: { effort }` — see feature doc `18-20260821-muse-spark-1-2.md`.
 
 ### Native Model Configuration Schema
 
