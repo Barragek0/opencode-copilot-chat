@@ -1,4 +1,5 @@
 **Status:** ✅ Resolved
+**Related issue:** [#109](https://github.com/ltmoerdani/opencode-copilot-chat/issues/109) (context-limit failure from unbounded history — same root cause)
 **Fix PR:** (this branch)
 
 # Trim conversation history to fit the model context window

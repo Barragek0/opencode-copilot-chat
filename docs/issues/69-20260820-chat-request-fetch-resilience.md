@@ -1,4 +1,5 @@
 **Status:** ✅ Resolved
+**Related issue:** [#78](https://github.com/ltmoerdani/opencode-copilot-chat/issues/78) (model-list fetch resilience — same classifier, extended to the chat path)
 **Fix PR:** (this branch)
 
 # Retry transient network failures on the chat request path
