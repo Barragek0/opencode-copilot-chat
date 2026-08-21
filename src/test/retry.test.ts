@@ -35,6 +35,12 @@ describe("analyzeHttp400ForRetry — thinking errors", () => {
     assert.deepEqual(result.body, { model: "glm-5.3" });
     assert.match(result.reason, /cannot disable thinking/i);
   });
+
+  it("does not patch unrelated errors that merely contain 'cannot be disabled'", () => {
+    const body = { model: "glm-5.3", thinking: { type: "disabled" } };
+    const result = analyzeHttp400ForRetry("feature X cannot be disabled for this account", body);
+    assert.equal(result, undefined);
+  });
 });
 
 describe("analyzeHttp400ForRetry — temperature errors", () => {

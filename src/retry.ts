@@ -66,8 +66,10 @@ const RECOVERABLE_ERROR_PATTERNS: {
     describe: () => "removed thinking field (model requires disabled)",
   },
   // "This model always engages in thinking and cannot be disabled" (GLM 5.3+)
+  // Scoped to thinking-related phrasing so unrelated "cannot be disabled"
+  // errors never trigger a thinking-strip retry.
   {
-    pattern: /cannot be disabled/i,
+    pattern: /always engages in thinking|thinking.*cannot be disabled/i,
     patch: (body) => {
       const next = { ...body };
       delete next.thinking;
