@@ -30,13 +30,18 @@ moduleResolver._resolveFilename = function (request: string, parent: unknown, ..
   return originalResolveFilename.call(this, request, parent, ...args);
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let buildResponsesRequestBody: (...args: any[]) => Record<string, unknown>;
+let buildResponsesRequestBody: typeof import("../request/openai.js").buildResponsesRequestBody;
+let isMuseFamily: typeof import("../request/openai.js").isMuseFamily;
+let truncateToolName: typeof import("../request/openai.js").truncateToolName;
+let buildResponsesToolNameMap: typeof import("../request/openai.js").buildResponsesToolNameMap;
 
 describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => {
   before(async () => {
     const mod = await import("../request/openai.js");
     buildResponsesRequestBody = mod.buildResponsesRequestBody;
+    isMuseFamily = mod.isMuseFamily;
+    truncateToolName = mod.truncateToolName;
+    buildResponsesToolNameMap = mod.buildResponsesToolNameMap;
   });
 
   const longToolName = "a".repeat(72);
@@ -49,18 +54,40 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
     inputSchema: { type: "object", properties: {} },
   });
 
-  const baseArgs = {
+  const baseArgs: {
+    messages: import("../request/types.js").ApiMessage[];
+    settings: import("../request/types.js").ApiSettings;
+    metadata: import("../models/metadata.js").ResolvedModelMetadata;
+    limits: import("../models/modelLimits.js").ModelLimits;
+  } = {
     messages: [{ role: "user", content: "hello" }],
-    settings: { temperature: 0.2, thinking: {} },
-    metadata: {},
-    limits: { maxOutputTokens: 4096 },
+    settings: {
+      temperature: 0.2,
+      thinking: {},
+      maxOutputTokensOverride: 0,
+      maxInputTokensOverride: 0,
+      debugReasoning: false,
+      requestTimeoutMs: 0,
+      streamIdleTimeoutMs: 0,
+      stripThinkTags: "auto",
+    } as unknown as import("../request/types.js").ApiSettings,
+    metadata: {} as unknown as import("../models/metadata.js").ResolvedModelMetadata,
+    limits: { maxOutputTokens: 4096 } as unknown as import("../models/modelLimits.js").ModelLimits,
   };
+
+  function opts(tools: ReturnType<typeof makeTool>[]): import("vscode").ProvideLanguageModelChatResponseOptions {
+    // ProvideLanguageModelChatResponseOptions in the proposed API only declares
+    // requestInitiator/modelConfiguration; tools/toolMode are supplied at runtime
+    // by VS Code but not yet in the d.ts. Cast is intentional and matches the
+    // runtime shape the request builders read.
+    return { tools } as unknown as import("vscode").ProvideLanguageModelChatResponseOptions;
+  }
 
   it("truncates long tool names for Muse Spark", () => {
     const body = buildResponsesRequestBody(
       "muse-spark-1.2-contributor",
       baseArgs.messages,
-      { tools: [makeTool(longToolName)] },
+      opts([makeTool(longToolName)]),
       baseArgs.settings,
       baseArgs.metadata,
       baseArgs.limits,
@@ -75,7 +102,7 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
     const body = buildResponsesRequestBody(
       "muse-spark-1.2-contributor-free",
       baseArgs.messages,
-      { tools: [makeTool(longToolName)] },
+      opts([makeTool(longToolName)]),
       baseArgs.settings,
       baseArgs.metadata,
       baseArgs.limits,
@@ -88,7 +115,7 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
     const body = buildResponsesRequestBody(
       "gpt-5.6-luna",
       baseArgs.messages,
-      { tools: [makeTool(longToolName)] },
+      opts([makeTool(longToolName)]),
       baseArgs.settings,
       baseArgs.metadata,
       baseArgs.limits,
@@ -101,7 +128,7 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
     const body = buildResponsesRequestBody(
       "muse-spark-1.2-contributor",
       baseArgs.messages,
-      { tools: [makeTool(shortToolName)] },
+      opts([makeTool(shortToolName)]),
       baseArgs.settings,
       baseArgs.metadata,
       baseArgs.limits,
@@ -114,7 +141,7 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
     const body = buildResponsesRequestBody(
       "muse-spark-1.2-contributor",
       baseArgs.messages,
-      { tools: [makeTool(exactly64)] },
+      opts([makeTool(exactly64)]),
       baseArgs.settings,
       baseArgs.metadata,
       baseArgs.limits,
@@ -128,7 +155,7 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
       buildResponsesRequestBody(
         "muse-spark-1.2-contributor",
         baseArgs.messages,
-        { tools: [makeTool(longToolName)] },
+        opts([makeTool(longToolName)]),
         baseArgs.settings,
         baseArgs.metadata,
         baseArgs.limits,
@@ -142,7 +169,7 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
     const body = buildResponsesRequestBody(
       "muse-spark-1.2-contributor",
       baseArgs.messages,
-      { tools: [makeTool("a".repeat(72)), makeTool("b".repeat(72))] },
+      opts([makeTool("a".repeat(72)), makeTool("b".repeat(72))]),
       baseArgs.settings,
       baseArgs.metadata,
       baseArgs.limits,
@@ -150,5 +177,63 @@ describe("buildResponsesRequestBody — Muse Spark tool name truncation", () => 
     const tools = body.tools as { name: string }[];
     assert.equal(tools.length, 2);
     assert.notEqual(tools[0].name, tools[1].name, "different long names should produce different truncated names");
+  });
+
+  it("sends truncation: disabled for Muse Spark, auto for others", () => {
+    const museBody = buildResponsesRequestBody(
+      "muse-spark-1.2-contributor",
+      baseArgs.messages,
+      opts([]),
+      baseArgs.settings,
+      baseArgs.metadata,
+      baseArgs.limits,
+    );
+    assert.equal(museBody.truncation, "disabled");
+    const gptBody = buildResponsesRequestBody(
+      "gpt-5.6-luna",
+      baseArgs.messages,
+      opts([]),
+      baseArgs.settings,
+      baseArgs.metadata,
+      baseArgs.limits,
+    );
+    assert.equal(gptBody.truncation, "auto");
+  });
+});
+
+describe("isMuseFamily — registry single source of truth", () => {
+  it("returns true for Muse Spark variants, false otherwise", () => {
+    assert.equal(isMuseFamily("muse-spark-1.2-contributor"), true);
+    assert.equal(isMuseFamily("muse-spark-1.2-contributor-free"), true);
+    assert.equal(isMuseFamily("MUSE-spark-1.2-contributor"), true);
+    assert.equal(isMuseFamily("gpt-5.6-luna"), false);
+    assert.equal(isMuseFamily(""), false);
+  });
+});
+
+describe("buildResponsesToolNameMap — truncated → original round-trip", () => {
+  const makeToolLocal = (name: string) => ({
+    name,
+    description: `Tool ${name}`,
+    inputSchema: { type: "object", properties: {} },
+  });
+
+  it("maps truncated names back to originals for Muse Spark", () => {
+    const longName = "a".repeat(72);
+    const truncated = truncateToolName(longName);
+    const map = buildResponsesToolNameMap([makeToolLocal(longName), makeToolLocal("read_file")], "muse-spark-1.2-contributor");
+    assert.equal(map.get(truncated), longName);
+    assert.equal(map.size, 1);
+  });
+
+  it("returns empty map for non-Muse models", () => {
+    const map = buildResponsesToolNameMap([makeToolLocal("a".repeat(72))], "gpt-5.6-luna");
+    assert.equal(map.size, 0);
+  });
+
+  it("returns empty map when no tools or empty modelId", () => {
+    assert.equal(buildResponsesToolNameMap([], "muse-spark-1.2-contributor").size, 0);
+    assert.equal(buildResponsesToolNameMap(undefined, "muse-spark-1.2-contributor").size, 0);
+    assert.equal(buildResponsesToolNameMap([makeToolLocal("a".repeat(72))], "").size, 0);
   });
 });

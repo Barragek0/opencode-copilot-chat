@@ -40,6 +40,7 @@ import {
   buildResponsesRequestBody,
   messagesHaveImages,
 } from "../request/builders";
+import { buildResponsesToolNameMap } from "../request/openai";
 import type { ApiMessage, ApiSettings, OpenAiContentPart } from "../request/types";
 import { runtimeDiagnosticsLines } from "../runtimeDiagnostics";
 import { estimatePromptTokenCount, estimateTokenCount } from "../tokenEstimate";
@@ -678,8 +679,8 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
     if (registeredCount > 0) {
       this.log(
         `Models registered: count=${String(registeredCount)} provider=${this.definition.vendor}` +
-          ` first=${firstModelId} last=${lastModelId}` +
-          (this.definition.isAgentVariant ? " (agents)" : ""),
+        ` first=${firstModelId} last=${lastModelId}` +
+        (this.definition.isAgentVariant ? " (agents)" : ""),
       );
     }
 
@@ -951,6 +952,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
           onTransportSummary,
           stripThinkTags: settings.stripThinkTags,
           forceStripThinkTags,
+          toolNameMap: buildResponsesToolNameMap(options.tools, rawModelId),
           onReasoningContent: (toolCallIds, reasoningContent) => {
             this.storeReasoningContent(toolCallIds, reasoningContent);
           },
