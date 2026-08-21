@@ -79,6 +79,16 @@ export const MODEL_REGISTRY: ModelRegistryEntry[] = [
     thinkingFamily: null,
     vendors: ["opencodezen"],
   },
+  // Muse Spark 1.2 (Meta) → OpenAI Responses API (per OpenCode Go docs).
+  // The gateway rejects chat-completions parameters (stream_options,
+  // tool_choice) so this MUST use the Responses endpoint.
+  {
+    family: "muse",
+    patterns: [/^muse-/i],
+    endpointKind: "responses",
+    sdkPackage: "@ai-sdk/openai",
+    thinkingFamily: "muse",
+  },
   // Everything else that has a dedicated thinking strategy → chat-completions.
   {
     family: "minimax",

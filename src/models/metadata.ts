@@ -162,7 +162,9 @@ const MODELS_DEV_PROVIDER_BY_VENDOR: Record<ProviderVendor, keyof ModelsDevRespo
 
 const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelLimits | undefined>> = {
   [GO_VENDOR]: {
-    "deepseek-v4-flash": { contextWindow: 1000000, maxOutputTokens: 384000 },
+    // OpenCode Go caps completion at 131072 even though models.dev still lists
+    // output: 384000 — the gateway rejects larger values with HTTP 400 (#171).
+    "deepseek-v4-flash": { contextWindow: 1000000, maxOutputTokens: 131072 },
     "deepseek-v4-pro": { contextWindow: 1000000, maxOutputTokens: 384000 },
     "mimo-v2.5": { contextWindow: 1000000, maxOutputTokens: 128000 },
     "mimo-v2.5-pro": { contextWindow: 1048576, maxOutputTokens: 128000 },
@@ -184,6 +186,7 @@ const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelL
     "qwen3.5-plus": { contextWindow: 262144, maxOutputTokens: 65536 },
     "gpt-5.6-luna": { contextWindow: 1050000, maxOutputTokens: 128000 },
     "hy3-preview": { contextWindow: 256000, maxOutputTokens: 64000 },
+    "muse-spark-1.2-contributor": { contextWindow: 1048576, maxOutputTokens: 131072 },
   },
   [ZEN_VENDOR]: {
     "claude-opus-4-7": { contextWindow: 1000000, maxOutputTokens: 128000 },
@@ -229,6 +232,7 @@ const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelL
     "trinity-large-preview-free": { contextWindow: 131072, maxOutputTokens: 131072 },
     "nemotron-3-super-free": { contextWindow: 204800, maxOutputTokens: 128000 },
     "big-pickle": { contextWindow: 200000, maxOutputTokens: 128000 },
+    "muse-spark-1.2-contributor-free": { contextWindow: 1048576, maxOutputTokens: 131072 },
   },
 };
 
@@ -510,7 +514,7 @@ function detectModalityFlags(
 }
 
 function supportsReasoning(modelId: string): boolean {
-  return /^(deepseek-|glm-|kimi-|minimax-|qwen3(?:\.|-)|mimo-)/i.test(modelId);
+  return /^(deepseek-|glm-|kimi-|minimax-|qwen3(?:\.|-)|mimo-|muse-)/i.test(modelId);
 }
 
 // ---------------------------------------------------------------------------

@@ -440,6 +440,18 @@
           ],
           "default": "auto",
           "markdownDescription": "Optional `thinking_budget` for Qwen models when thinking is `on` or `auto`. `auto` omits the field. Ignored when Qwen thinking is `off`."
+        },
+        "opencodego.thinking.muse": {
+          "type": "string",
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "default": "off",
+          "markdownDescription": "Thinking mode for Muse Spark models (`muse-spark-1.2-contributor`, `muse-spark-1.2-contributor-free`). Maps to the Responses API `reasoning.effort` field. Higher effort increases reasoning depth and may increase latency and usage."
         }
       }
     },

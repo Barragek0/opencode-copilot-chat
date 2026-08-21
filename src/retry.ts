@@ -17,10 +17,61 @@
  *   retried so real bugs surface instead of being masked by retries.
  */
 
-import { compactErrorCode, positiveNumber } from "./utils";
+import { compactErrorCode, getErrorMessage, positiveNumber } from "./utils";
 import { CONTEXT_RETRY_MIN_SAFETY_TOKENS, CONTEXT_RETRY_SAFETY_RATIO } from "./config";
 
 export { TRANSIENT_5XX_MAX_RETRIES, TRANSIENT_5XX_RETRY_BASE_MS, TRANSIENT_5XX_RETRY_JITTER_MS } from "./config";
+export { TRANSIENT_FETCH_MAX_RETRIES, TRANSIENT_FETCH_RETRY_BASE_MS, TRANSIENT_FETCH_RETRY_JITTER_MS } from "./config";
+
+/**
+ * Classify a fetch error as transient (worth retrying) vs. permanent.
+ *
+ * RULES:
+ * - Network-layer errors (DNS, TCP reset, connect timeout, socket errors)
+ *   are transient — undici exposes the real code via `error.cause`.
+ * - HTTP 4xx (except 408/429) is permanent — retrying won't help.
+ * - HTTP 408/429/5xx is transient — gateway/rate-limit style failures.
+ *   These arrive via the "Model list request failed (NNN): ..." message
+ *   that `fetchModels()` throws on a non-2xx response.
+ * - AbortError from a CancellationToken is NEVER retried. TimeoutError from
+ *   AbortSignal.timeout is transient and can be retried.
+ *
+ * This is the shared classifier used by both the model-list fetch (issue #78)
+ * and the chat-request transport (engine.ts) so transient socket races
+ * (nodejs/undici#5450) don't surface as hard failures.
+ */
+export function isTransientFetchError(error: unknown): boolean {
+  // DOMException is a global since Node 17; guard anyway so a hypothetical
+  // older host never crashes inside error classification.
+  if (typeof DOMException === "function" && error instanceof DOMException) {
+    if (error.name === "AbortError") return false;
+    if (error.name === "TimeoutError") return true;
+  }
+  const cause = (error as { cause?: { code?: string; name?: string } } | undefined)?.cause;
+  const code = cause?.code ?? (error as { code?: string } | undefined)?.code;
+  const name = cause?.name ?? (error as { name?: string } | undefined)?.name;
+  // undici network error codes
+  if (code && /^E(AI_AGAIN|CONNRESET|CONNREFUSED|CONNABORTED|TIMEDOUT|HOSTUNREACH|NETUNREACH|PROTO|PIPE)$/.test(code)) {
+    return true;
+  }
+  if (name && /^UND_ERR_(CONNECT_TIMEOUT|SOCKET|REQUEST_TIMEOUT)$/.test(name)) {
+    return true;
+  }
+  // TypeError: fetch failed (the generic wrapper undici throws) — always retry;
+  // if the cause turns out to be non-transient, the inner check above handles it.
+  if (error instanceof TypeError && /fetch failed/i.test(error.message)) return true;
+  // Extract HTTP status from either an explicit `.status` field or the
+  // "Model list request failed (NNN): ..." message pattern.
+  const explicitStatus = (error as { status?: number } | undefined)?.status;
+  const msg = getErrorMessage(error);
+  const msgMatch = msg.match(/\((\d{3})\)/);
+  const httpStatus = typeof explicitStatus === "number" ? explicitStatus : msgMatch ? Number(msgMatch[1]) : undefined;
+  if (typeof httpStatus === "number") {
+    if (httpStatus === 408 || httpStatus === 429 || httpStatus >= 500) return true;
+    return false;
+  }
+  return false;
+}
 
 /** Result of attempting to patch a request body for retry. */
 export interface RetryPatch {
@@ -64,6 +115,18 @@ const RECOVERABLE_ERROR_PATTERNS: {
       return next;
     },
     describe: () => "removed thinking field (model requires disabled)",
+  },
+  // "This model always engages in thinking and cannot be disabled" (GLM 5.3+)
+  // Scoped to thinking-related phrasing so unrelated "cannot be disabled"
+  // errors never trigger a thinking-strip retry.
+  {
+    pattern: /always engages in thinking|thinking.*cannot be disabled/i,
+    patch: (body) => {
+      const next = { ...body };
+      delete next.thinking;
+      return next;
+    },
+    describe: () => "removed thinking field (model cannot disable thinking)",
   },
   // Generic "invalid thinking" — strip the field entirely
   {
@@ -181,6 +244,9 @@ export function analyzeHttp400ForRetry(errorMessage: string, body: Record<string
   const contextPatch = patchContextOverflow(errorMessage, body);
   if (contextPatch) return contextPatch;
 
+  const capPatch = patchMaxTokensCap(errorMessage, body);
+  if (capPatch) return capPatch;
+
   for (const { pattern, patch, describe } of RECOVERABLE_ERROR_PATTERNS) {
     const match = errorMessage.match(pattern);
     if (match) {
@@ -202,31 +268,71 @@ function patchContextOverflow(errorMessage: string, body: Record<string, unknown
   const requestedTokens = parseTokenCount(errorMessage.match(/you requested\s*([\d,]+)\s*tokens?/i)?.[1]);
   if (contextWindow === undefined || requestedTokens === undefined) return undefined;
 
-  const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveNumber(body[key]) !== undefined);
-  const generationConfig = recordValue(body.generationConfig);
-  const configuredOutput = outputKey ? positiveNumber(body[outputKey]) : positiveNumber(generationConfig?.maxOutputTokens);
-  if (configuredOutput === undefined) return undefined;
+  const target = findOutputTarget(body);
+  if (target.configuredOutput === undefined) return undefined;
 
   const reportedOutput = parseTokenCount(errorMessage.match(/([\d,]+)\s+in the (?:completion|output)/i)?.[1]);
-  const currentOutput = reportedOutput ?? configuredOutput;
+  const currentOutput = reportedOutput ?? target.configuredOutput;
   const overflow = requestedTokens - contextWindow;
   if (overflow <= 0) return undefined;
 
   const safetyMargin = Math.max(CONTEXT_RETRY_MIN_SAFETY_TOKENS, Math.ceil(contextWindow * CONTEXT_RETRY_SAFETY_RATIO));
   const nextOutput = Math.floor(currentOutput - overflow - safetyMargin);
-  if (nextOutput < 1 || nextOutput >= configuredOutput) {
+  if (nextOutput < 1 || nextOutput >= target.configuredOutput) {
     return undefined;
   }
 
-  const outputLabel = outputKey ?? "generationConfig.maxOutputTokens";
-  const patchedBody = outputKey
-    ? { ...body, [outputKey]: nextOutput }
-    : { ...body, generationConfig: { ...generationConfig, maxOutputTokens: nextOutput } };
+  const patchedBody = applyOutputTarget(body, target, nextOutput);
 
   return {
     body: patchedBody,
-    reason: `reduced ${outputLabel} from ${String(configuredOutput)} to ${String(nextOutput)} using upstream context counts`,
+    reason: `reduced ${target.label} from ${String(target.configuredOutput)} to ${String(nextOutput)} using upstream context counts`,
   };
+}
+
+/**
+ * Clamp the output budget to the completion cap the upstream reports when it
+ * rejects the request outright. OpenCode Go now enforces per-model completion
+ * caps that models.dev does not yet reflect:
+ * "max_tokens is too large: 384000. This model supports at most 131072
+ * completion tokens" (issue #171). Clamping to the reported cap makes any
+ * stale-metadata model self-heal with one retry instead of a hard failure.
+ */
+function patchMaxTokensCap(errorMessage: string, body: Record<string, unknown>): RetryPatch | undefined {
+  const cap = parseTokenCount(
+    errorMessage.match(/max_tokens is too large:\s*[\d,]+\.?\s*This model supports at most\s*([\d,]+)\s+completion tokens/i)?.[1],
+  );
+  if (cap === undefined) return undefined;
+
+  const target = findOutputTarget(body);
+  if (target.configuredOutput === undefined || target.configuredOutput <= cap) return undefined;
+
+  return {
+    body: applyOutputTarget(body, target, cap),
+    reason: `capped ${target.label} from ${String(target.configuredOutput)} to ${String(cap)} (upstream completion limit)`,
+  };
+}
+
+interface OutputTarget {
+  /** Top-level body key carrying the output budget, if present. */
+  outputKey?: "max_tokens" | "max_output_tokens" | "max_completion_tokens";
+  generationConfig: Record<string, unknown>;
+  configuredOutput?: number;
+  label: string;
+}
+
+function findOutputTarget(body: Record<string, unknown>): OutputTarget {
+  const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveNumber(body[key]) !== undefined) as
+    OutputTarget["outputKey"] | undefined;
+  const generationConfig = recordValue(body.generationConfig) ?? {};
+  const configuredOutput = outputKey ? positiveNumber(body[outputKey]) : positiveNumber(generationConfig.maxOutputTokens);
+  return { outputKey, generationConfig, configuredOutput, label: outputKey ?? "generationConfig.maxOutputTokens" };
+}
+
+function applyOutputTarget(body: Record<string, unknown>, target: OutputTarget, value: number): Record<string, unknown> {
+  return target.outputKey
+    ? { ...body, [target.outputKey]: value }
+    : { ...body, generationConfig: { ...target.generationConfig, maxOutputTokens: value } };
 }
 
 function parseTokenCount(value: string | undefined): number | undefined {

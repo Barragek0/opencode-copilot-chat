@@ -135,6 +135,12 @@ This workaround can be removed once upstream [#37635](https://github.com/anomaly
 
 ---
 
+## Follow-up (2026-08-18, PR #163) — repetition_penalty
+
+A third mitigation layer shipped: `repetition_penalty: 1.2` is applied unconditionally in every MiMo payload (regardless of reasoning effort) to suppress the degenerate token-repeat pattern that triggered the Go gateway's infinite-loop detector upstream. Applies with reasoning off (where the loop fires less often) and on; does not trip `bodyRequestsThinking()` so the gateway workaround path above is unaffected. Mitigation layers now: (1) `budget_tokens` cap, (2) suffix-repetition stream detection, (3) sampling-level `repetition_penalty`.
+
+---
+
 ## Files changed
 
 | File               | Change                                                                                                                               |

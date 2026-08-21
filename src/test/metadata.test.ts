@@ -49,6 +49,15 @@ describe("fallbackModelMetadata — kimi-k2.7-code (issue #25)", () => {
   });
 });
 
+describe("fallbackModelMetadata — deepseek-v4-flash completion cap (issue #171)", () => {
+  it("reports the Go gateway completion cap (131072), not the stale models.dev value", () => {
+    const meta = fallbackModelMetadata("deepseek-v4-flash", GO_VENDOR);
+    assert.ok(meta, "expected fallback metadata to be defined");
+    assert.equal(meta.contextWindow, 1000000);
+    assert.equal(meta.maxOutputTokens, 131072);
+  });
+});
+
 describe("fallbackModelMetadata — regression safety for other kimi models", () => {
   it("kimi-k2.6 does NOT report temperature: false (still accepts temperature)", () => {
     const meta = fallbackModelMetadata("kimi-k2.6", GO_VENDOR);
@@ -191,5 +200,26 @@ describe("normalizeLiveModelMetadata — modality-based vision detection", () =>
     assert.equal(attached?.supportsVision, true);
     const plain = normalizeLiveModelMetadata({ id: "m" });
     assert.notEqual(plain?.supportsVision, true);
+  });
+});
+
+describe("fallbackModelMetadata — Muse Spark 1.2 limits", () => {
+  it("returns context/output limits for the Go contributor variant", () => {
+    const meta = fallbackModelMetadata("muse-spark-1.2-contributor", GO_VENDOR);
+    assert.ok(meta, "expected fallback metadata for muse-spark-1.2-contributor");
+    assert.equal(meta.contextWindow, 1_048_576);
+    assert.equal(meta.maxOutputTokens, 131_072);
+  });
+
+  it("returns context/output limits for the Zen free variant", () => {
+    const meta = fallbackModelMetadata("muse-spark-1.2-contributor-free", ZEN_VENDOR);
+    assert.ok(meta, "expected fallback metadata for muse-spark-1.2-contributor-free");
+    assert.equal(meta.contextWindow, 1_048_576);
+    assert.equal(meta.maxOutputTokens, 131_072);
+  });
+
+  it("does NOT report temperature: false (temperature is accepted)", () => {
+    const meta = fallbackModelMetadata("muse-spark-1.2-contributor", GO_VENDOR);
+    assert.notEqual(meta?.temperature, false);
   });
 });

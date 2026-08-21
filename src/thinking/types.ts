@@ -14,10 +14,11 @@ export interface ThinkingSettings {
   qwen: "auto" | "on" | "off";
   qwenBudget: "auto" | "4096" | "16384" | "32768" | "81920";
   mimo: "off" | "low" | "medium" | "high";
+  muse: "off" | "low" | "medium" | "high" | "xhigh";
 }
 
 /** Detected thinking family for a raw model id. `null` = no known family. */
-export type ThinkingFamily = "deepseek" | "glm" | "kimi" | "minimax" | "openai" | "qwen" | "mimo" | null;
+export type ThinkingFamily = "deepseek" | "glm" | "kimi" | "minimax" | "openai" | "qwen" | "mimo" | "muse" | null;
 
 /**
  * Which configuration layer supplied the effective thinking value.

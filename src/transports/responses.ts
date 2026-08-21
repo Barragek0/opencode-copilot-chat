@@ -14,6 +14,9 @@ export async function streamResponsesApi(options: StreamRequestOptions): Promise
     thinkFilter,
     options.progress,
     options.requestHeaders["x-opencode-request"],
+    options.output,
+    false,
+    options.toolNameMap,
   );
 
   try {

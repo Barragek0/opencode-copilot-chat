@@ -3,7 +3,6 @@ import { CONFIG_SECTION, FALLBACK_USER_AGENT, FREE_ZEN_MODEL_IDS, SETTING_FREE_O
 import type { ModelEndpointKind } from "../core/registry";
 import type { ApiMessage } from "../request/types";
 import { AGENT_GO_VENDOR, AGENT_ZEN_VENDOR, GO_VENDOR, ZEN_VENDOR, type AllProviderVendor } from "../providerTypes";
-import { getErrorMessage } from "../utils";
 
 export type { ModelEndpointKind } from "../core/registry";
 
@@ -47,48 +46,11 @@ export function getUserAgent(): string {
 /**
  * Classify a fetch error as transient (worth retrying) vs. permanent.
  *
- * RULES:
- * - Network-layer errors (DNS, TCP reset, connect timeout, socket errors)
- *   are transient — undici exposes the real code via `error.cause`.
- * - HTTP 4xx (except 408/429) is permanent — retrying won't help.
- * - HTTP 408/429/5xx is transient — gateway/rate-limit style failures.
- *   These arrive via the "Model list request failed (NNN): ..." message
- *   that `fetchModels()` throws on a non-2xx response.
- * - AbortError from a CancellationToken is NEVER retried. TimeoutError from
- *   AbortSignal.timeout is transient and can be retried.
+ * Defined in `retry.ts` (the shared retry-decision module) and re-exported
+ * here so existing importers keep working. See `retry.ts` for the rules and
+ * the full implementation.
  */
-export function isTransientFetchError(error: unknown): boolean {
-  // DOMException is a global since Node 17; guard anyway so a hypothetical
-  // older host never crashes inside error classification.
-  if (typeof DOMException === "function" && error instanceof DOMException) {
-    if (error.name === "AbortError") return false;
-    if (error.name === "TimeoutError") return true;
-  }
-  const cause = (error as { cause?: { code?: string; name?: string } } | undefined)?.cause;
-  const code = cause?.code ?? (error as { code?: string } | undefined)?.code;
-  const name = cause?.name ?? (error as { name?: string } | undefined)?.name;
-  // undici network error codes
-  if (code && /^E(AI_AGAIN|CONNRESET|CONNREFUSED|CONNABORTED|TIMEDOUT|HOSTUNREACH|NETUNREACH|PROTO|PIPE)$/.test(code)) {
-    return true;
-  }
-  if (name && /^UND_ERR_(CONNECT_TIMEOUT|SOCKET|REQUEST_TIMEOUT)$/.test(name)) {
-    return true;
-  }
-  // TypeError: fetch failed (the generic wrapper undici throws) — always retry;
-  // if the cause turns out to be non-transient, the inner check above handles it.
-  if (error instanceof TypeError && /fetch failed/i.test(error.message)) return true;
-  // Extract HTTP status from either an explicit `.status` field or the
-  // "Model list request failed (NNN): ..." message pattern.
-  const explicitStatus = (error as { status?: number } | undefined)?.status;
-  const msg = getErrorMessage(error);
-  const msgMatch = msg.match(/\((\d{3})\)/);
-  const httpStatus = typeof explicitStatus === "number" ? explicitStatus : msgMatch ? Number(msgMatch[1]) : undefined;
-  if (typeof httpStatus === "number") {
-    if (httpStatus === 408 || httpStatus === 429 || httpStatus >= 500) return true;
-    return false;
-  }
-  return false;
-}
+export { isTransientFetchError } from "../retry";
 
 /** Create an agent-variant provider definition that inherits URLs, models, and filters from a base. */
 function providerVariant(

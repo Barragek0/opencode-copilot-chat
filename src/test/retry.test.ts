@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeHttp400ForRetry, isTransientServerError } from "../retry.js";
+import { analyzeHttp400ForRetry, isTransientFetchError, isTransientServerError } from "../retry.js";
 
 describe("analyzeHttp400ForRetry — thinking errors", () => {
   it("patches 'only type=enabled is allowed' to force thinking.type='enabled'", () => {
@@ -23,6 +23,23 @@ describe("analyzeHttp400ForRetry — thinking errors", () => {
     const result = analyzeHttp400ForRetry("invalid thinking parameter", body);
     assert.ok(result, "should be recoverable");
     assert.deepEqual(result.body, { model: "test", temperature: 0.2 });
+  });
+
+  it("patches GLM 'cannot be disabled' by removing thinking (issue #162)", () => {
+    const body = { model: "glm-5.3", thinking: { type: "disabled" } };
+    const result = analyzeHttp400ForRetry(
+      "Upstream request failed: [1210] This model always engages in thinking and cannot be disabled; please use low, high, or max",
+      body,
+    );
+    assert.ok(result, "should be recoverable");
+    assert.deepEqual(result.body, { model: "glm-5.3" });
+    assert.match(result.reason, /cannot disable thinking/i);
+  });
+
+  it("does not patch unrelated errors that merely contain 'cannot be disabled'", () => {
+    const body = { model: "glm-5.3", thinking: { type: "disabled" } };
+    const result = analyzeHttp400ForRetry("feature X cannot be disabled for this account", body);
+    assert.equal(result, undefined);
   });
 });
 
@@ -112,6 +129,53 @@ describe("analyzeHttp400ForRetry — context overflow", () => {
   });
 });
 
+describe("analyzeHttp400ForRetry — upstream completion cap (#171)", () => {
+  it("caps max_tokens to the limit reported by OpenCode Go", () => {
+    const body = { model: "deepseek-v4-flash", max_tokens: 384_000 };
+    const result = analyzeHttp400ForRetry(
+      "bad request: max_tokens is too large: 384000. This model supports at most 131072 completion tokens.",
+      body,
+    );
+
+    assert.ok(result, "should be recoverable");
+    assert.equal(result.body?.max_tokens, 131_072);
+    assert.match(result.reason, /capped max_tokens from 384000 to 131072/i);
+  });
+
+  it("caps comma-formatted counts and Responses-style keys", () => {
+    const body = { model: "gpt-test", max_output_tokens: 256_000 };
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 256,000. This model supports at most 131,072 completion tokens.", body);
+
+    assert.ok(result, "should be recoverable");
+    assert.equal(result.body?.max_output_tokens, 131_072);
+  });
+
+  it("caps the nested Google output budget", () => {
+    const body = { model: "gemini-test", generationConfig: { maxOutputTokens: 200_000, temperature: 0.2 } };
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 200000. This model supports at most 65536 completion tokens.", body);
+
+    assert.ok(result, "should be recoverable");
+    assert.deepEqual(result.body?.generationConfig, { maxOutputTokens: 65_536, temperature: 0.2 });
+  });
+
+  it("does not patch when the configured budget is already within the cap", () => {
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 65536. This model supports at most 131072 completion tokens.", {
+      model: "test",
+      max_tokens: 65_536,
+    });
+
+    assert.equal(result, undefined);
+  });
+
+  it("returns undefined when the body carries no output budget", () => {
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 384000. This model supports at most 131072 completion tokens.", {
+      model: "test",
+    });
+
+    assert.equal(result, undefined);
+  });
+});
+
 describe("isTransientServerError", () => {
   it("flags 502/503/504 as transient", () => {
     assert.equal(isTransientServerError(502, "Bad Gateway"), true);
@@ -133,5 +197,41 @@ describe("isTransientServerError", () => {
 
   it("matches Router.Unavailable case-insensitively", () => {
     assert.equal(isTransientServerError(500, "type: router.unavailable"), true);
+  });
+});
+
+describe("isTransientFetchError", () => {
+  it("retries the generic undici 'TypeError: fetch failed' wrapper", () => {
+    assert.equal(isTransientFetchError(new TypeError("fetch failed")), true);
+  });
+
+  it("retries undici network error codes via error.cause", () => {
+    for (const code of ["ECONNRESET", "EAI_AGAIN", "ECONNREFUSED", "ECONNABORTED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"]) {
+      const err = new Error("fetch failed", { cause: { code } });
+      assert.equal(isTransientFetchError(err), true, `expected ${code} to be transient`);
+    }
+  });
+
+  it("retries UND_ERR_* connect/socket timeouts via error.cause.name", () => {
+    for (const name of ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "UND_ERR_REQUEST_TIMEOUT"]) {
+      const err = new Error("fetch failed", { cause: { name } });
+      assert.equal(isTransientFetchError(err), true, `expected ${name} to be transient`);
+    }
+  });
+
+  it("retries AbortSignal.timeout TimeoutError but not cancellation AbortError", () => {
+    assert.equal(isTransientFetchError(new DOMException("Aborted", "AbortError")), false);
+    assert.equal(isTransientFetchError(new DOMException("Timeout", "TimeoutError")), true);
+  });
+
+  it("retries HTTP 408/429/5xx surfaced as a message but not 4xx", () => {
+    assert.equal(isTransientFetchError(new Error("Model list request failed (503): upstream down")), true);
+    assert.equal(isTransientFetchError(new Error("Model list request failed (429): rate limited")), true);
+    assert.equal(isTransientFetchError(new Error("Model list request failed (408): timeout")), true);
+    assert.equal(isTransientFetchError(new Error("Model list request failed (400): bad request")), false);
+  });
+
+  it("treats an unknown plain error as permanent", () => {
+    assert.equal(isTransientFetchError(new Error("something unexpected")), false);
   });
 });
