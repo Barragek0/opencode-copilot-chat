@@ -244,6 +244,9 @@ export function analyzeHttp400ForRetry(errorMessage: string, body: Record<string
   const contextPatch = patchContextOverflow(errorMessage, body);
   if (contextPatch) return contextPatch;
 
+  const capPatch = patchMaxTokensCap(errorMessage, body);
+  if (capPatch) return capPatch;
+
   for (const { pattern, patch, describe } of RECOVERABLE_ERROR_PATTERNS) {
     const match = errorMessage.match(pattern);
     if (match) {
@@ -265,31 +268,71 @@ function patchContextOverflow(errorMessage: string, body: Record<string, unknown
   const requestedTokens = parseTokenCount(errorMessage.match(/you requested\s*([\d,]+)\s*tokens?/i)?.[1]);
   if (contextWindow === undefined || requestedTokens === undefined) return undefined;
 
-  const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveNumber(body[key]) !== undefined);
-  const generationConfig = recordValue(body.generationConfig);
-  const configuredOutput = outputKey ? positiveNumber(body[outputKey]) : positiveNumber(generationConfig?.maxOutputTokens);
-  if (configuredOutput === undefined) return undefined;
+  const target = findOutputTarget(body);
+  if (target.configuredOutput === undefined) return undefined;
 
   const reportedOutput = parseTokenCount(errorMessage.match(/([\d,]+)\s+in the (?:completion|output)/i)?.[1]);
-  const currentOutput = reportedOutput ?? configuredOutput;
+  const currentOutput = reportedOutput ?? target.configuredOutput;
   const overflow = requestedTokens - contextWindow;
   if (overflow <= 0) return undefined;
 
   const safetyMargin = Math.max(CONTEXT_RETRY_MIN_SAFETY_TOKENS, Math.ceil(contextWindow * CONTEXT_RETRY_SAFETY_RATIO));
   const nextOutput = Math.floor(currentOutput - overflow - safetyMargin);
-  if (nextOutput < 1 || nextOutput >= configuredOutput) {
+  if (nextOutput < 1 || nextOutput >= target.configuredOutput) {
     return undefined;
   }
 
-  const outputLabel = outputKey ?? "generationConfig.maxOutputTokens";
-  const patchedBody = outputKey
-    ? { ...body, [outputKey]: nextOutput }
-    : { ...body, generationConfig: { ...generationConfig, maxOutputTokens: nextOutput } };
+  const patchedBody = applyOutputTarget(body, target, nextOutput);
 
   return {
     body: patchedBody,
-    reason: `reduced ${outputLabel} from ${String(configuredOutput)} to ${String(nextOutput)} using upstream context counts`,
+    reason: `reduced ${target.label} from ${String(target.configuredOutput)} to ${String(nextOutput)} using upstream context counts`,
   };
+}
+
+/**
+ * Clamp the output budget to the completion cap the upstream reports when it
+ * rejects the request outright. OpenCode Go now enforces per-model completion
+ * caps that models.dev does not yet reflect:
+ * "max_tokens is too large: 384000. This model supports at most 131072
+ * completion tokens" (issue #171). Clamping to the reported cap makes any
+ * stale-metadata model self-heal with one retry instead of a hard failure.
+ */
+function patchMaxTokensCap(errorMessage: string, body: Record<string, unknown>): RetryPatch | undefined {
+  const cap = parseTokenCount(
+    errorMessage.match(/max_tokens is too large:\s*[\d,]+\.?\s*This model supports at most\s*([\d,]+)\s+completion tokens/i)?.[1],
+  );
+  if (cap === undefined) return undefined;
+
+  const target = findOutputTarget(body);
+  if (target.configuredOutput === undefined || target.configuredOutput <= cap) return undefined;
+
+  return {
+    body: applyOutputTarget(body, target, cap),
+    reason: `capped ${target.label} from ${String(target.configuredOutput)} to ${String(cap)} (upstream completion limit)`,
+  };
+}
+
+interface OutputTarget {
+  /** Top-level body key carrying the output budget, if present. */
+  outputKey?: "max_tokens" | "max_output_tokens" | "max_completion_tokens";
+  generationConfig: Record<string, unknown>;
+  configuredOutput?: number;
+  label: string;
+}
+
+function findOutputTarget(body: Record<string, unknown>): OutputTarget {
+  const outputKey = ["max_tokens", "max_output_tokens", "max_completion_tokens"].find((key) => positiveNumber(body[key]) !== undefined) as
+    OutputTarget["outputKey"] | undefined;
+  const generationConfig = recordValue(body.generationConfig) ?? {};
+  const configuredOutput = outputKey ? positiveNumber(body[outputKey]) : positiveNumber(generationConfig.maxOutputTokens);
+  return { outputKey, generationConfig, configuredOutput, label: outputKey ?? "generationConfig.maxOutputTokens" };
+}
+
+function applyOutputTarget(body: Record<string, unknown>, target: OutputTarget, value: number): Record<string, unknown> {
+  return target.outputKey
+    ? { ...body, [target.outputKey]: value }
+    : { ...body, generationConfig: { ...target.generationConfig, maxOutputTokens: value } };
 }
 
 function parseTokenCount(value: string | undefined): number | undefined {

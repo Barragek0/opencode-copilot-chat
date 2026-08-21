@@ -129,6 +129,53 @@ describe("analyzeHttp400ForRetry — context overflow", () => {
   });
 });
 
+describe("analyzeHttp400ForRetry — upstream completion cap (#171)", () => {
+  it("caps max_tokens to the limit reported by OpenCode Go", () => {
+    const body = { model: "deepseek-v4-flash", max_tokens: 384_000 };
+    const result = analyzeHttp400ForRetry(
+      "bad request: max_tokens is too large: 384000. This model supports at most 131072 completion tokens.",
+      body,
+    );
+
+    assert.ok(result, "should be recoverable");
+    assert.equal(result.body?.max_tokens, 131_072);
+    assert.match(result.reason, /capped max_tokens from 384000 to 131072/i);
+  });
+
+  it("caps comma-formatted counts and Responses-style keys", () => {
+    const body = { model: "gpt-test", max_output_tokens: 256_000 };
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 256,000. This model supports at most 131,072 completion tokens.", body);
+
+    assert.ok(result, "should be recoverable");
+    assert.equal(result.body?.max_output_tokens, 131_072);
+  });
+
+  it("caps the nested Google output budget", () => {
+    const body = { model: "gemini-test", generationConfig: { maxOutputTokens: 200_000, temperature: 0.2 } };
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 200000. This model supports at most 65536 completion tokens.", body);
+
+    assert.ok(result, "should be recoverable");
+    assert.deepEqual(result.body?.generationConfig, { maxOutputTokens: 65_536, temperature: 0.2 });
+  });
+
+  it("does not patch when the configured budget is already within the cap", () => {
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 65536. This model supports at most 131072 completion tokens.", {
+      model: "test",
+      max_tokens: 65_536,
+    });
+
+    assert.equal(result, undefined);
+  });
+
+  it("returns undefined when the body carries no output budget", () => {
+    const result = analyzeHttp400ForRetry("max_tokens is too large: 384000. This model supports at most 131072 completion tokens.", {
+      model: "test",
+    });
+
+    assert.equal(result, undefined);
+  });
+});
+
 describe("isTransientServerError", () => {
   it("flags 502/503/504 as transient", () => {
     assert.equal(isTransientServerError(502, "Bad Gateway"), true);

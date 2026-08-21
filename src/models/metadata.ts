@@ -162,7 +162,9 @@ const MODELS_DEV_PROVIDER_BY_VENDOR: Record<ProviderVendor, keyof ModelsDevRespo
 
 const MODEL_LIMITS_BY_PROVIDER: Record<ProviderVendor, Record<string, BaseModelLimits | undefined>> = {
   [GO_VENDOR]: {
-    "deepseek-v4-flash": { contextWindow: 1000000, maxOutputTokens: 384000 },
+    // OpenCode Go caps completion at 131072 even though models.dev still lists
+    // output: 384000 — the gateway rejects larger values with HTTP 400 (#171).
+    "deepseek-v4-flash": { contextWindow: 1000000, maxOutputTokens: 131072 },
     "deepseek-v4-pro": { contextWindow: 1000000, maxOutputTokens: 384000 },
     "mimo-v2.5": { contextWindow: 1000000, maxOutputTokens: 128000 },
     "mimo-v2.5-pro": { contextWindow: 1048576, maxOutputTokens: 128000 },
