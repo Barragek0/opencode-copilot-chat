@@ -456,6 +456,12 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
     if (streamIdleTimeout) {
       clearTimeout(streamIdleTimeout);
     }
+    // Release the connection deterministically: the read loop breaks as soon
+    // as it sees the `[DONE]` sentinel, which can leave the socket open (the
+    // server may keep its side alive for reuse). Aborting the controller here
+    // closes any still-open response body on every exit path. The body is
+    // already fully consumed on normal completion, so this is a no-op there.
+    controller.abort();
     cancellation.dispose();
     if (localRequestId) {
       clearContextWindowRequest(localRequestId);
