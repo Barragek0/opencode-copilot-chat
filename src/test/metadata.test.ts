@@ -49,6 +49,15 @@ describe("fallbackModelMetadata — kimi-k2.7-code (issue #25)", () => {
   });
 });
 
+describe("fallbackModelMetadata — deepseek-v4-flash completion cap (issue #171)", () => {
+  it("reports the Go gateway completion cap (131072), not the stale models.dev value", () => {
+    const meta = fallbackModelMetadata("deepseek-v4-flash", GO_VENDOR);
+    assert.ok(meta, "expected fallback metadata to be defined");
+    assert.equal(meta.contextWindow, 1000000);
+    assert.equal(meta.maxOutputTokens, 131072);
+  });
+});
+
 describe("fallbackModelMetadata — regression safety for other kimi models", () => {
   it("kimi-k2.6 does NOT report temperature: false (still accepts temperature)", () => {
     const meta = fallbackModelMetadata("kimi-k2.6", GO_VENDOR);
