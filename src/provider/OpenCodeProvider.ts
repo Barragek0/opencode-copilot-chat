@@ -874,10 +874,14 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
     const ratioBudget = Math.floor(effectiveContextWindow * HISTORY_TRIM_TARGET_RATIO);
     const maxBudget = Math.max(1, effectiveContextWindow - outputReserve - HISTORY_TRIM_SAFETY_MARGIN_TOKENS);
     const inputBudget = Math.min(ratioBudget, maxBudget);
-    const historyTrim = trimOldMessagesToFitContext(apiMessages, inputBudget, MAX_REQUEST_PAYLOAD_BYTES, options.tools);
+    // Scale the byte cap with the context window so 1M models aren't clamped
+    // to ~13% (512KB ≈ 128K tokens). Token budget remains the primary limiter;
+    // the byte cap is a safety net for JSON overhead / single-message blow-ups.
+    const historyMaxBytes = Math.max(MAX_REQUEST_PAYLOAD_BYTES, Math.floor(inputBudget * 4.5));
+    const historyTrim = trimOldMessagesToFitContext(apiMessages, inputBudget, historyMaxBytes, options.tools);
     if (historyTrim.removed > 0) {
       this.log(
-        `[history-trim] Dropped ${String(historyTrim.removed)} old message(s) to fit context window (budget=${String(inputBudget)} tokens, maxBytes=${String(MAX_REQUEST_PAYLOAD_BYTES)}); estimated payload now ~${String(historyTrim.finalTokens)} tokens / ${String(historyTrim.finalBytes)} bytes.`,
+        `[history-trim] Dropped ${String(historyTrim.removed)} old message(s) to fit context window (budget=${String(inputBudget)} tokens, maxBytes=${String(historyMaxBytes)}); estimated payload now ~${String(historyTrim.finalTokens)} tokens / ${String(historyTrim.finalBytes)} bytes.`,
       );
     }
 
