@@ -34,6 +34,7 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
 
   await streamOpenCodeResponse({
     ...options,
+    usesDoneSentinel: true,
     extractStreamParts: (data) => extractor.extractStreamParts(data),
     extractFullParts: extractChatCompletionParts,
   });

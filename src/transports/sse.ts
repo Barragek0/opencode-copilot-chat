@@ -38,18 +38,29 @@ export function parseServerSentEvent(
 /**
  * Pure: decide whether an SSE stream ended abnormally (truncated/aborted).
  *
- * A successful OpenCode stream always terminates with a `data: [DONE]`
- * sentinel, and the extractors capture a `finish_reason`/`stop_reason` from the
- * final chunk. If the connection closed (`done`) without EITHER signal while we
- * had already extracted content, the stream was cut off mid-response (gateway
- * dropped the connection, proxy reset, upstream crash) and must not be treated
- * as a silent success.
+ * Only transports that emit a `data: [DONE]` terminator (`usesDoneSentinel`)
+ * can be trusted to signal completion via its absence. OpenAI-style transports
+ * (chat-completions, Responses API) do; Google (`streamGenerateContent?alt=sse`,
+ * native SSE) and Anthropic (`/messages`, `message_stop`) do NOT, and their
+ * `finishReason` can be legitimately `null`/absent on a healthy stream. Gating
+ * truncation detection on `usesDoneSentinel` avoids false-positive errors on
+ * those transports (a healthy Gemini response whose finishReason normalizes to
+ * `null` must not be reported as truncated).
+ *
+ * For a `[DONE]` transport, if the connection closed (`done`) without `[DONE]`
+ * AND without a captured `finish_reason` while we had already extracted content,
+ * the stream was cut off mid-response (gateway dropped the connection, proxy
+ * reset, upstream crash) and must not be treated as a silent success.
  */
 export function isStreamTruncated(params: {
+  usesDoneSentinel: boolean;
   sawDone: boolean;
   finishReason: string | undefined;
   extractedPartCount: number;
   totalBytes: number;
 }): boolean {
+  if (!params.usesDoneSentinel) {
+    return false;
+  }
   return !params.sawDone && params.finishReason === undefined && params.extractedPartCount > 0 && params.totalBytes > 0;
 }

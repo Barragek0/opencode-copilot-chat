@@ -18,6 +18,7 @@ export async function streamGoogleGenerateContent(options: StreamRequestOptions)
 
   await streamOpenCodeResponse({
     ...options,
+    usesDoneSentinel: false,
     url: `${options.url}:streamGenerateContent?alt=sse`,
     extractStreamParts: (data) => extractor.extractStreamParts(normalizeGoogleStreamEvent(data)),
     extractFullParts: (data) => extractChatCompletionParts(normalizeGoogleFullResponse(data)),

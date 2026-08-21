@@ -396,7 +396,15 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
     // a silent success, leaving the user with a partial/empty response and no
     // indication of what happened — the "model stopped working / session ended
     // with no warning" bug.
-    if (isStreamTruncated({ sawDone: streamFlags.sawDone, finishReason: usageSummary.finishReason, extractedPartCount, totalBytes })) {
+    if (
+      isStreamTruncated({
+        usesDoneSentinel: options.usesDoneSentinel,
+        sawDone: streamFlags.sawDone,
+        finishReason: usageSummary.finishReason,
+        extractedPartCount,
+        totalBytes,
+      })
+    ) {
       const requestError = new OpenCodeRequestError(
         `${options.providerDisplayName} response stream ended before completion (no [DONE] or finish_reason after ${String(totalBytes)} bytes / ${String(totalEvents)} events).`,
         `${options.providerDisplayName} stopped sending data before the response was complete (the connection closed unexpectedly). Your message may be cut off — try sending it again. If this keeps happening, check your connection, VPN, or firewall.`,

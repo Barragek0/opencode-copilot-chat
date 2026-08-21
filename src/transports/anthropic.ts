@@ -17,6 +17,7 @@ export async function streamAnthropicMessages(options: StreamRequestOptions): Pr
 
   await streamOpenCodeResponse({
     ...options,
+    usesDoneSentinel: false,
     extractStreamParts: (data) => extractor.extractStreamParts(data),
     extractFullParts: extractAnthropicParts,
   });

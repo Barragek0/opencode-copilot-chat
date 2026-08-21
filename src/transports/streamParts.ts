@@ -5,6 +5,16 @@ import type { StreamRequestOptions } from "../core/transport";
 interface StreamOpenCodeResponseOptions extends StreamRequestOptions {
   extractStreamParts: (data: unknown) => vscode.LanguageModelResponsePart[];
   extractFullParts: (data: unknown) => vscode.LanguageModelResponsePart[];
+  /**
+   * Whether the upstream transport terminates a successful stream with a
+   * `data: [DONE]` SSE sentinel. OpenAI-style transports (chat-completions,
+   * Responses API) do; Google (`streamGenerateContent?alt=sse`, native SSE) and
+   * Anthropic (`/messages`, `message_stop`) do NOT. The engine only treats a
+   * missing `[DONE]` as truncation for transports that send it — the others can
+   * legitimately end a healthy stream without `[DONE]` or with a `null`
+   * `finishReason`, so gating there would cause false-positive errors.
+   */
+  usesDoneSentinel: boolean;
 }
 
 interface RequestUsageSummary {

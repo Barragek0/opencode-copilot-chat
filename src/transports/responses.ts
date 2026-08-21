@@ -18,6 +18,7 @@ export async function streamResponsesApi(options: StreamRequestOptions): Promise
 
   await streamOpenCodeResponse({
     ...options,
+    usesDoneSentinel: true,
     extractStreamParts: (data) => extractor.extractStreamParts(normalizeResponsesStreamEvent(data)),
     extractFullParts: (data) => extractChatCompletionParts(normalizeResponsesFullResponse(data)),
   });

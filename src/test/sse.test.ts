@@ -58,23 +58,45 @@ describe("parseServerSentEvent — [DONE] handling", () => {
 });
 
 describe("isStreamTruncated", () => {
-  it("flags a closed stream that carried content but no [DONE]/finish_reason", () => {
-    assert.equal(isStreamTruncated({ sawDone: false, finishReason: undefined, extractedPartCount: 5, totalBytes: 100 }), true);
+  it("flags a closed [DONE]-transport stream that carried content but no [DONE]/finish_reason", () => {
+    assert.equal(
+      isStreamTruncated({ usesDoneSentinel: true, sawDone: false, finishReason: undefined, extractedPartCount: 5, totalBytes: 100 }),
+      true,
+    );
   });
 
-  it("does not flag a stream that saw [DONE]", () => {
-    assert.equal(isStreamTruncated({ sawDone: true, finishReason: undefined, extractedPartCount: 5, totalBytes: 100 }), false);
+  it("does not flag a [DONE]-transport stream that saw [DONE]", () => {
+    assert.equal(
+      isStreamTruncated({ usesDoneSentinel: true, sawDone: true, finishReason: undefined, extractedPartCount: 5, totalBytes: 100 }),
+      false,
+    );
   });
 
-  it("does not flag a stream that captured a finish_reason", () => {
-    assert.equal(isStreamTruncated({ sawDone: false, finishReason: "stop", extractedPartCount: 5, totalBytes: 100 }), false);
+  it("does not flag a [DONE]-transport stream that captured a finish_reason", () => {
+    assert.equal(
+      isStreamTruncated({ usesDoneSentinel: true, sawDone: false, finishReason: "stop", extractedPartCount: 5, totalBytes: 100 }),
+      false,
+    );
   });
 
   it("does not flag an empty stream (no content extracted)", () => {
-    assert.equal(isStreamTruncated({ sawDone: false, finishReason: undefined, extractedPartCount: 0, totalBytes: 100 }), false);
+    assert.equal(
+      isStreamTruncated({ usesDoneSentinel: true, sawDone: false, finishReason: undefined, extractedPartCount: 0, totalBytes: 100 }),
+      false,
+    );
   });
 
   it("does not flag a stream with no bytes", () => {
-    assert.equal(isStreamTruncated({ sawDone: false, finishReason: undefined, extractedPartCount: 5, totalBytes: 0 }), false);
+    assert.equal(
+      isStreamTruncated({ usesDoneSentinel: true, sawDone: false, finishReason: undefined, extractedPartCount: 5, totalBytes: 0 }),
+      false,
+    );
+  });
+
+  it("never flags a non-[DONE] transport (Google/Anthropic) even when [DONE]/finish_reason are absent", () => {
+    assert.equal(
+      isStreamTruncated({ usesDoneSentinel: false, sawDone: false, finishReason: undefined, extractedPartCount: 5, totalBytes: 100 }),
+      false,
+    );
   });
 });
