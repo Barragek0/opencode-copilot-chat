@@ -29,7 +29,7 @@ abstract class BaseResponseExtractor {
     protected readonly progress?: vscode.Progress<vscode.LanguageModelResponsePart2>,
     protected readonly localRequestId?: string,
     protected readonly output?: vscode.OutputChannel,
-  ) { }
+  ) {}
 
   get emittedText(): number {
     return this.emittedTextLength;
