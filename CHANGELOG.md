@@ -6,6 +6,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Added
 
+- **`[Models]` Muse Spark 1.2 support.** Full support for `muse-spark-1.2-contributor` (Go) and `muse-spark-1.2-contributor-free` (Zen). Muse models are routed through the Responses API with `truncation: disabled` and tool names truncated to 64 characters (both gateway constraints). A new `MuseThinking` strategy provides configurable thinking effort (off/low/medium/high/xhigh) via `reasoning: { effort }`, and the thinking effort picker now includes a Muse Spark entry. Fallback metadata provides 1M context / 131K output limits when the live models.dev fetch is unavailable.
+
 - **`[Providers]` Configurable API base URL.** The extension no longer hardcodes the `opencode.ai` endpoints — it can now point at any compatible gateway via `opencodego.apiBaseUrl` (default `https://opencode.ai/zen/go/v1`) and `opencodezen.apiBaseUrl` (default `https://opencode.ai/zen/v1`). The extension derives the `/chat/completions`, `/messages`, `/responses`, `/models`, and (Go only) `/usage` routes from the configured base and applies them to every provider (normal chat, Agents window variants, inline completions, usage sync). Custom URLs are normalized and validated — non-`http(s)`, embedded credentials, query strings, and hashes are rejected and fall back to the default. Reload the window after changing the setting. Unit tests added for URL normalization and route construction.
 
 ---

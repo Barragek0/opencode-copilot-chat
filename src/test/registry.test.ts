@@ -57,6 +57,13 @@ describe("model registry — data-driven transport routing", () => {
     assert.equal(resolveModelRouting("gemini-3.5-flash", goProvider).endpointKind, "chat-completions");
   });
 
+  it("routes Muse Spark to the Responses API on every vendor", () => {
+    assert.equal(resolveModelRouting("muse-spark-1.2-contributor", goProvider).endpointKind, "responses");
+    assert.equal(resolveModelRouting("muse-spark-1.2-contributor", goProvider).endpointUrl, goProvider.responsesUrl);
+    assert.equal(resolveModelRouting("muse-spark-1.2-contributor-free", zenProvider).endpointKind, "responses");
+    assert.equal(resolveModelRouting("muse-spark-1.2-contributor-free", zenProvider).endpointUrl, zenProvider.responsesUrl);
+  });
+
   it("defaults every other known family to chat-completions", () => {
     for (const modelId of ["deepseek-v4-flash", "glm-5.1", "kimi-k2.6", "mimo-v2.5", "qwen3.8-max"]) {
       assert.equal(resolveModelRouting(modelId, goProvider).endpointKind, "chat-completions", modelId);
@@ -87,6 +94,7 @@ describe("model registry — data-driven thinking family", () => {
     assert.equal(thinkingFamily("qwen3.5-plus"), "qwen");
     assert.equal(thinkingFamily("qwen3.7-max"), "qwen");
     assert.equal(thinkingFamily("mimo-v2.5"), "mimo");
+    assert.equal(thinkingFamily("muse-spark-1.2-contributor"), "muse");
   });
 
   it("returns null for families without a dedicated strategy", () => {

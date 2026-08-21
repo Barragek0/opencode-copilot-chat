@@ -48,6 +48,13 @@ export interface StreamRequestOptions {
    * to prevent <think> tags in content from rendering as blank code blocks.
    */
   forceStripThinkTags?: boolean;
+  /**
+   * Truncated → original tool name map for the Responses API round-trip.
+   * Muse Spark truncates names >64 chars at request build time; the
+   * extractor reverse-looks up before emitting `LanguageModelToolCallPart`.
+   * Only set for the Responses transport when truncation was applied.
+   */
+  toolNameMap?: ReadonlyMap<string, string>;
 }
 
 export interface TransportRequestSummary {

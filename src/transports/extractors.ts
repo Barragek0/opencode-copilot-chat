@@ -152,6 +152,14 @@ class OpenAiResponseExtractor extends BaseResponseExtractor {
      * worked around.)
      */
     private readonly treatReasoningAsContent = false,
+    /**
+     * Truncated → original tool name map for the Responses API round-trip.
+     * Muse Spark truncates names >64 chars at request build time; the model
+     * returns the truncated name, so we reverse-lookup before emitting the
+     * `LanguageModelToolCallPart` so VS Code can resolve the original tool.
+     * Mirrors `toolNamesById` in `src/request/google.ts`.
+     */
+    private readonly toolNameMap?: ReadonlyMap<string, string>,
   ) {
     super(onReasoningContent, onReasoningDebug, thinkFilter, progress, localRequestId, output);
   }
@@ -333,10 +341,14 @@ class OpenAiResponseExtractor extends BaseResponseExtractor {
 
   private flushToolCalls(): vscode.LanguageModelToolCallPart[] {
     const calls = this.toolCallAccumulator.flush();
-    const parts = calls.map(
-      (call, index) =>
-        new vscode.LanguageModelToolCallPart(call.id || `opencodego-tool-${String(Date.now())}-${String(index)}`, call.name, call.input),
-    );
+    const parts = calls.map((call, index) => {
+      const resolvedName = this.toolNameMap?.get(call.name) ?? call.name;
+      return new vscode.LanguageModelToolCallPart(
+        call.id || `opencodego-tool-${String(Date.now())}-${String(index)}`,
+        resolvedName,
+        call.input,
+      );
+    });
 
     if (this.reasoningContent.trim()) {
       this.onReasoningDebug?.(this.reasoningContent);

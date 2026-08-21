@@ -14,6 +14,7 @@ import {
   SETTING_THINKING_GLM,
   SETTING_THINKING_KIMI,
   SETTING_THINKING_MIMO,
+  SETTING_THINKING_MUSE,
   SETTING_THINKING_MINIMAX,
   SETTING_THINKING_OPENAI,
   SETTING_THINKING_QWEN,
@@ -41,6 +42,7 @@ export const THINKING_ALLOWED_VALUES = {
   qwen: ["auto", "on", "off"],
   qwenBudget: ["auto", "4096", "16384", "32768", "81920"],
   mimo: ["off", "low", "medium", "high"],
+  muse: ["off", "low", "medium", "high", "xhigh"],
 } as const;
 
 /** Return `value` when it is one of `allowed`, else `fallback`. */
@@ -165,6 +167,11 @@ export function getSettings(): ApiSettings {
         config.get(SETTING_THINKING_MIMO, THINKING_DEFAULTS.mimo),
         THINKING_ALLOWED_VALUES.mimo,
         THINKING_DEFAULTS.mimo,
+      ),
+      muse: validThinkingValue(
+        config.get(SETTING_THINKING_MUSE, THINKING_DEFAULTS.muse),
+        THINKING_ALLOWED_VALUES.muse,
+        THINKING_DEFAULTS.muse,
       ),
     },
     stripThinkTags: config.get<ApiSettings["stripThinkTags"]>(SETTING_STRIP_THINK_TAGS, "auto"),

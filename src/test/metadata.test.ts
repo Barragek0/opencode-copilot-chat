@@ -193,3 +193,24 @@ describe("normalizeLiveModelMetadata — modality-based vision detection", () =>
     assert.notEqual(plain?.supportsVision, true);
   });
 });
+
+describe("fallbackModelMetadata — Muse Spark 1.2 limits", () => {
+  it("returns context/output limits for the Go contributor variant", () => {
+    const meta = fallbackModelMetadata("muse-spark-1.2-contributor", GO_VENDOR);
+    assert.ok(meta, "expected fallback metadata for muse-spark-1.2-contributor");
+    assert.equal(meta.contextWindow, 1_048_576);
+    assert.equal(meta.maxOutputTokens, 131_072);
+  });
+
+  it("returns context/output limits for the Zen free variant", () => {
+    const meta = fallbackModelMetadata("muse-spark-1.2-contributor-free", ZEN_VENDOR);
+    assert.ok(meta, "expected fallback metadata for muse-spark-1.2-contributor-free");
+    assert.equal(meta.contextWindow, 1_048_576);
+    assert.equal(meta.maxOutputTokens, 131_072);
+  });
+
+  it("does NOT report temperature: false (temperature is accepted)", () => {
+    const meta = fallbackModelMetadata("muse-spark-1.2-contributor", GO_VENDOR);
+    assert.notEqual(meta?.temperature, false);
+  });
+});

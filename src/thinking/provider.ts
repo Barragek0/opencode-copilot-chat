@@ -21,6 +21,7 @@ import { MiniMaxThinking } from "./minimax";
 import { OpenAiThinking } from "./openai";
 import { QwenThinking } from "./qwen";
 import { MimoThinking } from "./mimo";
+import { MuseThinking } from "./muse";
 import { FallbackThinking } from "./fallback";
 
 /** Strategy interface implemented by each per-provider thinking class. */
@@ -72,6 +73,8 @@ export function thinkingProviderFor(modelId: string, metadata?: ResolvedModelMet
       return new QwenThinking(modelId);
     case "mimo":
       return new MimoThinking(modelId);
+    case "muse":
+      return new MuseThinking(modelId);
     default:
       return new FallbackThinking(modelId, metadata);
   }

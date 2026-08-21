@@ -20,6 +20,7 @@ const defaultSettings: ThinkingSettings = {
   qwen: "off",
   qwenBudget: "auto",
   mimo: "off",
+  muse: "off",
 };
 
 /** Minimal reasoning-capable metadata used for schema tests. */
@@ -194,6 +195,25 @@ describe("MimoThinking — payload + display (native reasoning model)", () => {
       provider.treatReasoningAsContent("https://opencode.ai/zen/v1/chat/completions", { ...defaultSettings, mimo: "off" }),
       false,
     );
+  });
+});
+
+describe("MuseThinking — payload + display (native reasoning model)", () => {
+  it("muse 'off' emits empty object (no reasoning fields)", () => {
+    const payload = thinkingProviderFor("muse-spark-1.2-contributor").buildPayload({ ...defaultSettings, muse: "off" });
+    assert.deepEqual(payload, {});
+  });
+
+  it("muse 'high' emits nested reasoning.effort (Responses API)", () => {
+    const payload = thinkingProviderFor("muse-spark-1.2-contributor").buildPayload({ ...defaultSettings, muse: "high" });
+    assert.deepEqual(payload, { reasoning: { effort: "high" } });
+  });
+
+  it("never surfaces reasoning_content as visible text (native reasoning model)", () => {
+    const provider = thinkingProviderFor("muse-spark-1.2-contributor");
+    const responsesUrl = "https://opencode.ai/zen/go/v1/responses";
+    assert.equal(provider.treatReasoningAsContent(responsesUrl, { ...defaultSettings, muse: "off" }), false);
+    assert.equal(provider.treatReasoningAsContent(responsesUrl, { ...defaultSettings, muse: "high" }), false);
   });
 });
 
@@ -378,6 +398,10 @@ describe("thinkingFamily — detection", () => {
     assert.equal(thinkingFamily("kimi-k2.6"), "kimi");
   });
 
+  it("classifies muse-spark-1.2-contributor as 'muse'", () => {
+    assert.equal(thinkingFamily("muse-spark-1.2-contributor"), "muse");
+  });
+
   it("returns null for unknown prefixes", () => {
     assert.equal(thinkingFamily("unknown-model"), null);
   });
@@ -435,6 +459,7 @@ describe("schema defaults stay aligned with THINKING_DEFAULTS", () => {
       ["gpt-5.6-luna", "openai"],
       ["qwen3.6-plus", "qwen"],
       ["mimo-v2.5", "mimo"],
+      ["muse-spark-1.2-contributor", "muse"],
     ];
     for (const [modelId, key] of cases) {
       const schema = thinkingProviderFor(modelId).schema();

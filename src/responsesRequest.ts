@@ -6,6 +6,7 @@ export interface ResponsesRequestEnvelopeOptions {
   thinkingPayload?: Record<string, unknown>;
   tools?: readonly unknown[];
   toolChoice?: unknown;
+  truncation?: "auto" | "disabled";
 }
 
 /**
@@ -41,7 +42,7 @@ export function buildResponsesRequestEnvelope(options: ResponsesRequestEnvelopeO
     model: options.model,
     input: options.input,
     max_output_tokens: options.maxOutputTokens,
-    truncation: "auto",
+    truncation: options.truncation ?? "auto",
     ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     stream: true,
     ...(options.thinkingPayload ?? {}),
