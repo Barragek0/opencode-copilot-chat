@@ -191,6 +191,8 @@ export const HISTORY_TRIM_TARGET_RATIO = 0.7;
  * regardless of how the token heuristic estimates the history.
  */
 export const MAX_REQUEST_PAYLOAD_BYTES = 512 * 1024;
+/** Bytes per token used to scale the history byte cap with the context window. */
+export const HISTORY_BYTES_PER_TOKEN = 4.5;
 /** Hard ceiling (base64 chars) for a normalized image attachment. */
 export const MAX_IMAGE_BASE64_BYTES = 5 * 1024 * 1024;
 /** Dimension cap for normalized images. */

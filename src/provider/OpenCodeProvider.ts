@@ -58,7 +58,6 @@ import {
   MAX_HISTORY_IMAGES_KEPT,
   HISTORY_TRIM_SAFETY_MARGIN_TOKENS,
   HISTORY_TRIM_TARGET_RATIO,
-  MAX_REQUEST_PAYLOAD_BYTES,
   RECENT_TRANSPORT_SUMMARY_LIMIT,
   RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
   SETTING_SHOW_PROVIDER_PREFIX,
@@ -81,7 +80,7 @@ import { estimateCost } from "../usage/pricing";
 import { resolveResponseApiKey } from "../apiKeyResolution";
 import { clearOpenCodeModelMetadataCache, getOpenCodeModelMetadata } from "../models/metadataFetcher";
 import { convertMessage, normalizeMessages, trimOldImagesFromHistoryInPlace } from "./messages";
-import { trimOldMessagesToFitContext } from "./historyTrim";
+import { historyByteCapForBudget, trimOldMessagesToFitContext } from "./historyTrim";
 import { estimateChatMessageTokenCount } from "./tokens";
 import {
   formatModalityBadges,
@@ -874,10 +873,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
     const ratioBudget = Math.floor(effectiveContextWindow * HISTORY_TRIM_TARGET_RATIO);
     const maxBudget = Math.max(1, effectiveContextWindow - outputReserve - HISTORY_TRIM_SAFETY_MARGIN_TOKENS);
     const inputBudget = Math.min(ratioBudget, maxBudget);
-    // Scale the byte cap with the context window so 1M models aren't clamped
-    // to ~13% (512KB ≈ 128K tokens). Token budget remains the primary limiter;
-    // the byte cap is a safety net for JSON overhead / single-message blow-ups.
-    const historyMaxBytes = Math.max(MAX_REQUEST_PAYLOAD_BYTES, Math.floor(inputBudget * 4.5));
+    const historyMaxBytes = historyByteCapForBudget(inputBudget);
     const historyTrim = trimOldMessagesToFitContext(apiMessages, inputBudget, historyMaxBytes, options.tools);
     if (historyTrim.removed > 0) {
       this.log(
