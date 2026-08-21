@@ -331,7 +331,10 @@ function normalizeResponsesFinishReason(value: string | undefined): "stop" | "to
     return "content_filter";
   }
 
-  return null;
+  // Any other non-empty value (e.g. OpenAI's `max_tool_calls`) is a valid
+  // terminal reason we simply don't map — treat it as a healthy "stop" so the
+  // stream isn't flagged as truncated when `[DONE]` is absent.
+  return "stop";
 }
 
 function normalizeResponsesUsage(usage: unknown): Record<string, unknown> | undefined {

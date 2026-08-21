@@ -32,14 +32,19 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
     treatReasoningAsContent,
   );
 
-  await streamOpenCodeResponse({
-    ...options,
-    extractStreamParts: (data) => extractor.extractStreamParts(data),
-    extractFullParts: extractChatCompletionParts,
-  });
-
-  extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
-  extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
+  try {
+    await streamOpenCodeResponse({
+      ...options,
+      usesDoneSentinel: true,
+      extractStreamParts: (data) => extractor.extractStreamParts(data),
+      extractFullParts: extractChatCompletionParts,
+    });
+  } finally {
+    // Flush accumulated tool calls / reasoning even when the engine throws
+    // (e.g. truncation detection) so nothing already received is dropped.
+    extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
+    extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
+  }
   // Dormant marker path: no provider treats reasoning as visible text anymore
   // (old gateway #37635 mislabel is not worked around), so flushReasoningMarker
   // is a no-op today — kept as the designed seam. Reported through the shared

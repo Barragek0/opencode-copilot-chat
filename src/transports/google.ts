@@ -16,15 +16,20 @@ export async function streamGoogleGenerateContent(options: StreamRequestOptions)
     options.requestHeaders["x-opencode-request"],
   );
 
-  await streamOpenCodeResponse({
-    ...options,
-    url: `${options.url}:streamGenerateContent?alt=sse`,
-    extractStreamParts: (data) => extractor.extractStreamParts(normalizeGoogleStreamEvent(data)),
-    extractFullParts: (data) => extractChatCompletionParts(normalizeGoogleFullResponse(data)),
-  });
-
-  extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
-  extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
+  try {
+    await streamOpenCodeResponse({
+      ...options,
+      usesDoneSentinel: false,
+      url: `${options.url}:streamGenerateContent?alt=sse`,
+      extractStreamParts: (data) => extractor.extractStreamParts(normalizeGoogleStreamEvent(data)),
+      extractFullParts: (data) => extractChatCompletionParts(normalizeGoogleFullResponse(data)),
+    });
+  } finally {
+    // Flush accumulated tool calls / reasoning even when the engine throws
+    // (e.g. truncation detection) so nothing already received is dropped.
+    extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
+    extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
+  }
   options.output?.appendLine(
     `[stream-summary model=${options.modelId}] textChars=${String(extractor.emittedText)} toolCalls=${String(extractor.emittedTools)} reasoningChars=${String(extractor.reasoningChars)}`,
   );
