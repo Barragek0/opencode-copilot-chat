@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { trimOldMessagesToFitContext } from "../provider/historyTrim.js";
+import { historyByteCapForBudget, trimOldMessagesToFitContext } from "../provider/historyTrim.js";
+import { HISTORY_BYTES_PER_TOKEN, MAX_REQUEST_PAYLOAD_BYTES } from "../config.js";
 import type { ApiMessage } from "../request/types.js";
 
 function textMessage(role: ApiMessage["role"], text: string): ApiMessage {
@@ -110,5 +111,39 @@ describe("trimOldMessagesToFitContext", () => {
     assert.equal(messages[0].content, "ANCHOR-CONTEXT");
     assert.equal(messages[messages.length - 1].content, "CURRENT-PROMPT");
     assert.ok(result.removed > 0);
+  });
+});
+
+describe("historyByteCapForBudget", () => {
+  it("returns the 512KB floor for small budgets", () => {
+    assert.equal(historyByteCapForBudget(10_000), MAX_REQUEST_PAYLOAD_BYTES);
+    assert.equal(historyByteCapForBudget(50_000), MAX_REQUEST_PAYLOAD_BYTES);
+    // 100K tokens * 4.5 = 450KB < 512KB → still floor
+    assert.equal(historyByteCapForBudget(100_000), MAX_REQUEST_PAYLOAD_BYTES);
+  });
+
+  it("scales linearly above the floor", () => {
+    // 200K tokens * 4.5 = 900KB > 512KB → scaled
+    assert.equal(historyByteCapForBudget(200_000), Math.floor(200_000 * HISTORY_BYTES_PER_TOKEN));
+    assert.equal(historyByteCapForBudget(734_003), Math.floor(734_003 * HISTORY_BYTES_PER_TOKEN));
+  });
+
+  it("allows a 1M window to reach ~70% without byte-cap clamping", () => {
+    // 1M window → inputBudget ≈ 734K (70% ratio), byte cap ≈ 3.3MB
+    const inputBudget = Math.floor(1_048_576 * 0.7);
+    const byteCap = historyByteCapForBudget(inputBudget);
+    assert.ok(byteCap > 3_000_000, `1M window byte cap should exceed 3MB, got ${byteCap}`);
+    // Token budget remains the limiter: byte cap in token-equivalents >> inputBudget
+    assert.ok(byteCap / HISTORY_BYTES_PER_TOKEN > inputBudget * 0.95);
+  });
+
+  it("keeps the byte cap looser than the token budget across all window sizes", () => {
+    for (const window of [128_000, 200_000, 262_144, 512_000, 1_048_576, 1_050_000]) {
+      const inputBudget = Math.floor(window * 0.7);
+      const byteCap = historyByteCapForBudget(inputBudget);
+      // Byte cap expressed in tokens must cover the token budget (allow 1-token floor rounding).
+      const byteCapTokens = byteCap / HISTORY_BYTES_PER_TOKEN;
+      assert.ok(byteCapTokens + 1 >= inputBudget, `window ${window}: byte cap ${byteCap} too tight for budget ${inputBudget}`);
+    }
   });
 });

@@ -177,7 +177,11 @@ export function updateRequestUsageSummary(summary: RequestUsageSummary, data: un
     return;
   }
 
-  const usage = isRecord(data.usage) ? data.usage : undefined;
+  // Responses API nests usage under response.usage (response.completed event);
+  // OpenAI/Anthropic put it at top-level usage. Check both.
+  const rawUsage = isRecord(data.usage) ? data.usage : undefined;
+  const responseUsage = isRecord(data.response) && isRecord(data.response.usage) ? data.response.usage : undefined;
+  const usage = rawUsage ?? responseUsage;
   if (usage) {
     // OpenAI-compatible fields
     const promptTokens = typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : undefined;
@@ -186,6 +190,10 @@ export function updateRequestUsageSummary(summary: RequestUsageSummary, data: un
     const promptTokenDetails = isRecord(usage.prompt_tokens_details) ? usage.prompt_tokens_details : undefined;
     const cachedTokens =
       promptTokenDetails && typeof promptTokenDetails.cached_tokens === "number" ? promptTokenDetails.cached_tokens : undefined;
+    // Responses API uses input_tokens_details.cached_tokens for the same value
+    const inputTokensDetails = isRecord(usage.input_tokens_details) ? usage.input_tokens_details : undefined;
+    const cachedFromInputDetails =
+      inputTokensDetails && typeof inputTokensDetails.cached_tokens === "number" ? inputTokensDetails.cached_tokens : undefined;
 
     // Anthropic-compatible fields (input_tokens / output_tokens)
     const anthropicInputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
@@ -207,6 +215,8 @@ export function updateRequestUsageSummary(summary: RequestUsageSummary, data: un
     }
     if (cachedTokens !== undefined) {
       summary.cachedTokens = cachedTokens;
+    } else if (cachedFromInputDetails !== undefined) {
+      summary.cachedTokens = cachedFromInputDetails;
     } else if (cacheReadInputTokens !== undefined) {
       summary.cachedTokens = cacheReadInputTokens;
     }
