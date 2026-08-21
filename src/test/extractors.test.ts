@@ -121,3 +121,51 @@ describe("OpenAiResponseExtractor — truncated tool name round-trip", () => {
     assert.equal((emitted[0] as { name: string }).name, longName);
   });
 });
+
+describe("updateRequestUsageSummary — Responses nested usage", () => {
+  let updateRequestUsageSummary: typeof import("../transports/extract.js").updateRequestUsageSummary;
+
+  before(async () => {
+    const mod = await import("../transports/extract.js");
+    updateRequestUsageSummary = mod.updateRequestUsageSummary;
+  });
+
+  it("reads usage from response.usage (Responses response.completed)", () => {
+    const summary: { promptTokens?: number; completionTokens?: number; totalTokens?: number; cachedTokens?: number } = {};
+    updateRequestUsageSummary(summary, {
+      type: "response.completed",
+      response: {
+        usage: {
+          input_tokens: 231407,
+          output_tokens: 45,
+          total_tokens: 231452,
+          input_tokens_details: { cached_tokens: 230961 },
+        },
+      },
+    });
+    assert.equal(summary.promptTokens, 231407);
+    assert.equal(summary.completionTokens, 45);
+    assert.equal(summary.totalTokens, 231452);
+    assert.equal(summary.cachedTokens, 230961);
+  });
+
+  it("prefers top-level usage over response.usage when both present", () => {
+    const summary: { promptTokens?: number; completionTokens?: number } = {};
+    updateRequestUsageSummary(summary, {
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      response: { usage: { input_tokens: 999, output_tokens: 999 } },
+    });
+    assert.equal(summary.promptTokens, 10);
+    assert.equal(summary.completionTokens, 5);
+  });
+
+  it("still reads top-level usage for OpenAI/Anthropic shapes", () => {
+    const summary: { promptTokens?: number; completionTokens?: number; totalTokens?: number } = {};
+    updateRequestUsageSummary(summary, {
+      usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+    });
+    assert.equal(summary.promptTokens, 100);
+    assert.equal(summary.completionTokens, 20);
+    assert.equal(summary.totalTokens, 120);
+  });
+});

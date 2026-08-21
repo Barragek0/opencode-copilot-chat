@@ -361,6 +361,14 @@ function normalizeResponsesUsage(usage: unknown): Record<string, unknown> | unde
   };
 }
 
+/**
+ * Extract plaintext reasoning from a Responses API event.
+ *
+ * Muse Spark note: the gateway currently returns reasoning as
+ * `encrypted_content` (opaque blob) rather than `text` / `summary[].text`.
+ * That field is not decryptable client-side, so this returns "" for Muse
+ * until the gateway relays plaintext reasoning. See `src/thinking/muse.ts`.
+ */
 function extractResponsesReasoningText(data: Record<string, unknown>): string {
   const direct = firstString(data.delta, data.text, data.summary_text, data.output_text_delta);
   if (direct) {

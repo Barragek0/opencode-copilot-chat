@@ -1,4 +1,5 @@
 import type * as vscode from "vscode";
+import { HISTORY_BYTES_PER_TOKEN, MAX_REQUEST_PAYLOAD_BYTES } from "../config";
 import type { ApiMessage } from "../request/types";
 import { estimatePromptTokenCount, estimateTokenCount } from "../tokenEstimate";
 
@@ -187,4 +188,13 @@ function isUnsafeToolGroup(messages: ApiMessage[], unit: DropUnit): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Compute the effective byte cap for history trimming. Scales with the token
+ * budget so 1M windows aren't clamped to ~13% (512KB ≈ 128K tokens), while
+ * small windows keep the 512KB floor that prevents 503s on large payloads.
+ */
+export function historyByteCapForBudget(inputBudgetTokens: number): number {
+  return Math.max(MAX_REQUEST_PAYLOAD_BYTES, Math.floor(inputBudgetTokens * HISTORY_BYTES_PER_TOKEN));
 }
