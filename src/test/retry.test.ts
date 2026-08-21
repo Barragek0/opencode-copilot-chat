@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeHttp400ForRetry, isTransientServerError } from "../retry.js";
+import { analyzeHttp400ForRetry, isTransientFetchError, isTransientServerError } from "../retry.js";
 
 describe("analyzeHttp400ForRetry — thinking errors", () => {
   it("patches 'only type=enabled is allowed' to force thinking.type='enabled'", () => {
@@ -150,5 +150,41 @@ describe("isTransientServerError", () => {
 
   it("matches Router.Unavailable case-insensitively", () => {
     assert.equal(isTransientServerError(500, "type: router.unavailable"), true);
+  });
+});
+
+describe("isTransientFetchError", () => {
+  it("retries the generic undici 'TypeError: fetch failed' wrapper", () => {
+    assert.equal(isTransientFetchError(new TypeError("fetch failed")), true);
+  });
+
+  it("retries undici network error codes via error.cause", () => {
+    for (const code of ["ECONNRESET", "EAI_AGAIN", "ECONNREFUSED", "ECONNABORTED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"]) {
+      const err = new Error("fetch failed", { cause: { code } });
+      assert.equal(isTransientFetchError(err), true, `expected ${code} to be transient`);
+    }
+  });
+
+  it("retries UND_ERR_* connect/socket timeouts via error.cause.name", () => {
+    for (const name of ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "UND_ERR_REQUEST_TIMEOUT"]) {
+      const err = new Error("fetch failed", { cause: { name } });
+      assert.equal(isTransientFetchError(err), true, `expected ${name} to be transient`);
+    }
+  });
+
+  it("retries AbortSignal.timeout TimeoutError but not cancellation AbortError", () => {
+    assert.equal(isTransientFetchError(new DOMException("Aborted", "AbortError")), false);
+    assert.equal(isTransientFetchError(new DOMException("Timeout", "TimeoutError")), true);
+  });
+
+  it("retries HTTP 408/429/5xx surfaced as a message but not 4xx", () => {
+    assert.equal(isTransientFetchError(new Error("Model list request failed (503): upstream down")), true);
+    assert.equal(isTransientFetchError(new Error("Model list request failed (429): rate limited")), true);
+    assert.equal(isTransientFetchError(new Error("Model list request failed (408): timeout")), true);
+    assert.equal(isTransientFetchError(new Error("Model list request failed (400): bad request")), false);
+  });
+
+  it("treats an unknown plain error as permanent", () => {
+    assert.equal(isTransientFetchError(new Error("something unexpected")), false);
   });
 });

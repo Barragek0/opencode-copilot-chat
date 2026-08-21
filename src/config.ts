@@ -168,6 +168,29 @@ export const IMAGE_TOKEN_ESTIMATE = 1024;
 export const MAX_TOOL_RESULT_IMAGE_BYTES = 1_000_000;
 /** Max images kept in conversation history before older ones are placeholder-replaced. */
 export const MAX_HISTORY_IMAGES_KEPT = 2;
+/**
+ * Tokens reserved below the model's input context window when trimming old
+ * conversation history. Keeps the trimmed payload safely under the limit so the
+ * upstream never rejects an oversized request (HTTP 400 / empty "No response").
+ */
+export const HISTORY_TRIM_SAFETY_MARGIN_TOKENS = 2048;
+/**
+ * Fraction of the model's input context window the trimmed history is allowed
+ * to occupy. The upstream rejects (HTTP 400/503) or returns an empty stream
+ * once the request approaches the full window, so we stay safely below it.
+ * The reporter observed failures starting at ~70% context, so this is the
+ * ceiling; {@link MAX_REQUEST_PAYLOAD_BYTES} is the hard byte backstop.
+ */
+export const HISTORY_TRIM_TARGET_RATIO = 0.7;
+/**
+ * Hard ceiling on the serialized request payload (bytes). Even after token
+ * trimming, a single oversized turn or an inaccurate token estimate can still
+ * produce a payload the gateway rejects — the reporter hit a 503 at ~783 KB —
+ * so we drop the oldest messages until the wire payload is under this size.
+ * This is the reliable guarantee: it bounds the actual bytes sent upstream
+ * regardless of how the token heuristic estimates the history.
+ */
+export const MAX_REQUEST_PAYLOAD_BYTES = 512 * 1024;
 /** Hard ceiling (base64 chars) for a normalized image attachment. */
 export const MAX_IMAGE_BASE64_BYTES = 5 * 1024 * 1024;
 /** Dimension cap for normalized images. */
@@ -276,6 +299,16 @@ export const DEFAULT_VISION_PROXY_PROMPT =
 export const TRANSIENT_5XX_MAX_RETRIES = 2;
 export const TRANSIENT_5XX_RETRY_BASE_MS = 1000;
 export const TRANSIENT_5XX_RETRY_JITTER_MS = 250;
+
+// ─── Transient network (fetch) retry for chat requests (engine.ts) ───────────
+// Mirrors the model-list fetch resilience (issue #78): a `fetch()` that *throws*
+// (undici `TypeError: fetch failed` — ECONNRESET / EAI_AGAIN / UND_ERR_CONNECT_TIMEOUT
+// under concurrent load, nodejs/undici#5450) is retried with exponential backoff
+// so a transient socket race doesn't surface as a hard "Sorry, your request failed".
+
+export const TRANSIENT_FETCH_MAX_RETRIES = 3;
+export const TRANSIENT_FETCH_RETRY_BASE_MS = 500;
+export const TRANSIENT_FETCH_RETRY_JITTER_MS = 250;
 
 // ─── Model classification ────────────────────────────────────────────────────
 

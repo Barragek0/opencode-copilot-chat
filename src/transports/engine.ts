@@ -9,11 +9,13 @@ import {
 } from "../errors";
 import {
   analyzeHttp400ForRetry,
+  isTransientFetchError,
   isTransientServerError,
   TRANSIENT_5XX_MAX_RETRIES,
   TRANSIENT_5XX_RETRY_BASE_MS,
   TRANSIENT_5XX_RETRY_JITTER_MS,
 } from "../retry";
+import { TRANSIENT_FETCH_MAX_RETRIES, TRANSIENT_FETCH_RETRY_BASE_MS, TRANSIENT_FETCH_RETRY_JITTER_MS } from "../config";
 import { createUsageDataParts } from "../chatParts";
 import {
   clearContextWindowRequest,
@@ -164,7 +166,53 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
         signal: controller.signal,
       });
 
-    let response = await fetchWithBody(payload);
+    /**
+     * POST the request body, retrying transient network-level failures that
+     * `fetch()` *throws* (undici `TypeError: fetch failed` — ECONNRESET,
+     * EAI_AGAIN, UND_ERR_CONNECT_TIMEOUT, socket reuse races per
+     * nodejs/undici#5450). These are distinct from HTTP error responses (handled
+     * separately below): a thrown fetch error means no response was received at
+     * all, and without this retry it surfaces directly to the user as a hard
+     * "Sorry, your request failed".
+     *
+     * AbortError (user cancellation or our own request/stream timeout) is NEVER
+     * retried — it propagates immediately so cancellation stays responsive.
+     */
+    const fetchWithTransientRetry = async (body: string): Promise<Response> => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt <= TRANSIENT_FETCH_MAX_RETRIES; attempt++) {
+        try {
+          return await fetchWithBody(body);
+        } catch (error) {
+          lastError = error;
+          // Non-transient (incl. AbortError from cancellation/timeout) — bail now.
+          if (!isTransientFetchError(error)) {
+            throw error;
+          }
+          if (attempt === TRANSIENT_FETCH_MAX_RETRIES) {
+            break;
+          }
+          const backoffMs = Math.round(TRANSIENT_FETCH_RETRY_BASE_MS * 2 ** attempt + Math.random() * TRANSIENT_FETCH_RETRY_JITTER_MS);
+          options.output?.appendLine(
+            `[retry] transient fetch error (attempt ${String(attempt + 1)}/${String(TRANSIENT_FETCH_MAX_RETRIES + 1)}): ${getErrorMessage(error)}. Retrying in ${String(backoffMs)}ms…`,
+          );
+          await sleepWithCancellation(backoffMs, options.token);
+          if (options.token.isCancellationRequested) {
+            throw new DOMException("Aborted", "AbortError");
+          }
+        }
+      }
+      // All attempts failed with transient network errors — surface a clear,
+      // actionable error instead of the raw undici "fetch failed" wrapper.
+      const networkError = lastError instanceof Error ? lastError : new Error(getErrorMessage(lastError));
+      const requestError = new OpenCodeRequestError(
+        `${options.providerDisplayName} request failed (network error after ${String(TRANSIENT_FETCH_MAX_RETRIES + 1)} attempts): ${getErrorMessage(networkError)}`,
+        `${options.providerDisplayName} couldn't reach the gateway (network error). Check your connection, VPN, or firewall, then try again.`,
+      );
+      throw requestError;
+    };
+
+    let response = await fetchWithTransientRetry(payload);
 
     // --- Runtime retry for recoverable HTTP 400 errors ---
     // If the upstream rejects a parameter or reports an exact context overflow,
@@ -180,7 +228,7 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       if (patch) {
         options.output?.appendLine(`[retry] HTTP 400 recoverable: ${patch.reason}. Retrying with patched body…`);
         payload = JSON.stringify(patch.body);
-        response = await fetchWithBody(payload);
+        response = await fetchWithTransientRetry(payload);
         options.output?.appendLine(`[retry] Response after patch: ${String(response.status)} ${response.statusText}`);
         // If retry also returned 400, consume its body so the normal error
         // handler below doesn't try to re-read (the stream is already consumed).
@@ -222,7 +270,7 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       if (options.token.isCancellationRequested) {
         break;
       }
-      response = await fetchWithBody(payload);
+      response = await fetchWithTransientRetry(payload);
       // A fresh response may carry a new error body; drop stale detail.
       consumedErrorBody = undefined;
     }
