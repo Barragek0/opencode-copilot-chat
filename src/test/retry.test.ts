@@ -24,6 +24,23 @@ describe("analyzeHttp400ForRetry — thinking errors", () => {
     assert.ok(result, "should be recoverable");
     assert.deepEqual(result.body, { model: "test", temperature: 0.2 });
   });
+
+  it("patches GLM 'cannot be disabled' by removing thinking (issue #162)", () => {
+    const body = { model: "glm-5.3", thinking: { type: "disabled" } };
+    const result = analyzeHttp400ForRetry(
+      "Upstream request failed: [1210] This model always engages in thinking and cannot be disabled; please use low, high, or max",
+      body,
+    );
+    assert.ok(result, "should be recoverable");
+    assert.deepEqual(result.body, { model: "glm-5.3" });
+    assert.match(result.reason, /cannot disable thinking/i);
+  });
+
+  it("does not patch unrelated errors that merely contain 'cannot be disabled'", () => {
+    const body = { model: "glm-5.3", thinking: { type: "disabled" } };
+    const result = analyzeHttp400ForRetry("feature X cannot be disabled for this account", body);
+    assert.equal(result, undefined);
+  });
 });
 
 describe("analyzeHttp400ForRetry — temperature errors", () => {
