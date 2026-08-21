@@ -6,6 +6,13 @@
  *
  * DISPLAY: Muse Spark is a native reasoning model — `reasoning_content` is
  * always genuine chain-of-thought and goes to the thinking panel.
+ *
+ * NOTE: The OpenCode gateway currently returns Muse Spark reasoning as
+ * `encrypted_content` (opaque, not decryptable client-side) rather than
+ * plaintext `reasoning_content` / `summary[].text`. Until the gateway relays
+ * plaintext reasoning, thinking blocks will remain empty even when
+ * `reasoning.effort` is set. This is an upstream limitation, not a client
+ * parsing issue — see `src/core/routing.ts:extractResponsesReasoningText`.
  */
 import { BaseThinkingProvider } from "./base";
 import { schemaFromReasoningOptions, effortProperty, type ThinkingSchema } from "./schema";
