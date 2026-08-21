@@ -67,6 +67,20 @@ catch a stream that carried real content and then died.
     VPN, or firewall.") instead of silently succeeding (fixes mode 2). The
     partial content already streamed to VS Code stays visible; the error tells
     the user to retry.
+  - **Gated to `[DONE]` transports** via a per-transport `usesDoneSentinel` flag
+    (`true` for chat-completions and Responses; `false` for Google
+    `:streamGenerateContent?alt=sse` and Anthropic `/messages`, which end with
+    `message_stop`, never `[DONE]`). Non-sentinel transports are never flagged —
+    their `finishReason` can legitimately normalize to `null` on a healthy
+    stream.
+  - The engine's `finally` now calls `controller.abort()`: breaking the loop on
+    `[DONE]` can leave the socket open (the server may keep its side alive), so
+    the connection is released deterministically on every exit path. No-op when
+    the body is already fully consumed.
+- **`src/transports/{chatCompletions,responses,google,anthropic}.ts`** — the
+  post-stream flushes (`flushRemainingToolCalls` / `flushReasoningFallback`) run
+  in a `finally` around `streamOpenCodeResponse`, so tool calls / reasoning
+  already received are not dropped when the truncation error throws.
 - **`src/transports/sse.ts`** — `isStreamTruncated` is a small pure helper
   (exported) so the decision is unit-testable and not buried in the engine.
 - **`src/test/sse.test.ts`** — unit tests for `[DONE]` handling (fires `onDone`,
