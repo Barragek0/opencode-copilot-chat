@@ -1,6 +1,6 @@
 import type * as vscode from "vscode";
 import { HISTORY_BYTES_PER_TOKEN, MAX_REQUEST_PAYLOAD_BYTES } from "../config";
-import type { ApiMessage } from "../request/types";
+import type { ApiMessage, OpenAiContentPart } from "../request/types";
 import { estimatePromptTokenCount, estimateTokenCount } from "../tokenEstimate";
 
 /**
@@ -38,6 +38,9 @@ export interface HistoryTrimResult {
  *   - Runs in O(n): the full history is estimated once, then each dropped unit's
  *     size is subtracted incrementally (no per-candidate re-stringification of
  *     the whole array), so it stays fast even for very long histories.
+ *   - Base64 image data is EXCLUDED from the byte ceiling (issue #173): image
+ *     weight is already bounded by the image-history trimmer, and counting it
+ *     made vision payloads trigger futile text-history drops.
  *
  * @param messages ApiMessage[] (chronological, oldest first). Mutated in place.
  * @param budgetTokens Maximum input tokens the trimmed history may occupy.
@@ -75,7 +78,7 @@ export function trimOldMessagesToFitContext(
   // Per-unit size estimates. The running remainder keeps the JSON structure
   // overhead, so the estimate is slightly pessimistic — we never under-trim.
   const unitTokens = units.map((u) => sumUnit(messages, u, (m) => estimateTokenCount(JSON.stringify(m))));
-  const unitBytes = units.map((u) => sumUnit(messages, u, (m) => JSON.stringify(m).length));
+  const unitBytes = units.map((u) => sumUnit(messages, u, messageBytes));
 
   let remainingTokens = fullTokens;
   let remainingBytes = fullBytes;
@@ -120,8 +123,48 @@ function noTrim(messages: ApiMessage[], tools?: readonly vscode.LanguageModelCha
   };
 }
 
+/** Placeholder substituted for base64 image data when measuring byte weight. */
+const IMAGE_DATA_PLACEHOLDER = "[image]";
+
+/**
+ * Serialized size of one message, excluding base64 image payloads (#173).
+ *
+ * The gateway accepts multi-megabyte bodies (#44), so a vision payload can
+ * legitimately sit above `MAX_REQUEST_PAYLOAD_BYTES` purely from the images
+ * that survived image trimming (`MAX_HISTORY_IMAGES_KEPT`). Counting those
+ * bytes made the trimmer drop the whole text history for nothing — and still
+ * fail, since the images remained. Image weight is already bounded by the
+ * image trimmer; the byte ceiling exists to bound *text* growth, so image
+ * data is excluded here while the JSON structure overhead stays counted
+ * (slightly pessimistic — we never under-trim).
+ */
+function messageBytes(m: ApiMessage): number {
+  return JSON.stringify(stripImageData(m)).length;
+}
+
 function payloadBytes(messages: ApiMessage[], tools?: readonly vscode.LanguageModelChatTool[]): number {
-  return JSON.stringify({ messages, ...(tools?.length ? { tools } : {}) }).length;
+  return JSON.stringify({ messages: messages.map(stripImageData), ...(tools?.length ? { tools } : {}) }).length;
+}
+
+/**
+ * Shallow clone of `m` with base64 image URLs replaced by a short placeholder.
+ * Returns `m` itself when there is nothing to strip (the common case).
+ */
+function stripImageData(m: ApiMessage): ApiMessage {
+  if (!Array.isArray(m.content)) {
+    return m;
+  }
+  // Copy-on-write: only clone the array when an oversized data URL is found.
+  let stripped: OpenAiContentPart[] | undefined;
+  for (let i = 0; i < m.content.length; i++) {
+    const part = m.content[i];
+    const url = part.type === "image_url" ? part.image_url?.url : undefined;
+    if (typeof url === "string" && url.length > IMAGE_DATA_PLACEHOLDER.length) {
+      stripped ??= [...m.content];
+      stripped[i] = { ...part, image_url: { url: IMAGE_DATA_PLACEHOLDER } };
+    }
+  }
+  return stripped ? { ...m, content: stripped } : m;
 }
 
 function sumUnit(messages: ApiMessage[], unit: DropUnit, measure: (m: ApiMessage) => number): number {
