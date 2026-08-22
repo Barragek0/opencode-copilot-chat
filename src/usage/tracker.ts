@@ -4,8 +4,6 @@ import type { TransportRequestSummary } from "../core/transport";
 import { fetchGoUsage, mergeServerUsage, GO_USAGE_SYNC_TTL_MS, type GoUsageApiResponse } from "./goUsageSync";
 import {
   GO_LIMITS,
-  FIVE_HOURS_MS,
-  WEEK_MS,
   GO_USAGE_LOG_KEY,
   GO_USAGE_BASELINE_KEY,
   GO_EVER_TRACKED_KEY,
@@ -35,231 +33,22 @@ const EVER_TRACKED_KEY = GO_EVER_TRACKED_KEY;
 const SESSION_COSTS_KEY = GO_SESSION_COSTS_KEY;
 const MAX_LOG_ENTRIES = GO_MAX_LOG_ENTRIES;
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// Types and pure helpers live in sibling modules; re-exported so existing
+// `usage/tracker` import paths keep working.
+export * from "./trackerTypes";
+export { startOfLocalDay, normalizeCwd, isCwdInWorkspace } from "./trackerWindows";
+import { buildSqliteEnrichedSummary, buildSummaryFromTracked, type SummaryContext } from "./trackerSummary";
+import type {
+  GoUsageTrackerOptions,
+  SessionCostSummary,
+  UsageBaseline,
+  UsageBaselineTargets,
+  UsageLogEntry,
+  UsageSummary,
+} from "./trackerTypes";
+import { buildMonthlyWindow, isCwdInWorkspace, startOfLocalDay, startOfUtcDay } from "./trackerWindows";
 
-export interface UsageLogEntry {
-  /** Unix timestamp ms */
-  timestamp: number;
-  modelId: string;
-  /** Estimated cost in USD */
-  cost: number;
-  promptTokens: number;
-  completionTokens: number;
-  cachedTokens: number;
-  /** Chat session identifier (stable hash per conversation thread). */
-  sessionId?: string;
-  /** Credits for VS Code session cost (1 credit = $0.01). */
-  copilotCredits?: number;
-}
-
-/** Aggregated cost for a single chat session. */
-export interface SessionCostSummary {
-  sessionId: string;
-  cost: number;
-  requests: number;
-  promptTokens: number;
-  completionTokens: number;
-  lastActivity: number;
-}
-
-export interface PeriodUsage {
-  spent: number;
-  limit: number;
-  percent: number;
-  resetsAt: Date;
-}
-
-export interface UsageSummary {
-  session: PeriodUsage;
-  weekly: PeriodUsage;
-  monthly: PeriodUsage;
-  today: UsageDaily;
-  yesterday: UsageDaily;
-  /** All-time usage in the CURRENT workspace (from OpenCode CLI history). */
-  codebase: UsageDaily;
-  hasData: boolean;
-  /** When true, cost data comes from the OpenCode CLI SQLite database
-            (actual billed amounts). When false, costs are estimated locally. */
-  sqliteAvailable: boolean;
-}
-
-/**
- * Per-view knobs resolved live so the user can pick how usage is presented.
- * All resolvers are optional — the tracker falls back to sensible defaults.
- */
-export interface GoUsageTrackerOptions {
-  /** Absolute paths of the current VS Code workspace folders. */
-  resolveWorkspaceFolders?: () => readonly string[];
-  /** Source of the Today/Yesterday rows (default "auto"). */
-  resolveTodayYesterdaySource?: () => UsageTodayYesterdaySource;
-  /** Codebase window in days; 0 = forever (default). */
-  resolveCodebaseWindowDays?: () => number;
-  /** Day boundary for Today/Yesterday ("utc" default | "local"). */
-  resolveDayBoundary?: () => "utc" | "local";
-  /** Usage endpoint derived from the configured Go API base URL. */
-  resolveUsageUrl?: () => string;
-}
-
-interface UsageBaselinePeriod {
-  amount: number;
-  expiresAt: number;
-}
-
-interface UsageBaseline {
-  session?: UsageBaselinePeriod;
-  weekly?: UsageBaselinePeriod;
-  monthly?: UsageBaselinePeriod & {
-    /** The user's billing anchor day (1-31) for the monthly reset. */
-    anchorDay?: number;
-    /** The user's billing anchor hour (0-23 UTC) for the monthly reset. */
-    anchorHour?: number;
-  };
-}
-
-export interface UsageBaselineTargets {
-  session: number;
-  weekly: number;
-  monthly: number;
-  /** Day of month (1-31) when monthly counter resets. Combined with monthlyAnchorHour. */
-  monthlyAnchorDay?: number;
-  /** Hour of day (0-23 UTC) when monthly counter resets. Combined with monthlyAnchorDay. */
-  monthlyAnchorHour?: number;
-}
-
-// ─── Time window helpers ─────────────────────────────────────────────────────
-
-function startOfUtcDay(nowMs: number): number {
-  const d = new Date(nowMs);
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
-
-/** Start of the LOCAL day — used when `usageDayBoundary` is set to "local". */
-export function startOfLocalDay(nowMs: number): number {
-  const d = new Date(nowMs);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
-
-/** Normalize a directory path for matching (trailing separators, Windows case). */
-export function normalizeCwd(value: string): string {
-  let normalized = value.replace(/[\/]+$/, "");
-  if (process.platform === "win32") {
-    normalized = normalized.toLowerCase();
-  }
-  return normalized;
-}
-
-/** Whether `value` starts with `prefix` followed by a path separator. */
-function startsWithPathSegment(value: string, prefix: string): boolean {
-  if (!value.startsWith(prefix)) {
-    return false;
-  }
-  return value.length > prefix.length && (value.charAt(prefix.length) === "/" || value.charAt(prefix.length) === "\\");
-}
-
-/**
- * Whether a CLI row's working directory belongs to the current workspace.
- * Matches when the folder equals the cwd, is a parent of it (the user opened
- * the repo root but the CLI ran in a subfolder), or the folder is a subfolder
- * of the cwd (the user opened a subfolder of the project).
- *
- * Segment-boundary matching accepts both `/` and `\` so POSIX-style paths and
- * native Windows paths (where the separator is `\`) both match on any host.
- */
-export function isCwdInWorkspace(cwd: string | undefined, workspaceFolders: readonly string[]): boolean {
-  if (!cwd || workspaceFolders.length === 0) {
-    return false;
-  }
-  const rowCwd = normalizeCwd(cwd);
-  for (const folder of workspaceFolders) {
-    const normalized = normalizeCwd(folder);
-    if (rowCwd === normalized) return true;
-    if (startsWithPathSegment(rowCwd, normalized)) return true;
-    if (startsWithPathSegment(normalized, rowCwd)) return true;
-  }
-  return false;
-}
-
-function startOfUtcWeek(nowMs: number): number {
-  const d = new Date(nowMs);
-  const offset = (d.getUTCDay() + 6) % 7; // Monday=0
-  d.setUTCDate(d.getUTCDate() - offset);
-  d.setUTCHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function anchoredMonthStart(nowMs: number, anchorDay: number, anchorHour: number): number {
-  const now = new Date(nowMs);
-  let year = now.getUTCFullYear();
-  let month = now.getUTCMonth();
-  let candidate = Date.UTC(year, month, anchorDay, anchorHour, 0, 0, 0);
-  if (candidate > nowMs) {
-    if (month === 0) {
-      year--;
-      month = 11;
-    } else {
-      month--;
-    }
-    candidate = Date.UTC(year, month, anchorDay, anchorHour, 0, 0, 0);
-  }
-  return candidate;
-}
-
-function anchoredMonthEnd(startMs: number, anchorDay: number, anchorHour: number): number {
-  const d = new Date(startMs);
-  let year = d.getUTCFullYear();
-  let month = d.getUTCMonth() + 1;
-  if (month > 11) {
-    year++;
-    month = 0;
-  }
-  return Date.UTC(year, month, anchorDay, anchorHour, 0, 0, 0);
-}
-
-/** Build the monthly window: manual anchor > auto-anchor from earliest row > calendar month. */
-function buildMonthlyWindow(
-  nowMs: number,
-  baseline: UsageBaseline,
-  earliestMs?: number | null,
-): { monthStartMs: number; monthEndMs: number } {
-  // Priority 1: user-configured anchor (set via "Set spent targets")
-  const monthly = baseline.monthly;
-  const monthlyAnchor = monthly?.anchorDay;
-  if (monthly && monthlyAnchor && monthlyAnchor >= 1 && monthlyAnchor <= 31) {
-    const hour = monthly.anchorHour ?? 0;
-    const start = anchoredMonthStart(nowMs, monthlyAnchor, hour);
-    const end = anchoredMonthEnd(start, monthlyAnchor, hour);
-    return { monthStartMs: start, monthEndMs: end };
-  }
-  // Priority 2: auto-anchor from earliest SQLite row (actual billing start)
-  if (earliestMs != null) {
-    const d = new Date(earliestMs);
-    const day = d.getUTCDate();
-    const hour = d.getUTCHours();
-    const start = anchoredMonthStart(nowMs, day, hour);
-    const end = anchoredMonthEnd(start, day, hour);
-    return { monthStartMs: start, monthEndMs: end };
-  }
-  // Fallback: calendar month
-  const now = new Date(nowMs);
-  return {
-    monthStartMs: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-    monthEndMs: Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
-  };
-}
-
-/** Rolling reset: oldest entry in the current 5h window + 5h */
-function nextSessionReset(entries: UsageLogEntry[], nowMs: number): Date {
-  const windowStart = nowMs - FIVE_HOURS_MS;
-  let oldest: number | null = null;
-  for (const e of entries) {
-    if (e.timestamp >= windowStart && e.timestamp < nowMs) {
-      if (oldest === null || e.timestamp < oldest) oldest = e.timestamp;
-    }
-  }
-  return new Date((oldest ?? nowMs) + FIVE_HOURS_MS);
-}
-
-// ─── Exported tracker class ──────────────────────────────────────────────────
+// ─── Tracker ─────────────────────────────────────────────────────────────────
 
 export class GoUsageTracker {
   private entries: UsageLogEntry[] = [];
@@ -460,6 +249,27 @@ export class GoUsageTracker {
     return this.serverUsage ? mergeServerUsage(enriched, this.serverUsage, GO_LIMITS) : enriched;
   }
 
+  /** The tracker-state view the pure summary builders in `trackerSummary.ts` read. */
+  private summaryContext(): SummaryContext {
+    return {
+      entries: this.entries,
+      baseline: this.baseline,
+      everTracked: this.everTracked,
+      dayStartMs: (nowMs) => this.dayStartMs(nowMs),
+      dailyUsage: (rows, dayMs) => this.dailyUsage(rows, dayMs),
+      codebaseUsage: (rows) => this.codebaseUsage(rows),
+      getActiveBaselineAmount: (period, nowMs) => this.getActiveBaselineAmount(period, nowMs),
+    };
+  }
+
+  private buildSqliteEnrichedSummary(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
+    return buildSqliteEnrichedSummary(this.summaryContext(), nowMs, rows, clamp);
+  }
+
+  private buildSummaryFromTracked(nowMs: number, clamp: (v: number, limit: number) => number): UsageSummary {
+    return buildSummaryFromTracked(this.summaryContext(), nowMs, clamp);
+  }
+
   private dayStartMs(nowMs: number): number {
     return this.options.resolveDayBoundary?.() === "local" ? startOfLocalDay(nowMs) : startOfUtcDay(nowMs);
   }
@@ -556,220 +366,6 @@ export class GoUsageTracker {
     this.log?.("[go-usage] Server usage synced.");
     return true;
   }
-
-  /** Build summary from SQLite, enriched with merged today/yesterday + codebase totals. */
-  private buildSqliteEnrichedSummary(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
-    const base = this.buildSummaryFromRows(nowMs, rows, clamp);
-
-    // Today/Yesterday merge the CLI history (cost + tokens + requests) with
-    // the extension's own tracked requests — the two never overlap, so the
-    // sum is the user's real combined usage for the day.
-    const dayMs = this.dayStartMs(nowMs);
-    const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
-    const today = this.dailyUsage(rows, dayMs);
-    const yesterday = this.dailyUsage(rows, yesterdayMs);
-
-    // Apply baselines on top of SQLite costs.
-    const activeBaselineSession = this.getActiveBaselineAmount("session", nowMs);
-    const activeBaselineWeekly = this.getActiveBaselineAmount("weekly", nowMs);
-    const activeBaselineMonthly = this.getActiveBaselineAmount("monthly", nowMs);
-
-    return {
-      session: {
-        ...base.session,
-        spent: Math.round((base.session.spent + activeBaselineSession) * 10000) / 10000,
-        percent: clamp(base.session.spent + activeBaselineSession, GO_LIMITS.session),
-      },
-      weekly: {
-        ...base.weekly,
-        spent: Math.round((base.weekly.spent + activeBaselineWeekly) * 10000) / 10000,
-        percent: clamp(base.weekly.spent + activeBaselineWeekly, GO_LIMITS.weekly),
-      },
-      monthly: {
-        ...base.monthly,
-        spent: Math.round((base.monthly.spent + activeBaselineMonthly) * 10000) / 10000,
-        percent: clamp(base.monthly.spent + activeBaselineMonthly, GO_LIMITS.monthly),
-      },
-      today,
-      yesterday,
-      codebase: this.codebaseUsage(rows),
-      hasData: true,
-      sqliteAvailable: true,
-    };
-  }
-
-  /** Build summary from opencode.db rows (enrichment data from CLI history) */
-  private buildSummaryFromRows(nowMs: number, rows: HistoryRow[], clamp: (v: number, limit: number) => number): UsageSummary {
-    const dayMs = startOfUtcDay(nowMs);
-    const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
-    const weekMs = startOfUtcWeek(nowMs);
-    const sessionStart = nowMs - FIVE_HOURS_MS;
-    const earliest = rows.length > 0 ? Math.min(...rows.map((r) => r.createdMs)) : null;
-    const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, this.baseline, earliest);
-    const weekEnd = weekMs + WEEK_MS;
-
-    let sessionCost = 0,
-      weeklyCost = 0,
-      monthlyCost = 0;
-    let todayCost = 0,
-      todayReq = 0;
-    let yestCost = 0,
-      yestReq = 0;
-
-    for (const r of rows) {
-      if (r.createdMs >= sessionStart && r.createdMs <= nowMs) sessionCost += r.cost;
-      if (r.createdMs >= weekMs && r.createdMs <= nowMs) weeklyCost += r.cost;
-      if (r.createdMs >= monthStartMs && r.createdMs < monthEndMs) monthlyCost += r.cost;
-      if (r.createdMs >= dayMs) {
-        todayCost += r.cost;
-        todayReq += 1;
-      } else if (r.createdMs >= yesterdayMs) {
-        yestCost += r.cost;
-        yestReq += 1;
-      }
-    }
-
-    // Rolling 5h reset: oldest entry in window + 5h
-    let oldest: number | null = null;
-    for (const r of rows) {
-      if (r.createdMs >= sessionStart && r.createdMs < nowMs) {
-        if (oldest === null || r.createdMs < oldest) oldest = r.createdMs;
-      }
-    }
-
-    // If a monthly baseline exists and is active, use its expiresAt for resetsAt.
-    const monthlyResetsAt = this.baseline.monthly ? new Date(this.baseline.monthly.expiresAt) : new Date(monthEndMs);
-
-    return {
-      session: {
-        spent: Math.round(sessionCost * 10000) / 10000,
-        limit: GO_LIMITS.session,
-        percent: clamp(sessionCost, GO_LIMITS.session),
-        resetsAt: new Date((oldest ?? nowMs) + FIVE_HOURS_MS),
-      },
-      weekly: {
-        spent: Math.round(weeklyCost * 10000) / 10000,
-        limit: GO_LIMITS.weekly,
-        percent: clamp(weeklyCost, GO_LIMITS.weekly),
-        resetsAt: new Date(weekEnd),
-      },
-      monthly: {
-        spent: Math.round(monthlyCost * 10000) / 10000,
-        limit: GO_LIMITS.monthly,
-        percent: clamp(monthlyCost, GO_LIMITS.monthly),
-        resetsAt: monthlyResetsAt,
-      },
-      today: {
-        cost: Math.round(todayCost * 10000) / 10000,
-        requests: todayReq,
-        tokens: 0, // not available from SQLite
-      },
-      yesterday: {
-        cost: Math.round(yestCost * 10000) / 10000,
-        requests: yestReq,
-        tokens: 0,
-      },
-      hasData: true,
-      sqliteAvailable: true,
-      codebase: { cost: 0, requests: 0, tokens: 0 },
-    };
-  }
-
-  /** Check if opencode.db is readable and has Go history */
-  get hasSQLiteData(): boolean {
-    const rows = readOpenCodeHistory();
-    return rows !== null && rows.length > 0;
-  }
-
-  /** Build summary from extension-tracked entries (fallback when opencode.db unavailable) */
-  private buildSummaryFromTracked(nowMs: number, clamp: (v: number, limit: number) => number): UsageSummary {
-    const dayMs = this.dayStartMs(nowMs);
-    const yesterdayMs = dayMs - 24 * 60 * 60 * 1000;
-    const weekMs = startOfUtcWeek(nowMs);
-    const { monthStartMs, monthEndMs } = buildMonthlyWindow(nowMs, this.baseline);
-    const sessionStart = nowMs - FIVE_HOURS_MS;
-
-    let trackedSessionCost = 0,
-      trackedWeeklyCost = 0,
-      trackedMonthlyCost = 0;
-    let todayCost = 0,
-      todayReq = 0,
-      todayTokens = 0;
-    let yestCost = 0,
-      yestReq = 0,
-      yestTokens = 0;
-
-    for (const e of this.entries) {
-      if (e.timestamp >= sessionStart && e.timestamp <= nowMs) trackedSessionCost += e.cost;
-      if (e.timestamp >= weekMs && e.timestamp <= nowMs) trackedWeeklyCost += e.cost;
-      if (e.timestamp >= monthStartMs && e.timestamp < monthEndMs) trackedMonthlyCost += e.cost;
-      if (e.timestamp >= dayMs) {
-        todayCost += e.cost;
-        todayReq += 1;
-        todayTokens += e.promptTokens + e.completionTokens;
-      } else if (e.timestamp >= yesterdayMs) {
-        yestCost += e.cost;
-        yestReq += 1;
-        yestTokens += e.promptTokens + e.completionTokens;
-      }
-    }
-
-    const activeBaselineSession = this.getActiveBaselineAmount("session", nowMs);
-    const activeBaselineWeekly = this.getActiveBaselineAmount("weekly", nowMs);
-    const activeBaselineMonthly = this.getActiveBaselineAmount("monthly", nowMs);
-
-    const sessionCost = trackedSessionCost + activeBaselineSession;
-    const weeklyCost = trackedWeeklyCost + activeBaselineWeekly;
-    const monthlyCost = trackedMonthlyCost + activeBaselineMonthly;
-
-    const weekEnd = weekMs + WEEK_MS;
-
-    // If a monthly baseline exists and is active, use its expiresAt for resetsAt
-    // instead of the anchor-based calculation (which ignores manual targets).
-    const monthlyResetsAt = this.baseline.monthly ? new Date(this.baseline.monthly.expiresAt) : new Date(monthEndMs);
-
-    return {
-      session: {
-        spent: Math.round(sessionCost * 10000) / 10000,
-        limit: GO_LIMITS.session,
-        percent: clamp(sessionCost, GO_LIMITS.session),
-        resetsAt: nextSessionReset(this.entries, nowMs),
-      },
-      weekly: {
-        spent: Math.round(weeklyCost * 10000) / 10000,
-        limit: GO_LIMITS.weekly,
-        percent: clamp(weeklyCost, GO_LIMITS.weekly),
-        resetsAt: new Date(weekEnd),
-      },
-      monthly: {
-        spent: Math.round(monthlyCost * 10000) / 10000,
-        limit: GO_LIMITS.monthly,
-        percent: clamp(monthlyCost, GO_LIMITS.monthly),
-        resetsAt: monthlyResetsAt,
-      },
-      today: {
-        cost: Math.round(todayCost * 10000) / 10000,
-        requests: todayReq,
-        tokens: todayTokens,
-      },
-      yesterday: {
-        cost: Math.round(yestCost * 10000) / 10000,
-        requests: yestReq,
-        tokens: yestTokens,
-      },
-      // Without the CLI history there is no per-directory attribution, so the
-      // codebase total falls back to everything this extension has tracked
-      // (it only ever runs inside the current workspace).
-      codebase: {
-        cost: Math.round(this.entries.reduce((total, e) => total + e.cost, 0) * 10000) / 10000,
-        requests: this.entries.length,
-        tokens: this.entries.reduce((total, e) => total + e.promptTokens + e.completionTokens, 0),
-      },
-      hasData: this.entries.length > 0 || this.everTracked,
-      sqliteAvailable: false,
-    };
-  }
-
   setManualSpentTargets(targets: UsageBaselineTargets): void {
     const nowMs = Date.now();
 
