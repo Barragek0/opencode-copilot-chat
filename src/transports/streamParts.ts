@@ -16,11 +16,14 @@ interface StreamOpenCodeResponseOptions extends StreamRequestOptions {
    */
   usesDoneSentinel: boolean;
   /**
-   * Internal: this invocation is already the one-shot retry for a stream that
+   * Internal: how many times this invocation is a retry for a stream that
    * failed before any content was emitted (truncated connection or idle
-   * stall). Never set by transport adapters.
+   * stall). `0` (or undefined) means the original attempt. The engine retries
+   * up to `STREAM_FAILURE_MAX_RETRIES` times; each retry increments this so
+   * the budget is shared across both failure modes and never exceeded. Never
+   * set by transport adapters.
    */
-  isStreamFailureRetry?: boolean;
+  streamFailureRetryAttempt?: number;
 }
 
 interface RequestUsageSummary {
