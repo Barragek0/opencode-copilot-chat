@@ -147,3 +147,69 @@ describe("historyByteCapForBudget", () => {
     }
   });
 });
+
+describe("trimOldMessagesToFitContext — image data excluded from byte cap (#173)", () => {
+  const IMAGE_PLACEHOLDER_LEN = "[image]".length;
+  /** ~1MB base64-ish image payload — far above MAX_REQUEST_PAYLOAD_BYTES. */
+  function imageMessage(role: ApiMessage["role"], dataLength: number): ApiMessage {
+    return { role, content: [{ type: "image_url", image_url: { url: `data:image/png;base64,${"A".repeat(dataLength)}` } }] };
+  }
+
+  it("does not trim text history just because images push the raw payload over the byte cap", () => {
+    const messages: ApiMessage[] = [
+      textMessage("user", "anchor system prompt that is fairly long to count as context"),
+      imageMessage("user", 600_000),
+      textMessage("assistant", "short reply"),
+      textMessage("user", "current prompt"),
+    ];
+    // Raw wire bytes are way above 512KB, but almost all of it is image data.
+    assert.ok(JSON.stringify({ messages }).length > 512_000);
+    const result = trimOldMessagesToFitContext(messages, 10_000_000, 512 * 1024);
+    assert.equal(result.removed, 0, "text history must survive");
+    assert.equal(messages.length, 4);
+  });
+
+  it("still trims when the TEXT portion alone exceeds the byte cap", () => {
+    const messages: ApiMessage[] = [];
+    messages.push(textMessage("user", "anchor system prompt that is fairly long to count as context"));
+    for (let i = 0; i < 20; i++) {
+      messages.push(textMessage("user", `repeated turn ${i} with plenty of padding to grow the text payload size substantially`));
+      messages.push(textMessage("assistant", `response for turn ${i} with plenty of padding to grow the text payload size substantially`));
+    }
+    messages.push(imageMessage("user", 300_000));
+    messages.push(textMessage("user", "latest prompt that must be preserved at all costs"));
+    const before = messages.length;
+    const result = trimOldMessagesToFitContext(messages, 10_000_000, 400);
+    assert.ok(result.removed > 0, "oversized text history must still be trimmed");
+    assert.equal(messages.length, before - result.removed);
+    assert.equal(messages[0].content, "anchor system prompt that is fairly long to count as context");
+    assert.equal(messages[messages.length - 1].content, "latest prompt that must be preserved at all costs");
+  });
+
+  it("counts hosted image URLs fully — only data: URLs are stripped", () => {
+    const url = "https://example.com/i.png";
+    const messages: ApiMessage[] = [
+      textMessage("user", "anchor"),
+      { role: "user", content: [{ type: "image_url", image_url: { url } }] },
+      textMessage("user", "current prompt"),
+    ];
+    const result = trimOldMessagesToFitContext(messages, 10_000_000, 512 * 1024);
+    assert.equal(result.removed, 0);
+    // The hosted URL is plain text of trivial size: its full serialized length
+    // must appear in finalBytes (not collapsed to the [image] placeholder).
+    assert.ok(result.finalBytes >= JSON.stringify({ messages }).length);
+    assert.ok(result.finalBytes > url.length + IMAGE_PLACEHOLDER_LEN);
+  });
+
+  it("strips every data: URL regardless of size", () => {
+    const messages: ApiMessage[] = [
+      textMessage("user", "anchor"),
+      { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,iVBOR" } }] },
+      textMessage("user", "current prompt"),
+    ];
+    const result = trimOldMessagesToFitContext(messages, 10_000_000, 512 * 1024);
+    assert.equal(result.removed, 0);
+    // The tiny data URL was replaced by the placeholder in the measurement.
+    assert.ok(result.finalBytes < JSON.stringify({ messages }).length);
+  });
+});
