@@ -79,10 +79,13 @@ describe("isStreamTruncated", () => {
     );
   });
 
-  it("does not flag an empty stream (no content extracted)", () => {
+  it("flags a stream that received bytes but extracted no parts and saw no [DONE]/finish_reason", () => {
+    // Bytes arrived, so the connection worked — a healthy OpenCode stream
+    // always ends with [DONE]. Bytes-without-parts + no terminator is an
+    // abnormal cut, not a silent success (empty-reply bug).
     assert.equal(
       isStreamTruncated({ usesDoneSentinel: true, sawDone: false, finishReason: undefined, extractedPartCount: 0, totalBytes: 100 }),
-      false,
+      true,
     );
   });
 

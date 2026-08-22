@@ -453,9 +453,23 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
         totalBytes,
       })
     ) {
+      // Nothing user-visible was emitted yet — a transparent one-shot retry is
+      // safe (no duplicated chat content). Recovers transient gateway drops
+      // that kill the stream before the first extractable part.
+      if (extractedPartCount === 0 && !options.isTruncationRetry && !options.token.isCancellationRequested) {
+        options.output?.appendLine(
+          `[retry] stream truncated before any content (${String(totalBytes)} bytes / ${String(totalEvents)} events); retrying once…`,
+        );
+        emitSummary(totalBytes, totalEvents, {
+          abortedReason: "truncated-retry",
+          errorMessage: "stream truncated before any content — retried once",
+        });
+        await streamOpenCodeResponse({ ...options, isTruncationRetry: true });
+        return;
+      }
       const requestError = new OpenCodeRequestError(
-        `${options.providerDisplayName} response stream ended before completion (no [DONE] or finish_reason after ${String(totalBytes)} bytes / ${String(totalEvents)} events).`,
-        `${options.providerDisplayName} stopped sending data before the response was complete (the connection closed unexpectedly). Your message may be cut off — try sending it again. If this keeps happening, check your connection, VPN, or firewall.`,
+        `${options.providerDisplayName} response stream ended before completion (no [DONE] or finish_reason after ${String(totalBytes)} bytes / ${String(totalEvents)} events${localRequestId ? `, request ${localRequestId}` : ""}).`,
+        `${options.providerDisplayName} stopped sending data before the response was complete (the connection closed unexpectedly). Your message may be cut off — try sending it again; a single resend usually succeeds. If this keeps happening, check your connection, VPN, or firewall.`,
       );
       emitSummary(totalBytes, totalEvents, {
         errorMessage: requestError.message,
