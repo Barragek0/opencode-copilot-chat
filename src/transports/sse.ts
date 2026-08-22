@@ -48,9 +48,13 @@ export function parseServerSentEvent(
  * `null` must not be reported as truncated).
  *
  * For a `[DONE]` transport, if the connection closed (`done`) without `[DONE]`
- * AND without a captured `finish_reason` while we had already extracted content,
- * the stream was cut off mid-response (gateway dropped the connection, proxy
- * reset, upstream crash) and must not be treated as a silent success.
+ * AND without a captured `finish_reason` while bytes were received, the stream
+ * was cut off mid-response (gateway dropped the connection, proxy reset,
+ * upstream crash) and must not be treated as a silent success. This includes
+ * streams whose bytes never extracted into parts (keep-alives / unrecognized
+ * frames only): bytes arrived, so the connection worked — a healthy OpenCode
+ * stream always ends with `[DONE]`, so its absence here is abnormal regardless
+ * of how much content was extracted.
  */
 export function isStreamTruncated(params: {
   usesDoneSentinel: boolean;
@@ -62,5 +66,5 @@ export function isStreamTruncated(params: {
   if (!params.usesDoneSentinel) {
     return false;
   }
-  return !params.sawDone && params.finishReason === undefined && params.extractedPartCount > 0 && params.totalBytes > 0;
+  return !params.sawDone && params.finishReason === undefined && params.totalBytes > 0;
 }

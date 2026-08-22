@@ -78,6 +78,6 @@ export interface TransportRequestSummary {
   /** Credits for VS Code session cost (1 credit = $0.01). */
   copilotCredits?: number;
   rateLimitSummary?: string;
-  abortedReason?: "request-timeout" | "stream-idle-timeout" | "cancelled";
+  abortedReason?: "request-timeout" | "stream-idle-timeout" | "cancelled" | "truncated-retry";
   errorMessage?: string;
 }

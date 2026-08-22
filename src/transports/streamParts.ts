@@ -15,6 +15,11 @@ interface StreamOpenCodeResponseOptions extends StreamRequestOptions {
    * `finishReason`, so gating there would cause false-positive errors.
    */
   usesDoneSentinel: boolean;
+  /**
+   * Internal: this invocation is already the one-shot retry for a stream that
+   * truncated before any content was emitted. Never set by transport adapters.
+   */
+  isTruncationRetry?: boolean;
 }
 
 interface RequestUsageSummary {
