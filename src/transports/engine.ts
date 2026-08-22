@@ -42,6 +42,10 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
   let firstByteAt: number | undefined;
   const usageSummary: RequestUsageSummary = {};
   let abortReason: "request-timeout" | "stream-idle-timeout" | "cancelled" | undefined;
+  // Parts reported to VS Code so far — shared between the stream loop and the
+  // catch block so the one-shot failure retries know whether anything
+  // user-visible was already emitted (retrying after that would duplicate it).
+  let extractedPartCount = 0;
   let responseStatus: number | undefined;
   let responseContentType: string | undefined;
   let emittedSummary = false;
@@ -348,7 +352,6 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
     // Diagnostic: collect raw SSE data when response is empty to identify
     // format mismatches between gateway output and our extractor (issue #93).
     const rawSseData: unknown[] = [];
-    let extractedPartCount = 0;
     // Whether we received OpenCode's `data: [DONE]` stream-terminator. A
     // successful stream always sends it; its absence at connection close
     // signals a truncated/aborted response (see isStreamTruncated below).
@@ -456,7 +459,7 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       // Nothing user-visible was emitted yet — a transparent one-shot retry is
       // safe (no duplicated chat content). Recovers transient gateway drops
       // that kill the stream before the first extractable part.
-      if (extractedPartCount === 0 && !options.isTruncationRetry && !options.token.isCancellationRequested) {
+      if (extractedPartCount === 0 && !options.isStreamFailureRetry && !options.token.isCancellationRequested) {
         options.output?.appendLine(
           `[retry] stream truncated before any content (${String(totalBytes)} bytes / ${String(totalEvents)} events); retrying once…`,
         );
@@ -464,7 +467,7 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
           abortedReason: "truncated-retry",
           errorMessage: "stream truncated before any content — retried once",
         });
-        await streamOpenCodeResponse({ ...options, isTruncationRetry: true });
+        await streamOpenCodeResponse({ ...options, isStreamFailureRetry: true });
         return;
       }
       const requestError = new OpenCodeRequestError(
@@ -499,9 +502,25 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       throw requestError;
     }
     if (abortReason === "stream-idle-timeout") {
+      // Nothing user-visible was emitted yet — a transparent one-shot retry is
+      // safe (no duplicated chat content). Covers half-dead connections that
+      // stop delivering frames before the first extractable part. A model that
+      // legitimately pauses longer than the idle timeout will stall again on
+      // the retry and fail with the same error — bounded extra latency.
+      if (extractedPartCount === 0 && !options.isStreamFailureRetry && !options.token.isCancellationRequested) {
+        options.output?.appendLine(
+          `[retry] stream stalled before any content (${formatDuration(options.streamIdleTimeoutMs)} without data); retrying once…`,
+        );
+        emitSummary(0, 0, {
+          abortedReason: "stalled-retry",
+          errorMessage: "stream stalled before any content — retried once",
+        });
+        await streamOpenCodeResponse({ ...options, isStreamFailureRetry: true });
+        return;
+      }
       const requestError = new OpenCodeRequestError(
         `${options.providerDisplayName} stream stalled for ${formatDuration(options.streamIdleTimeoutMs)} without new data.`,
-        `${options.providerDisplayName} stopped sending stream data for ${formatDuration(options.streamIdleTimeoutMs)}, so the request was cancelled to avoid leaving Copilot stuck.`,
+        `${options.providerDisplayName} stopped sending stream data for ${formatDuration(options.streamIdleTimeoutMs)}, so the request was cancelled to avoid leaving Copilot stuck. Try sending your message again; if you use a model with long silent reasoning pauses, raise the streamIdleTimeoutSeconds setting for this provider.`,
       );
       emitSummary(0, 0, {
         abortedReason: "stream-idle-timeout",
