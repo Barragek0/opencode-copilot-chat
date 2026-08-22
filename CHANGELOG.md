@@ -4,6 +4,10 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+### Fixed
+
+- **`[Streaming]` Muse Spark no longer throws "stream ended before completion" after delivering content (#178 regression).** The truncated-stream detector from #178 flags streams that end without `[DONE]` or `finish_reason`. Muse Spark on the Responses API delivers content (text, tool calls) but closes the connection without either signal — a gateway quirk, not a failure. The engine now logs a warning and returns successfully when content was already delivered, instead of throwing an error popup on an otherwise complete response. Documented in `docs/issues/79-20260822-issue-muse-spark-stream-completion.md`.
+
 ## [0.7.0] — 2026-08-22
 
 ### Added
