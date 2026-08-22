@@ -4,6 +4,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-22
+
 ### Added
 
 - **`[Models]` Muse Spark 1.2 support.** Full support for `muse-spark-1.2-contributor` (Go) and `muse-spark-1.2-contributor-free` (Zen). Muse models are routed through the Responses API with `truncation: disabled` and tool names truncated to 64 characters (both gateway constraints). A new `MuseThinking` strategy provides configurable thinking effort (off/low/medium/high/xhigh) via `reasoning: { effort }`, and the thinking effort picker now includes a Muse Spark entry. Fallback metadata provides 1M context / 131K output limits when the live models.dev fetch is unavailable.
