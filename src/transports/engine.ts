@@ -30,6 +30,20 @@ import type { TransportRequestSummary } from "../core/transport";
 import { updateRequestUsageSummary } from "./extract";
 
 /**
+ * Maximum number of transparent retries for a stream that fails *before any
+ * user-visible content is emitted* (truncated connection or idle stall).
+ *
+ * Gated on `extractedPartCount === 0` so a retry can never duplicate chat
+ * content that VS Code already rendered — when the provider throws, VS Code
+ * flushes the streamed parts before showing the error (see
+ * extHostLanguageModels.ts `$reportResponseDone`), so re-emitting a full
+ * response after a partial one would garble the chat. A few attempts recover
+ * the transient gateway drops that plague models like Ox Alpha Stealth (#181)
+ * and GPT 5.6 Luna tool calls (#184) without risking duplication.
+ */
+const STREAM_FAILURE_MAX_RETRIES = 3;
+
+/**
  * Core streaming engine shared by every transport: performs the HTTP POST
  * (with HTTP-400 body patching and transient-5xx backoff retries), parses the
  * SSE stream, routes each event through the injected extractor, and emits a
@@ -456,18 +470,22 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
         totalBytes,
       })
     ) {
-      // Nothing user-visible was emitted yet — a transparent one-shot retry is
-      // safe (no duplicated chat content). Recovers transient gateway drops
-      // that kill the stream before the first extractable part.
-      if (extractedPartCount === 0 && !options.isStreamFailureRetry && !options.token.isCancellationRequested) {
+      // Nothing user-visible was emitted yet — a transparent retry is safe
+      // (no duplicated chat content). Recovers transient gateway drops that
+      // kill the stream before the first extractable part. Retry a bounded
+      // number of times so flaky models (Ox Alpha Stealth #181, GPT 5.6 Luna
+      // tool calls #184) self-heal instead of surfacing an error every turn.
+      const attempt = options.streamFailureRetryAttempt ?? 0;
+      if (extractedPartCount === 0 && attempt < STREAM_FAILURE_MAX_RETRIES && !options.token.isCancellationRequested) {
+        const nextAttempt = attempt + 1;
         options.output?.appendLine(
-          `[retry] stream truncated before any content (${String(totalBytes)} bytes / ${String(totalEvents)} events); retrying once…`,
+          `[retry] stream truncated before any content (${String(totalBytes)} bytes / ${String(totalEvents)} events); retry ${String(nextAttempt)}/${String(STREAM_FAILURE_MAX_RETRIES)}…`,
         );
         emitSummary(totalBytes, totalEvents, {
           abortedReason: "truncated-retry",
-          errorMessage: "stream truncated before any content — retried once",
+          errorMessage: `stream truncated before any content — retried ${String(nextAttempt)}/${String(STREAM_FAILURE_MAX_RETRIES)}`,
         });
-        await streamOpenCodeResponse({ ...options, isStreamFailureRetry: true });
+        await streamOpenCodeResponse({ ...options, streamFailureRetryAttempt: nextAttempt });
         return;
       }
       const requestError = new OpenCodeRequestError(
@@ -502,20 +520,23 @@ export async function streamOpenCodeResponse(options: StreamOpenCodeResponseOpti
       throw requestError;
     }
     if (abortReason === "stream-idle-timeout") {
-      // Nothing user-visible was emitted yet — a transparent one-shot retry is
-      // safe (no duplicated chat content). Covers half-dead connections that
-      // stop delivering frames before the first extractable part. A model that
-      // legitimately pauses longer than the idle timeout will stall again on
-      // the retry and fail with the same error — bounded extra latency.
-      if (extractedPartCount === 0 && !options.isStreamFailureRetry && !options.token.isCancellationRequested) {
+      // Nothing user-visible was emitted yet — a transparent retry is safe
+      // (no duplicated chat content). Covers half-dead connections that stop
+      // delivering frames before the first extractable part. Retry a bounded
+      // number of times; a model that legitimately pauses longer than the idle
+      // timeout will stall again on each retry and fail with the same error —
+      // bounded extra latency, no loops.
+      const attempt = options.streamFailureRetryAttempt ?? 0;
+      if (extractedPartCount === 0 && attempt < STREAM_FAILURE_MAX_RETRIES && !options.token.isCancellationRequested) {
+        const nextAttempt = attempt + 1;
         options.output?.appendLine(
-          `[retry] stream stalled before any content (${formatDuration(options.streamIdleTimeoutMs)} without data); retrying once…`,
+          `[retry] stream stalled before any content (${formatDuration(options.streamIdleTimeoutMs)} without data); retry ${String(nextAttempt)}/${String(STREAM_FAILURE_MAX_RETRIES)}…`,
         );
         emitSummary(0, 0, {
           abortedReason: "stalled-retry",
-          errorMessage: "stream stalled before any content — retried once",
+          errorMessage: `stream stalled before any content — retried ${String(nextAttempt)}/${String(STREAM_FAILURE_MAX_RETRIES)}`,
         });
-        await streamOpenCodeResponse({ ...options, isStreamFailureRetry: true });
+        await streamOpenCodeResponse({ ...options, streamFailureRetryAttempt: nextAttempt });
         return;
       }
       const requestError = new OpenCodeRequestError(
