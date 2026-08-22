@@ -6,7 +6,7 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 ### Fixed
 
-- **`[Models]` Deprecated filter no longer hides live models (#182).** `models.dev` `status: deprecated` was hiding models still served by the gateway (e.g. `deepseek-v4-flash-free`). The filter now cross-checks against the live gateway response — only hides when `models.dev` says deprecated AND the gateway confirms the model is absent. Offline/fallback paths fail open. Documented in `docs/issues/78-20260822-issue182-deprecated-model-gateway-crosscheck.md`.
+- **`[Models]` Deprecated filter no longer hides live models (#182).** `models.dev` `status: deprecated` was hiding models still served by the gateway (e.g. `laguna-s-2.1-free`). The filter now cross-checks against the live gateway response — only hides when `models.dev` says deprecated AND the gateway confirms the model is absent. Note: `deepseek-v4-flash-free` is listed by the gateway but actually broken upstream ("Model is unavailable") — this is an upstream issue, not solvable from the extension side. Documented in `docs/issues/78-20260822-issue182-deprecated-model-gateway-crosscheck.md`.
 
 ## [0.7.0] — 2026-08-22
 

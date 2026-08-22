@@ -1,4 +1,4 @@
-**Status:** ✅ Solved
+**Status:** ✅ Solved (partial — `deepseek-v4-flash-free` is upstream-blocked)
 
 # Deprecated Model Gateway Cross-Check (#182)
 
@@ -13,13 +13,19 @@
 
 `models.dev` `status: deprecated` was hiding live models from the picker. The fix cross-checks against the gateway response: only hide when both `models.dev` says deprecated AND the gateway confirms the model is absent.
 
+The original reporter's example (`deepseek-v4-flash-free`) turned out to be a deeper upstream problem: the gateway lists the model but it's actually broken (`Upstream request failed: Model is unavailable`). A working example is `laguna-s-2.1-free`, which is live and correctly shown by our fix.
+
 ---
 
 ## Problem
 
-`deepseek-v4-flash-free` is live on the OpenCode Zen gateway (`https://opencode.ai/zen/v1/models` returns it), but `models.dev` marks it `status: "deprecated"`. The extension's `shouldHideDeprecatedModel` filter was hiding it unconditionally — a stale false positive.
+`deepseek-v4-flash-free` appears in the OpenCode Zen gateway (`https://opencode.ai/zen/v1/models` returns it), but requests to it fail:
 
-Initial commenters on the issue ("no longer available on OpenCode Zen") were incorrect — the model is served and billable. The reporter's deeper investigation confirmed the data mismatch.
+```text
+(400) model=deepseek-v4-flash-free: Error from provider (Console): Upstream request failed: Model is unavailable
+```
+
+Meanwhile, `laguna-s-2.1-free` is also listed by `models.dev` as `deprecated`, but IS live and working. The extension's `shouldHideDeprecatedModel` filter was hiding both unconditionally — a stale false positive for working models.
 
 ### Root Cause
 
@@ -33,6 +39,15 @@ However, `models.dev` is community-maintained and can drift — marking working 
 | --------------- | --------------------------------------------------------- | ------------------- |
 | #03 (May 2026)  | Gateway lists broken model, `models.dev` says deprecated  | ✅ Correctly hidden |
 | #182 (Aug 2026) | Gateway lists working model, `models.dev` says deprecated | ❌ Falsely hidden   |
+
+### Why `deepseek-v4-flash-free` is a separate problem
+
+Neither `models.dev` nor the gateway is a reliable source of truth for availability:
+
+- `models.dev` says `deprecated` → but `laguna-s-2.1-free` works fine (false positive)
+- Gateway lists the model → but `deepseek-v4-flash-free` returns "Model is unavailable" (false positive)
+
+The extension can't distinguish a working model from a broken one without actually sending a request. The honest behavior is to show what the gateway tells us and surface the error clearly when it fails. The real fix for `deepseek-v4-flash-free` is upstream: either the gateway stops listing it, or `models.dev` removes the `deprecated` flag.
 
 ---
 
@@ -64,17 +79,19 @@ This means:
 
 ```bash
 npm run compile  # passes
-npm test         # passes (existing tests unchanged)
+npm test         # passes (8 new tests for shouldHideDeprecatedModel)
 ```
 
 Registry check:
 
-| Model                        | Gateway   | `models.dev` | Before fix | After fix |
-| ---------------------------- | --------- | ------------ | ---------- | --------- |
-| `deepseek-v4-flash-free`     | ✅ live   | deprecated   | ❌ hidden  | ✅ shown  |
-| `laguna-s-2.1-free`          | ✅ live   | deprecated   | ❌ hidden  | ✅ shown  |
-| `ring-2.6-1t-free`           | ❌ absent | deprecated   | ✅ hidden  | ✅ hidden |
-| `trinity-large-preview-free` | ❌ absent | deprecated   | ✅ hidden  | ✅ hidden |
+| Model                        | Gateway   | `models.dev` | Actually works? | Before fix | After fix |
+| ---------------------------- | --------- | ------------ | --------------- | ---------- | --------- |
+| `laguna-s-2.1-free`          | ✅ listed | deprecated   | ✅ Yes          | ❌ hidden  | ✅ shown  |
+| `deepseek-v4-flash-free`     | ✅ listed | deprecated   | ❌ No (400)     | ❌ hidden  | ✅ shown* |
+| `ring-2.6-1t-free`           | ❌ absent | deprecated   | ❌ No           | ✅ hidden  | ✅ hidden |
+| `trinity-large-preview-free` | ❌ absent | deprecated   | ❌ No           | ✅ hidden  | ✅ hidden |
+
+\* Shown but fails at runtime — upstream issue, not solvable from extension side.
 
 ---
 
@@ -82,3 +99,4 @@ Registry check:
 
 - `KNOWN_UNAVAILABLE_MODEL_IDS` (`ring-2.6-1t`, `ring-2.6-1t-free`, `trinity-large-preview-free`) remains as a manual safety net for models known to fail even if listed.
 - `models.dev` is still valuable for enrichment (pricing, context windows, capabilities) — just not as the sole source of truth for availability.
+- Runtime failure tracking was considered but rejected — it creates confusing UX where models silently vanish from the picker with no explanation.
