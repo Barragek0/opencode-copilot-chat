@@ -145,7 +145,11 @@ describe("historyByteCapForBudget", () => {
       const byteCapTokens = byteCap / HISTORY_BYTES_PER_TOKEN;
       assert.ok(byteCapTokens + 1 >= inputBudget, `window ${window}: byte cap ${byteCap} too tight for budget ${inputBudget}`);
     }
+  });
+});
+
 describe("trimOldMessagesToFitContext — image data excluded from byte cap (#173)", () => {
+  const IMAGE_PLACEHOLDER_LEN = "[image]".length;
   /** ~1MB base64-ish image payload — far above MAX_REQUEST_PAYLOAD_BYTES. */
   function imageMessage(role: ApiMessage["role"], dataLength: number): ApiMessage {
     return { role, content: [{ type: "image_url", image_url: { url: `data:image/png;base64,${"A".repeat(dataLength)}` } }] };
@@ -182,14 +186,30 @@ describe("trimOldMessagesToFitContext — image data excluded from byte cap (#17
     assert.equal(messages[messages.length - 1].content, "latest prompt that must be preserved at all costs");
   });
 
-  it("counts small image URLs (non-data URLs) fully instead of stripping them", () => {
+  it("counts hosted image URLs fully — only data: URLs are stripped", () => {
+    const url = "https://example.com/i.png";
     const messages: ApiMessage[] = [
       textMessage("user", "anchor"),
-      { role: "user", content: [{ type: "image_url", image_url: { url: "https://example.com/i.png" } }] },
+      { role: "user", content: [{ type: "image_url", image_url: { url } }] },
       textMessage("user", "current prompt"),
     ];
     const result = trimOldMessagesToFitContext(messages, 10_000_000, 512 * 1024);
     assert.equal(result.removed, 0);
-    assert.ok(result.finalBytes > 0);
+    // The hosted URL is plain text of trivial size: its full serialized length
+    // must appear in finalBytes (not collapsed to the [image] placeholder).
+    assert.ok(result.finalBytes >= JSON.stringify({ messages }).length);
+    assert.ok(result.finalBytes > url.length + IMAGE_PLACEHOLDER_LEN);
+  });
+
+  it("strips every data: URL regardless of size", () => {
+    const messages: ApiMessage[] = [
+      textMessage("user", "anchor"),
+      { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,iVBOR" } }] },
+      textMessage("user", "current prompt"),
+    ];
+    const result = trimOldMessagesToFitContext(messages, 10_000_000, 512 * 1024);
+    assert.equal(result.removed, 0);
+    // The tiny data URL was replaced by the placeholder in the measurement.
+    assert.ok(result.finalBytes < JSON.stringify({ messages }).length);
   });
 });

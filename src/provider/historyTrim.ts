@@ -125,7 +125,6 @@ function noTrim(messages: ApiMessage[], tools?: readonly vscode.LanguageModelCha
 
 /** Placeholder substituted for base64 image data when measuring byte weight. */
 const IMAGE_DATA_PLACEHOLDER = "[image]";
-
 /**
  * Serialized size of one message, excluding base64 image payloads (#173).
  *
@@ -147,8 +146,11 @@ function payloadBytes(messages: ApiMessage[], tools?: readonly vscode.LanguageMo
 }
 
 /**
- * Shallow clone of `m` with base64 image URLs replaced by a short placeholder.
- * Returns `m` itself when there is nothing to strip (the common case).
+ * Shallow clone of `m` with base64 data-URL image payloads replaced by a short
+ * placeholder. Only `data:` URLs are stripped — a hosted `https://` image URL
+ * is plain text of trivial size and never carries the payload weight that
+ * caused #173, so it stays counted as-is. Returns `m` itself when there is
+ * nothing to strip (the common case).
  */
 function stripImageData(m: ApiMessage): ApiMessage {
   if (!Array.isArray(m.content)) {
@@ -159,7 +161,7 @@ function stripImageData(m: ApiMessage): ApiMessage {
   for (let i = 0; i < m.content.length; i++) {
     const part = m.content[i];
     const url = part.type === "image_url" ? part.image_url?.url : undefined;
-    if (typeof url === "string" && url.length > IMAGE_DATA_PLACEHOLDER.length) {
+    if (typeof url === "string" && url.startsWith("data:")) {
       stripped ??= [...m.content];
       stripped[i] = { ...part, image_url: { url: IMAGE_DATA_PLACEHOLDER } };
     }
