@@ -8,6 +8,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 
 - **`[Streaming]` Muse Spark no longer throws "stream ended before completion" after delivering content (#178 regression).** The truncated-stream detector from #178 flags streams that end without `[DONE]` or `finish_reason`. Muse Spark on the Responses API delivers content (text, tool calls) but closes the connection without either signal — a gateway quirk, not a failure. The engine now logs a warning and returns successfully when content was already delivered, instead of throwing an error popup on an otherwise complete response. Documented in `docs/issues/79-20260822-issue-muse-spark-stream-completion.md`.
 
+- **`[Models]` Deprecated filter no longer hides live models (#182).** `models.dev` `status: deprecated` was hiding models still served by the gateway (e.g. `laguna-s-2.1-free`). The filter now cross-checks against the live gateway response — only hides when `models.dev` says deprecated AND the gateway confirms the model is absent. Note: `deepseek-v4-flash-free` is listed by the gateway but actually broken upstream ("Model is unavailable") — this is an upstream issue, not solvable from the extension side. Documented in `docs/issues/78-20260822-issue182-deprecated-model-gateway-crosscheck.md`.
+
 ## [0.7.0] — 2026-08-22
 
 ### Added
@@ -40,6 +42,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
 - **`[Internal]` Data-driven model registry (`src/core/registry.ts`).** The transport router and the thinking-family detector previously each owned a hardcoded model-prefix table. Both now read ONE data-driven table: `MODEL_REGISTRY` rows map model-family patterns → `{ endpointKind, sdkPackage, thinkingFamily, vendors? }`. `resolveModelRouting()` honors per-vendor restrictions (e.g. MiniMax `m2.x` → Messages on Go, Gemini → Google on Zen); `thinkingFamily()` reads the same table vendor-agnostically. Adding a new model family = adding one row (+ optionally a thinking strategy class). Context limits / capabilities stay metadata-driven (live models.dev) rather than duplicated in a static table. Behavior-preserving — verified by 14 new registry tests (305 total).
 
 ### Fixed
+
+- **`[Streaming]` Truncation / idle-stall retries are now a bounded loop of 3 attempts (#181).** When the gateway drops the connection before any content is emitted, the engine retries up to `STREAM_FAILURE_MAX_RETRIES` times (was a single retry) so flaky models like Ox Alpha Stealth and GPT 5.6 Luna self-heal instead of erroring every turn. The retry stays gated on zero emitted parts, so it can never duplicate chat content. Documented in `docs/issues/78-20260822-ox-alpha-truncation-retry.md`.
 
 - **`[Streaming]` Idle-stalled streams before first content are retried too (#179).** The pre-content one-shot stream retry from #178 now also covers the 2-minute idle-guard abort (`stalled-retry` summary; both failure modes share a single retry budget via the renamed `isStreamFailureRetry` flag — worst case exactly one extra attempt, never two). The stall error now points users at `streamIdleTimeoutSeconds` for models with long silent reasoning pauses. Documented in `docs/issues/77-20260822-stream-stall-resilience.md`.
 

@@ -273,7 +273,7 @@ flowchart LR
 
 1. **Key resolution**: BYOK `options.configuration.apiKey` → (if BYOK group observed, return `[]` to avoid duplicates, issue #106/#131) → `SecretStorage` fallback.
 2. Persist key to SecretStorage (non-agent variants) so agent variants inherit it.
-3. `fetchModels()` — live GET `modelsUrl` with retry/backoff/timeout (issue #78) → `filterAvailableModels()` (drops `KNOWN_UNAVAILABLE_MODEL_IDS`, deprecated Zen models, `freeOnly` filter).
+3. `fetchModels()` — live GET `modelsUrl` with retry/backoff/timeout (issue #78) → `filterAvailableModels()` (drops `KNOWN_UNAVAILABLE_MODEL_IDS`, deprecated Zen models cross-checked against gateway response (issue #182), `freeOnly` filter).
 4. Per model: `resolveModelMetadata()` → `resolveModelRouting()` → `modelLimits()` → `modelCapabilities()` → `modelConfigurationSchema()` (thinking submenu + context-size tier) → build `OpenCodeModel` (general variant or `::agent-host` variant with `targetChatSessionType: "copilotcli"`).
 
 ### 5.3 Chat Request (`provideLanguageModelChatResponse`)

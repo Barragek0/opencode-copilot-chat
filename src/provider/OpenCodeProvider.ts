@@ -493,7 +493,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
         replaceLiveModelMetadata: (models) => {
           this.replaceLiveModelMetadata(models);
         },
-        filterAvailableModels: (ids) => this.filterAvailableModels(ids),
+        filterAvailableModels: (ids, liveIds) => this.filterAvailableModels(ids, liveIds),
       });
     }
     return this.modelListFetcher;
@@ -503,7 +503,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
     return this.fetcher.fetch(apiKey, token);
   }
 
-  private async filterAvailableModels(modelIds: string[]): Promise<string[]> {
+  private async filterAvailableModels(modelIds: string[], liveModelIds?: ReadonlySet<string>): Promise<string[]> {
     const uniqueModelIds = [...new Set(modelIds)];
 
     try {
@@ -511,7 +511,7 @@ export class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCo
       const filteredModelIds = uniqueModelIds.filter(
         (modelId) =>
           !KNOWN_UNAVAILABLE_MODEL_IDS.has(modelId) &&
-          !shouldHideDeprecatedModel(modelId, this.baseVendor, metadataSnapshot) &&
+          !shouldHideDeprecatedModel(modelId, this.baseVendor, metadataSnapshot, liveModelIds) &&
           (this.definition.filterModel?.(modelId) ?? true),
       );
 

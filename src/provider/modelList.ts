@@ -26,7 +26,7 @@ export class ModelListFetcher {
       definition: ProviderDefinition;
       log(message: string): void;
       replaceLiveModelMetadata(models: ModelListEntry[] | undefined): void;
-      filterAvailableModels(modelIds: string[]): Promise<string[]>;
+      filterAvailableModels(modelIds: string[], liveModelIds?: ReadonlySet<string>): Promise<string[]>;
     },
   ) {
     this.cacheKey = `${MODEL_LIST_CACHE_KEY_PREFIX}::${resolveBaseVendor(this.deps.definition.vendor)}`;
@@ -72,7 +72,10 @@ export class ModelListFetcher {
           .filter((id): id is string => typeof id === "string" && id.length > 0)
           .filter((id) => this.deps.definition.filterModel?.(id) ?? true);
 
-        const filtered = await this.deps.filterAvailableModels(ids?.length ? ids : this.deps.definition.fallbackModels);
+        // Gateway is source of truth — pass live IDs so stale `deprecated` in
+        // models.dev doesn't hide models still served (issue #182).
+        const liveIds = ids?.length ? new Set(ids) : undefined;
+        const filtered = await this.deps.filterAvailableModels(ids?.length ? ids : this.deps.definition.fallbackModels, liveIds);
         // Persist the successful snapshot for future fallback coverage.
         this.cached = { ids: filtered, fetchedAt: Date.now() };
         void this.deps.context.globalState.update(this.cacheKey, this.cached);
