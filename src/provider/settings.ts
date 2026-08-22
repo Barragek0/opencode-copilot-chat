@@ -225,11 +225,25 @@ export function shouldHideDeprecatedModel(
   modelId: string,
   vendor: ProviderDefinition["vendor"],
   snapshot: CachedModelMetadataSnapshot,
+  liveModelIds?: ReadonlySet<string>,
 ): boolean {
   if (resolveBaseVendor(vendor) !== ZEN_VENDOR) {
     return false;
   }
-  return snapshot.providers[ZEN_VENDOR]?.[modelId]?.status === "deprecated";
+  if (snapshot.providers[ZEN_VENDOR]?.[modelId]?.status !== "deprecated") {
+    return false;
+  }
+  // Gateway is the source of truth for availability (issue #182). Only hide
+  // when we have live gateway data confirming the model is absent. If the
+  // gateway still serves it, models.dev is stale — don't hide. If we have
+  // no live data (offline/fallback), fail open and don't hide either.
+  if (!liveModelIds) {
+    return false;
+  }
+  if (liveModelIds.has(modelId)) {
+    return false;
+  }
+  return true;
 }
 
 export function resolveRawModelId(modelId: string): string {
