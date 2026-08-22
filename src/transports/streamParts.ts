@@ -17,9 +17,10 @@ interface StreamOpenCodeResponseOptions extends StreamRequestOptions {
   usesDoneSentinel: boolean;
   /**
    * Internal: this invocation is already the one-shot retry for a stream that
-   * truncated before any content was emitted. Never set by transport adapters.
+   * failed before any content was emitted (truncated connection or idle
+   * stall). Never set by transport adapters.
    */
-  isTruncationRetry?: boolean;
+  isStreamFailureRetry?: boolean;
 }
 
 interface RequestUsageSummary {
